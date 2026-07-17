@@ -1,0 +1,22 @@
+﻿Deploying to emulator-5554 via :app:installFullDebug --no-daemon -Dorg.gradle.jvmargs=-Xmx1536m --max-workers=1 ...
+To honour the JVM settings for this build a single-use Daemon process will be forked. For more on this, please refer to https://docs.gradle.org/8.7/userguide/gradle_daemon.html#sec:disabling_the_daemon in the Gradle documentation.
+Daemon will be stopped at the end of the build 
+Configuration on demand is an incubating feature.
+> Task :app:checkKotlinGradlePluginConfigurationErrors
+> Task :app:preBuild UP-TO-DATE
+> Task :app:preFullDebugBuild UP-TO-DATE
+> Task :app:generateFullDebugBuildConfig UP-TO-DATE
+> Task :app:checkFullDebugAarMetadata UP-TO-DATE
+> Task :app:generateFullDebugResValues UP-TO-DATE
+> Task :app:mapFullDebugSourceSetPaths UP-TO-DATE
+> Task :app:generateFullDebugResources UP-TO-DATE
+> Task :app:mergeFullDebugResources UP-TO-DATE
+> Task :app:packageFullDebugResources UP-TO-DATE
+> Task :app:parseFullDebugLocalResources UP-TO-DATE
+> Task :app:createFullDebugCompatibleScreenManifests UP-TO-DATE
+> Task :app:extractDeepLinksFullDebug UP-TO-DATE
+> Task :app:processFullDebugMainManifest UP-TO-DATE
+> Task :app:processFullDebugManifest UP-TO-DATE
+> Task :app:processFullDebugManifestForPackage UP-TO-DATE
+> Task :app:processFullDebugResources UP-TO-DATE
+> Task :app:kspFullDebugKotlin

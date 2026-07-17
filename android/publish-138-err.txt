@@ -1,0 +1,8 @@
+gradle.bat : e: file:///N:/noop-v8.4.0-src/android/app/src/main/java/com/noop/ui/SleepScreen.kt:3329:20 Unresolved 
+reference: modifier
+At C:\Users\Gilbert\Documents\Ai app store\noop-v8.4.0-src\android\publish-main-release.ps1:77 char:5
++     & $gradle @gradleArgs 2>&1 | ForEach-Object {
++     ~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (e: file:///N:/n...rence: modifier:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 

@@ -1,0 +1,110 @@
+name: build
+
+on:
+  push:
+    tags: ['v*']        # the only trigger: pushing a version tag cuts a release
+
+permissions:
+  contents: write       # needed to create the GitHub Release
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+
+      # The single companion URL (announcements, OTA, telemetry, import) comes
+      # from a repo secret, written into .env and baked in via --dart-define.
+      - name: Write .env
+        run: echo "COMPANION_URL=${{ secrets.COMPANION_URL }}" > .env
+
+      # Decode the release keystore from a secret. The gradle config picks these
+      # env vars up (ANDROID_KEYSTORE_PATH etc.) and signs the release build.
+      - name: Restore release keystore
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.jks"
+
+      - run: flutter pub get
+
+      - name: Build release APK
+        env:
+          ANDROID_KEYSTORE_PATH: ${{ runner.temp }}/release.jks
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: flutter build apk --release --dart-define-from-file=.env
+
+      - name: Name the APK after the version
+        id: rename
+        run: |
+          mkdir -p dist
+          cp build/app/outputs/flutter-apk/app-release.apk dist/openstrap-edge-${GITHUB_REF_NAME}.apk
+          echo "apk=dist/openstrap-edge-${GITHUB_REF_NAME}.apk" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: openstrap-edge-apk
+          path: ${{ steps.rename.outputs.apk }}
+
+      # Publish a Release with the signed APK attached so people download a real
+      # .apk, not a zipped CI artifact.
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ steps.rename.outputs.apk }}
+          generate_release_notes: true
+
+  # Unsigned iOS .ipa for sideloading (AltStore / Sideloadly / TrollStore). It is
+  # NOT App Store signed — users re-sign it with their own Apple ID on install.
+  # Note: free-account sideloads re-sign with a different team id, so App Group
+  # features (home widget + Live Activity) may not work; there is no iOS OTA
+  # auto-update either (that path installs an .apk). Attached to the same release.
+  ios:
+    runs-on: macos-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+
+      - name: Write .env
+        run: echo "BACKEND_URL=${{ secrets.BACKEND_URL }}" > .env
+
+      - run: flutter pub get
+
+      - name: Build unsigned iOS app
+        run: flutter build ios --release --no-codesign --dart-define-from-file=.env
+
+      - name: Package unsigned IPA
+        id: ipa
+        run: |
+          cd build/ios/iphoneos
+          mkdir -p Payload
+          cp -R Runner.app Payload/Runner.app
+          IPA="$GITHUB_WORKSPACE/openstrap-edge-${GITHUB_REF_NAME}-unsigned.ipa"
+          zip -qr -y "$IPA" Payload
+          echo "ipa=openstrap-edge-${GITHUB_REF_NAME}-unsigned.ipa" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: openstrap-edge-ipa
+          path: ${{ steps.ipa.outputs.ipa }}
+
+      # Attach to the same Release the android job created/updates (upsert by tag).
+      - name: Attach IPA to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ steps.ipa.outputs.ipa }}

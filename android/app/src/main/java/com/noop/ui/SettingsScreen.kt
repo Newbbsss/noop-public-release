@@ -1,0 +1,3955 @@
+﻿package com.noop.ui
+
+import android.content.ActivityNotFoundException
+import android.content.ComponentName
+import android.content.Context
+import android.content.Intent
+import android.content.SharedPreferences
+import android.content.pm.PackageManager
+import android.net.Uri
+import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.DirectionsWalk
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.Autorenew
+import androidx.compose.material.icons.filled.Bolt
+import androidx.compose.material.icons.filled.BugReport
+import androidx.compose.material.icons.filled.Brightness6
+import androidx.compose.material.icons.filled.Campaign
+import androidx.compose.material.icons.filled.Cancel
+import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.filled.Flag
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.IosShare
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.Link
+import androidx.compose.material.icons.automirrored.filled.MenuBook
+import androidx.compose.material.icons.filled.Palette
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.SaveAlt
+import androidx.compose.material.icons.filled.Science
+import androidx.compose.material.icons.filled.Sensors
+import androidx.compose.material.icons.filled.Straighten
+import androidx.compose.material.icons.filled.CloudSync
+import androidx.compose.material.icons.filled.Storage
+import androidx.compose.material.icons.filled.Upload
+import androidx.compose.material.icons.filled.Vibration
+import androidx.compose.material.icons.filled.AccessTime
+import androidx.compose.material.icons.filled.Watch
+import androidx.compose.material.icons.outlined.AccountCircle
+import androidx.compose.material.icons.outlined.Person
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
+import androidx.core.app.NotificationManagerCompat
+import androidx.health.connect.client.HealthConnectClient
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.noop.BuildConfig
+import com.noop.analytics.Baselines
+import com.noop.analytics.Zones
+import com.noop.ble.BleProtocolMode
+import com.noop.ble.PuffinExperiment
+import com.noop.ble.WhoopModel
+import com.noop.data.DataBackup
+import com.noop.ingest.HealthConnectImporter
+import com.noop.ingest.RawSensorExport
+import com.noop.ingest.WhoopCsvExporter
+import com.noop.update.UpdateCheck
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlin.math.roundToInt
+
+// MARK: - Settings (ported from Strand/Screens/SettingsView.swift)
+//
+// Profile (the numbers that power HR zones / calories / recovery baselines), a
+// Backup & restore section wiring DataBackup export/import through the Storage
+// Access Framework, and an About section with version + attribution + a Support
+// link. Re-skinned to the locked NOOP component system: every surface is a
+// NoopCard, every status uses StatePill, the two-column form feel is preserved.
+//
+// macOS parity notes:
+//  - macOS persisted the profile in a ProfileStore (ObservableObject on disk). The
+//    Android equivalent is SharedPreferences; this screen owns the only profile
+//    store in the app, so HealthScreen's age-agnostic HR-max default can later read
+//    from it. Values persist immediately on every change.
+//  - macOS used native +/- Steppers; Compose has no Stepper, so each numeric field
+//    is a tabular value flanked by round âˆ’/+ buttons (same intent, same ranges).
+//  - The strap "Re-scan / Disconnect" controls map to the ViewModel's connect() /
+//    disconnect() pass-throughs.
+//  - Backup export/import run through SAF (CreateDocument / OpenDocument); the macOS
+//    alert is mirrored by a Toast. DataBackup.exportTo already checkpoints the WAL,
+//    so no separate repo checkpoint call is needed.
+
+// MARK: - Profile store (SharedPreferences-backed; the macOS ProfileStore equivalent)
+
+/**
+ * The user's body profile â€” age / sex / weight / height plus an optional manual
+ * HR-max override. Persisted to SharedPreferences so the values survive restarts
+ * and other screens (HealthScreen, Coach zones) can read the same source of truth.
+ *
+ * Mirrors the macOS `ProfileStore` fields and ranges exactly. `hrMaxOverride == 0`
+ * means "auto" â€” fall back to the Tanaka estimate from [age].
+ */
+class ProfileStore(private val prefs: SharedPreferences) {
+
+    /** Presentation-only identity. It never reaches BLE, analytics, exports, or shareable backups. */
+    var displayName: String
+        get() = normalizedDisplayName(prefs.getString(KEY_DISPLAY_NAME, ""))
+        set(v) = prefs.edit().putString(KEY_DISPLAY_NAME, normalizedDisplayName(v)).apply()
+
+    var age: Int
+        get() = prefs.getInt(KEY_AGE, 30).coerceIn(AGE_MIN, AGE_MAX)
+        set(v) = prefs.edit().putInt(KEY_AGE, v.coerceIn(AGE_MIN, AGE_MAX)).apply()
+
+    /** "male" | "female" | "nonbinary" â€” matches the macOS tag values. */
+    var sex: String
+        get() = prefs.getString(KEY_SEX, "male") ?: "male"
+        set(v) = prefs.edit().putString(KEY_SEX, v).apply()
+
+    var weightKg: Double
+        get() = prefs.getFloat(KEY_WEIGHT, 75f).toDouble().coerceIn(WEIGHT_MIN, WEIGHT_MAX)
+        set(v) = prefs.edit().putFloat(KEY_WEIGHT, v.coerceIn(WEIGHT_MIN, WEIGHT_MAX).toFloat()).apply()
+
+    var heightCm: Double
+        get() = prefs.getFloat(KEY_HEIGHT, 178f).toDouble().coerceIn(HEIGHT_MIN, HEIGHT_MAX)
+        set(v) = prefs.edit().putFloat(KEY_HEIGHT, v.coerceIn(HEIGHT_MIN, HEIGHT_MAX).toFloat()).apply()
+
+    /**
+     * Waist circumference in cm; 0 = unset (the Fitness Age VOâ‚‚max estimate is hidden until a waist
+     * is entered). Optional â€” it only unlocks the VOâ‚‚max read-out and never moves the headline Fitness
+     * Age (the engine's body term cancels). No coercion floor (0 has to remain a sentinel for "unset");
+     * the upper bound is clamped so a fat-fingered entry can't run away.
+     */
+    var waistCm: Double
+        get() = prefs.getFloat(KEY_WAIST, 0f).toDouble().coerceIn(0.0, WAIST_MAX)
+        set(v) = prefs.edit().putFloat(KEY_WAIST, v.coerceIn(0.0, WAIST_MAX).toFloat()).apply()
+
+    /** Manual max-heart-rate override in bpm; 0 = automatic (Tanaka). */
+    var hrMaxOverride: Int
+        get() = prefs.getInt(KEY_HRMAX, 0).coerceIn(0, 230)
+        set(v) = prefs.edit().putInt(KEY_HRMAX, v.coerceIn(0, 230)).apply()
+
+    /**
+     * Step-calibration divisor (#139/#132): counter ticks per real step for the @57 motion
+     * counter. 1.0 = raw pass-through (default â€” no behavior change). Clamped 0.5â€“30.0
+     * (WHOOP 5/MG motion-counter overcount can reach ~24Ã—, so the ceiling has to be high).
+     */
+    var stepTicksPerStep: Double
+        get() = prefs.getFloat(KEY_STEP_SCALE, 1f).toDouble().coerceIn(STEP_SCALE_MIN, STEP_SCALE_MAX)
+        set(v) = prefs.edit()
+            .putFloat(KEY_STEP_SCALE, v.coerceIn(STEP_SCALE_MIN, STEP_SCALE_MAX).toFloat())
+            .apply()
+
+    // â”€â”€ Steps ESTIMATE calibration (WHOOP 4.0; StepsEstimateEngine) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // Mirror of the macOS ProfileStore fields: the engine writes the auto-fit each analytics pass and
+    // the Settings/Steps screen reads them. [stepsManualCoefficient] is the ONLY user-settable field
+    // (0 = auto-fit / null to the engine; > 0 = manual override fed into calibrate()); the other three
+    // are fitted outputs surfaced read-only.
+    /** Fitted (or manually-set) steps-per-unit-of-motion coefficient last persisted by the engine. */
+    var stepsCalibrationCoefficient: Double
+        get() = prefs.getFloat(KEY_STEPS_COEFF, 0f).toDouble()
+        set(v) = prefs.edit().putFloat(KEY_STEPS_COEFF, v.toFloat()).apply()
+
+    /** How many calibration days fed the last auto-fit (0 when purely manual / not yet fit). */
+    var stepsCalibrationSampleDays: Int
+        get() = prefs.getInt(KEY_STEPS_SAMPLE_DAYS, 0)
+        set(v) = prefs.edit().putInt(KEY_STEPS_SAMPLE_DAYS, v).apply()
+
+    /** 0â€“1 trust in the last fit (1.0 for a manual coefficient). */
+    var stepsCalibrationConfidence: Double
+        get() = prefs.getFloat(KEY_STEPS_CONFIDENCE, 0f).toDouble()
+        set(v) = prefs.edit().putFloat(KEY_STEPS_CONFIDENCE, v.toFloat()).apply()
+
+    /** True when the persisted coefficient came from the user's manual override, not an auto-fit. */
+    var stepsCalibrationManual: Boolean
+        get() = prefs.getBoolean(KEY_STEPS_MANUAL_FLAG, false)
+        set(v) = prefs.edit().putBoolean(KEY_STEPS_MANUAL_FLAG, v).apply()
+
+    /** User-set manual coefficient. 0 = auto-fit (null to the engine); > 0 = manual override. */
+    var stepsManualCoefficient: Double
+        get() = prefs.getFloat(KEY_STEPS_MANUAL_COEFF, 0f).toDouble().coerceAtLeast(0.0)
+        set(v) = prefs.edit().putFloat(KEY_STEPS_MANUAL_COEFF, v.coerceAtLeast(0.0).toFloat()).apply()
+
+    /** The manual override to feed into `StepsEstimateEngine.calibrate(points, manualOverride)`:
+     *  null when 0 (auto-fit), the positive value otherwise. */
+    val stepsManualOverride: Double? get() = stepsManualCoefficient.takeIf { it > 0 }
+
+    /** The auto (Tanaka) HR-max for the current age. */
+    val hrMaxAuto: Int get() = Zones.hrMaxTanaka(age)
+
+    /** Effective HR-max: the manual override if set, else the Tanaka estimate. */
+    val hrMax: Int get() = if (hrMaxOverride > 0) hrMaxOverride else hrMaxAuto
+
+    // â”€â”€ Backup settings snapshot/apply (#1000) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // The profile half of a `.noopbak`'s `settings.json`. Canonical key strings mirror
+    // `BackupSettingsCodec.WHITELIST` (and the Apple `BackupSettings.whitelist`) exactly â€” note
+    // canonical `profile.hrMax` maps onto this store's `hr_max_override` pref. Lives on ProfileStore
+    // because only it knows its private pref keys; `contains` checks keep never-set fields OUT of the
+    // snapshot so restoring on another device doesn't stamp defaults over that device's real values.
+
+    /** The user-SET profile fields, keyed canonically, for the backup exporter. */
+    fun backupSnapshot(): Map<String, Any> {
+        val out = LinkedHashMap<String, Any>()
+        if (prefs.contains(KEY_AGE)) out["profile.age"] = age
+        if (prefs.contains(KEY_SEX)) out["profile.sex"] = sex
+        if (prefs.contains(KEY_WEIGHT)) out["profile.weightKg"] = weightKg
+        if (prefs.contains(KEY_HEIGHT)) out["profile.heightCm"] = heightCm
+        if (prefs.contains(KEY_WAIST)) out["profile.waistCm"] = waistCm
+        if (prefs.contains(KEY_HRMAX)) out["profile.hrMax"] = hrMaxOverride
+        return out
+    }
+
+    /**
+     * Apply a restored backup's profile fields (canonical keys, already whitelist-filtered by
+     * `BackupSettingsCodec.decode`). Missing keys leave the current values alone; every write goes
+     * through the property setters, so the usual range clamps apply.
+     */
+    fun applyBackup(values: Map<String, Any>) {
+        (values["profile.age"] as? Number)?.let { age = it.toInt() }
+        (values["profile.sex"] as? String)?.let { sex = it }
+        (values["profile.weightKg"] as? Number)?.let { weightKg = it.toDouble() }
+        (values["profile.heightCm"] as? Number)?.let { heightCm = it.toDouble() }
+        (values["profile.waistCm"] as? Number)?.let { waistCm = it.toDouble() }
+        (values["profile.hrMax"] as? Number)?.let { hrMaxOverride = it.toInt() }
+    }
+
+    companion object {
+        private const val PREFS = "noop_profile"
+        private const val KEY_AGE = "age"
+        private const val KEY_DISPLAY_NAME = "display_name"
+        private const val KEY_SEX = "sex"
+        private const val KEY_WEIGHT = "weight_kg"
+        private const val KEY_HEIGHT = "height_cm"
+        private const val KEY_WAIST = "waist_cm"
+        private const val KEY_HRMAX = "hr_max_override"
+        private const val KEY_STEP_SCALE = "step_ticks_per_step"
+        private const val KEY_STEPS_COEFF = "steps_calibration_coefficient"
+        private const val KEY_STEPS_SAMPLE_DAYS = "steps_calibration_sample_days"
+        private const val KEY_STEPS_CONFIDENCE = "steps_calibration_confidence"
+        private const val KEY_STEPS_MANUAL_FLAG = "steps_calibration_manual"
+        private const val KEY_STEPS_MANUAL_COEFF = "steps_manual_coefficient"
+
+        private const val AGE_MIN = 13
+        private const val AGE_MAX = 100
+        private const val WEIGHT_MIN = 30.0
+        private const val WEIGHT_MAX = 250.0
+        private const val HEIGHT_MIN = 120.0
+        private const val HEIGHT_MAX = 230.0
+        private const val WAIST_MAX = 200.0
+        private const val STEP_SCALE_MIN = 0.5
+        private const val STEP_SCALE_MAX = 30.0
+        private const val MAX_DISPLAY_NAME = 40
+
+        /** Pure local-name policy, kept outside analytics and backups by design. */
+        internal fun normalizedDisplayName(value: String?): String = value?.trim().orEmpty().take(MAX_DISPLAY_NAME)
+
+        /**
+         * Variable step for the calibration stepper so high values stay reachable: fine near the
+         * 1.0 default (where most people land), coarse up at the 20s+ a 5/MG needs. A flat 0.1 step
+         * from 0.5 to 30 would be ~295 taps â€” unusable. Mirrors macOS `ProfileStore.stepScaleIncrement`.
+         *  - `< 2.0` â†’ 0.1   (precision around the default)
+         *  - `2.0â€“5.0` â†’ 0.5
+         *  - `>= 5.0` â†’ 1.0   (ballpark the ~24Ã— overcount in ~19 taps)
+         */
+        fun stepScaleIncrement(value: Double): Double = when {
+            value < 2.0 -> 0.1
+            value < 5.0 -> 0.5
+            else -> 1.0
+        }
+
+        /**
+         * One increment/decrement of the calibration divisor, snapped to the increment grid and
+         * clamped to [STEP_SCALE_MIN]..[STEP_SCALE_MAX]. Decrement uses the increment for the
+         * *target* band so the up/down sequence is symmetric at band boundaries (e.g. 5.0 âˆ’1 â†’ 4.0,
+         * 4.0 +0.5 â†’ 4.5). Mirrors macOS `ProfileStore.steppedStepScale`.
+         */
+        fun steppedStepScale(value: Double, up: Boolean): Double {
+            val delta = if (up) stepScaleIncrement(value) else stepScaleIncrement(value - 0.0001)
+            val next = Math.round((value + if (up) delta else -delta) / delta) * delta
+            return next.coerceIn(STEP_SCALE_MIN, STEP_SCALE_MAX)
+        }
+
+        fun from(context: Context): ProfileStore =
+            ProfileStore(context.getSharedPreferences(PREFS, Context.MODE_PRIVATE))
+    }
+}
+
+// MARK: - Screen
+
+@Composable
+fun SettingsScreen(
+    vm: AppViewModel,
+    onOpenTestCentre: () -> Unit = {},
+    onOpenBugReport: () -> Unit = {},
+    onOpenGoals: () -> Unit = {},
+    onOpenBackupSync: () -> Unit = {},
+    onOpenStepTraining: () -> Unit = {},
+    onOpenQuickStart: () -> Unit = {},
+    onOpenDevices: () -> Unit = {},
+    onOpenDataSources: () -> Unit = {},
+    onOpenNotifications: () -> Unit = {},
+    onOpenFriendsNetwork: () -> Unit = {},
+) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val live by vm.live.collectAsStateWithLifecycle()
+    val activeDeviceName by vm.activeDeviceName.collectAsStateWithLifecycle()
+    // Today avatar â†’ Settings: land on Profile (photo is first section). Consume one-shot flag.
+    val settingsScroll = rememberScrollState()
+    LaunchedEffect(Unit) {
+        if (SessionUiFlags.settingsFocusProfile) {
+            SessionUiFlags.settingsFocusProfile = false
+            settingsScroll.scrollTo(0)
+        }
+    }
+
+    // The profile store is stable for the lifetime of this screen; a version counter
+    // forces recomposition after each mutating write (SharedPreferences isn't reactive).
+    val profile = remember { ProfileStore.from(context) }
+    var rev by remember { mutableStateOf(0) }
+    fun mutate(block: () -> Unit) { block(); rev++ }
+
+    var backupBusy by remember { mutableStateOf(false) }
+    var backupNeverBannerDismissed by remember {
+        mutableStateOf(BackupRemindPrefs.isDismissed(context))
+    }
+    var lastBackupMs by remember { mutableStateOf(BackupSyncPrefs.lastBackupMs(context)) }
+
+    // Connections status row (#288) â€” HC permission + notification gate refresh on resume.
+    val hcAvailable = remember {
+        HealthConnectImporter.sdkStatus(context) == HealthConnectClient.SDK_AVAILABLE
+    }
+    var hcLinked by remember { mutableStateOf(false) }
+    var notifsEnabled by remember {
+        mutableStateOf(NotificationManagerCompat.from(context).areNotificationsEnabled())
+    }
+    LaunchedEffect(hcAvailable) {
+        if (!hcAvailable) {
+            hcLinked = false
+            return@LaunchedEffect
+        }
+        val granted = runCatching {
+            HealthConnectImporter.client(context).permissionController.getGrantedPermissions()
+        }.getOrDefault(emptySet())
+        hcLinked = granted.any { it in HealthConnectImporter.PERMISSIONS }
+    }
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                notifsEnabled = NotificationManagerCompat.from(context).areNotificationsEnabled()
+                lastBackupMs = BackupSyncPrefs.lastBackupMs(context)
+                backupNeverBannerDismissed = BackupRemindPrefs.isDismissed(context)
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
+    // Re-scan must request the runtime Bluetooth permission before scanning â€” without this the
+    // button calls connect() directly and silently no-ops on Android 12+ when the permission was
+    // denied/revoked (issue #1). Shared with Live's Connect via the one rememberRequestScan gate.
+    val requestScan = rememberRequestScan { vm.connect() }
+
+    // "What's New" changelog sheet, reachable any time from About (mirrors the macOS
+    // Settings â†’ About "What's new" button). Persistence/gating lives in NoopRoot; this
+    // is a manual re-open and writes nothing.
+    var showWhatsNew by remember { mutableStateOf(false) }
+
+    // "How your scores work" explainer sheet, reachable any time from About (macOS/iOS parity).
+    var showScoringGuide by remember { mutableStateOf(false) }
+
+    // "How NOOP works" primer sheet (COMPONENT 5 of the explainability layer), reachable any time
+    // from About â€” the plain-English tour of sleep sorting, scores, recording and provenance.
+    var showHowNoopWorks by remember { mutableStateOf(false) }
+
+    // "WHOOP 4.0 vs 5.0/MG: what each can read and why" explainer (FI-2 / #490), reachable from the
+    // Strap section by BOTH model owners. Clears up which features each strap supports â€” e.g. why the
+    // strap-firmware broadcast-out is 5/MG-only while NOOP's own re-broadcast works on any strap.
+    var showModelComparison by remember { mutableStateOf(false) }
+
+    // "Recalibrate Charge baseline" confirm dialog (Charge advanced). Writes now-seconds to BOTH the
+    // noop.hrvBaselineEpoch and noop.recoveryBaselineEpoch prefs so foldHistory re-seeds every baseline
+    // that feeds Charge from tonight onward; the standing analyze loop picks it up on its next pass.
+    // Fixes a baseline poisoned by a bad first week (worn sick, or early nights that anchored too high).
+    var showRecalibrateConfirm by remember { mutableStateOf(false) }
+
+    // Steps-estimate calibration screen (WHOOP 4.0), reached from the Profile card's "Steps estimate"
+    // tap-through. Mirrors the macOS StepsCalibrationSheet: honest explainer + current fit + a recent
+    // estimated-vs-phone table + a manual coefficient override. Full-screen Dialog like the guide above.
+    var showStepsCalibration by remember { mutableStateOf(false) }
+
+    // Whether the "Advanced" disclosure (experimental probes, diagnostics, raw-sensor export, Trends
+    // report) is expanded. Default FALSE so a first-run user lands on the everyday sections instead of
+    // the full wall of cards (S3); nothing is removed, every section stays one tap away by expanding.
+    // Persisted to the same key the iOS @AppStorage uses ("noop.settingsAdvancedOpen"); SharedPreferences
+    // isn't reactive, so the Switch-style toggle drives a local state that writes straight through.
+    var advancedOpen by remember {
+        mutableStateOf(SettingsDisclosurePrefs.read(NoopPrefs.of(context)))
+    }
+
+    // EXPERIMENTAL WHOOP 5/MG protocol probes (off by default). Mirrors the macOS @AppStorage toggle;
+    // SharedPreferences isn't reactive, so the Switch drives a local mutableState that the store reads.
+    val puffinExperiment = remember { PuffinExperiment.from(context) }
+    var puffinExperiments by remember { mutableStateOf(puffinExperiment.isEnabled) }
+    var puffinCapture by remember { mutableStateOf(puffinExperiment.isCaptureEnabled) }
+    var deepData by remember { mutableStateOf(puffinExperiment.isDeepDataEnabled) }
+    var broadcastHr by remember { mutableStateOf(puffinExperiment.broadcastHr) }
+    // Opt-in "Experimental sleep staging (V2)" (off by default). Lives outside the 5/MG-only card, but
+    // since #319 the engine only honours it for 5.0/MG nights (WHOOP 4.0 motion is too sparse for V2 â€”
+    // it inflated Rest and defeated the H9 guard). Re-stages detected nights with SleepStagerV2.
+    var experimentalSleepV2 by remember { mutableStateOf(puffinExperiment.experimentalSleepV2) }
+
+    // Whether to surface the WHOOP 5/MG-only probes (puffin / R22 / broadcast-HR / frame-capture). Gated
+    // so a confident 4.0 owner never sees 5/MG controls that can't touch their strap (#22). The model
+    // preference DEFAULTS to WHOOP4, so we deliberately do NOT hide on the raw default alone â€” the same
+    // "noop.selectedWhoopModel" key is rewritten to the family that actually advertised when a strap
+    // connects (WhoopBleClient.persistSelectedModel, PR#195), so a real 5/MG owner who never opened the
+    // model picker still flips this true once their strap is discovered. We also show it whenever a 5/MG
+    // is live-detected this session. Hide only when the user is confidently on a 4.0 (pref says WHOOP4
+    // AND nothing 5/MG is connected). Mirrors the macOS SettingsView `showFiveMGControls` gate.
+    val selectedModelName = remember(rev) {
+        context.getSharedPreferences(NoopPrefs.NAME, Context.MODE_PRIVATE)
+            .getString("noop.selectedWhoopModel", null)
+    }
+    // No BuildConfig.DEBUG escape here any more: the debug build used to force every 5/MG control
+    // visible, so a debug-APK user saw straps-they-don't-own settings â€” the exact noise this gate
+    // exists to remove. Test Centre remains the debug window into everything.
+    val showFiveMGControls = selectedModelName == WhoopModel.WHOOP5_MG.name ||
+        live.whoop5Detected
+    // The mirror gate: WHOOP 4.0-only controls (steps ESTIMATE calibration, the advertising-name
+    // command) hide when the user is confidently on a 5/MG â€” model pref says 5/MG (rewritten on every
+    // real connect, PR#195) and no non-5 strap is currently connected. The default/unset pref keeps
+    // them visible, mirroring the deliberate default-is-WHOOP4 reasoning above.
+    val showWhoop4Controls = selectedModelName != WhoopModel.WHOOP5_MG.name ||
+        (live.connected && !live.whoop5Detected)
+
+    // "Keep connected in the background" â€” drives WhoopConnectionService (foreground service). Default
+    // on. SharedPreferences isn't reactive, so the Switch mirrors into a local state.
+    var backgroundConnection by remember { mutableStateOf(NoopPrefs.backgroundConnection(context)) }
+
+    // "Continuous HRV capture" â€” hold the dense realtime stream armed 24/7 (better overnight HRV) at the
+    // cost of more battery. Default OFF; only does anything with background connection on. Local mirror.
+    var continuousHrv by remember { mutableStateOf(NoopPrefs.continuousHrv(context)) }
+
+    // "Overnight only" (#927): arm the continuous stream only inside the nightly quiet-hours window
+    // instead of 24/7. Default OFF so existing users keep the always-on behaviour. Local mirror.
+    var continuousHrvOvernight by remember { mutableStateOf(NoopPrefs.continuousHrvOvernight(context)) }
+
+    // Power saving â€” ease strap load when SoC is low + discharging. Default OFF.
+    var powerSaving by remember { mutableStateOf(NoopPrefs.powerSaving(context)) }
+    var powerSavingThreshold by remember {
+        mutableStateOf(NoopPrefs.powerSavingThresholdPct(context))
+    }
+    var powerSavingReleaseHrv by remember {
+        mutableStateOf(NoopPrefs.powerSavingReleaseContinuousHrv(context))
+    }
+
+    // "Debug logging" â€” mirror the strap log to logcat (adb). Default OFF so normal users don't.
+    var debugLogging by remember { mutableStateOf(NoopPrefs.debugLogging(context)) }
+
+    // "Run alongside official WHOOP app" â€” open HR/battery only; no encrypted-bond fight. Default on debug.
+    var alongsideWhoopApp by remember { mutableStateOf(NoopPrefs.alongsideWhoopApp(context)) }
+
+    // Auto-read Recovery/Strain from official WHOOP app (Accessibility + notifications).
+    var autoWhoopApp by remember { mutableStateOf(com.noop.data.WhoopAppAutoCapture.isEnabled(context)) }
+
+    // --- v5 Health & wellness toggle group. All SharedPreferences-backed (not reactive), so each Switch
+    // drives a local mirror that writes straight through to the same keys the v5 engine readers use.
+    // Illness watch routes through the ViewModel so the banner recomputes live; the rest are pref writes
+    // the engines pick up on the next analytics pass / offload. All opt-in / safe-default per spec.
+    var illnessWatch by remember { mutableStateOf(NoopPrefs.illnessWatch(context)) }
+    var cycleTracking by remember { mutableStateOf(NoopPrefs.cycleTracking(context)) }
+    var showCycleTabPref by remember { mutableStateOf(NoopPrefs.showCycleTab(context)) }
+    var confirmHideCycle by remember { mutableStateOf(false) }
+    var hydrationTracking by remember { mutableStateOf(NoopPrefs.hydrationTracking(context)) }
+    var stressCheckIn by remember { mutableStateOf(BiofeedbackPrefs.checkInEnabled(context)) }
+    var stressAutoNudge by remember { mutableStateOf(BiofeedbackPrefs.autoNudge(context)) }
+    var stressTightWaking by remember { mutableStateOf(NoopPrefs.stressTightWaking(context)) }
+    var rhythmEnabled by remember { mutableStateOf(RhythmConsent.isEnabled(context)) }
+    var coachSignals by remember { mutableStateOf(NoopPrefs.coachSignals(context)) }
+    var autoDetectWorkouts by remember { mutableStateOf(NoopPrefs.autoDetectWorkouts(context)) }
+    // Keep the screen on during a manual workout recording (#703), default OFF. The live-workout
+    // screen reads this same "workoutKeepScreenOn" key. String shared verbatim with the iOS/Mac twin
+    // (AppStorage "workoutKeepScreenOn"). Read/written inline against the shared prefs store.
+    var workoutKeepScreenOn by remember {
+        mutableStateOf(NoopPrefs.of(context).getBoolean("workoutKeepScreenOn", false))
+    }
+    // Live Sessions (beta) â€” gates the Today "Start session" entry. Unlike its section-mates this is a
+    // BETA feature flag, default ON (`live_sessions_beta`, see LiveSessionPrefs); off hides the entry.
+    var liveSessionsBeta by remember { mutableStateOf(LiveSessionPrefs.enabled(context)) }
+
+    // Scheduled debug export (#510) â€” the daily auto-export toggle + time-of-day. The settings object is
+    // its own SharedPreferences store; SharedPreferences isn't reactive, so the Switch + TimeChip mirror
+    // into local state and write straight through, then (re)schedule via DebugExportScheduler.
+    val debugExportSettings = remember { DebugExportSettings.from(context) }
+    var debugExportEnabled by remember { mutableStateOf(debugExportSettings.enabled) }
+    var debugExportMinutes by remember { mutableStateOf(debugExportSettings.timeMinutes) }
+
+    // Imperial/Metric display preference (D#103). Display-only â€” stored data stays SI. The system drives
+    // the profile fields below (imperial entry) too, so it's local state the whole screen reads.
+    // `temperatureRaw` is "" (match the system) or a TemperatureUnit raw value. SharedPreferences isn't
+    // reactive, so these mirror into local state like the toggles above.
+    var unitSystem by remember { mutableStateOf(UnitPrefs.system(context)) }
+    var temperatureRaw by remember {
+        mutableStateOf(NoopPrefs.of(context).getString(NoopPrefs.KEY_TEMPERATURE_UNIT, "") ?: "")
+    }
+    // Effort display scale (#268) â€” show NOOP's native 0â€“100 Effort or WHOOP's 0â€“21 Day Strain axis.
+    // Display-only; the stored value never changes. Mirrors into local state like the toggles above.
+    var effortScale by remember { mutableStateOf(UnitPrefs.effortScale(context)) }
+
+    // App icon (v3 "Titanium & Gold") â€” machined-titanium (.IconDefault) or blued-titanium (.IconNavy).
+    // SharedPreferences isn't reactive, so the segmented control drives this local mirror; flipping it
+    // enables exactly one launcher alias via PackageManager (see setAppIcon below).
+    var appIconNavy by remember { mutableStateOf(NoopPrefs.appIconNavy(context)) }
+
+    // Theme (System / Light / Dark) â€” drives NoopTheme; AppearancePrefs mirrors it in snapshot state.
+    var themeMode by remember { mutableStateOf(AppearancePrefs.mode) }
+    // Chart colours (Titanium / Classic) â€” re-colours gauges + charts; ChartStylePrefs mirrors it live.
+    var chartStyle by remember { mutableStateOf(ChartStylePrefs.style) }
+    // Day-cycle background (#698) â€” the time-of-day scene behind Today. Default ON. SharedPreferences
+    // isn't reactive, so the Switch mirrors into local state; TodayScreen reads the same pref on entry.
+    var showDayCycleBackground by remember { mutableStateOf(NoopPrefs.showDayCycleBackground(context)) }
+    // "Sky behind cards" (opt-in, default OFF) â€” extend the day-cycle sky behind the whole Today scroll so
+    // Card transparency reveals it under every card. Mirrors into local state; TodayScreen reads on entry.
+    var skyBehindCards by remember { mutableStateOf(NoopPrefs.skyBehindCards(context)) }
+    // Card-surface opacity (0f = clear, 1f = solid), for the "Card transparency" slider. Live-previews via
+    // CardAppearance; saved on release.
+    var cardOpacity by remember { mutableStateOf(NoopPrefs.cardOpacityPercent(context) / 100f) }
+
+    // SAF launchers â€” CreateDocument for export, OpenDocument for import.
+    val exportLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/zip"),
+    ) { uri ->
+        if (uri == null) { backupBusy = false; return@rememberLauncherForActivityResult }
+        scope.launch {
+            val result = withContext(Dispatchers.IO) {
+                runCatching { DataBackup.exportTo(context, uri) }
+            }
+            backupBusy = false
+            result.fold(
+                onSuccess = {
+                    BackupSyncPrefs.setLastBackupMs(context, System.currentTimeMillis())
+                    lastBackupMs = BackupSyncPrefs.lastBackupMs(context)
+                    Toast.makeText(
+                        context,
+                        "Backup exported. Copy this file to your new phone and use Import there to restore everything.",
+                        Toast.LENGTH_LONG,
+                    ).show()
+                },
+                onFailure = { e ->
+                    Toast.makeText(context, "Backup problem: ${e.message}", Toast.LENGTH_LONG).show()
+                },
+            )
+        }
+    }
+
+    // CSV export â€” the 4-CSV WHOOP-format zip NOOP's own importers re-import (Android + Mac).
+    val csvExportLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/zip"),
+    ) { uri ->
+        if (uri == null) { backupBusy = false; return@rememberLauncherForActivityResult }
+        scope.launch {
+            val result = withContext(Dispatchers.IO) {
+                runCatching { WhoopCsvExporter.exportZip(context, uri, vm.repo) }
+            }
+            backupBusy = false
+            result.fold(
+                onSuccess = { msg ->
+                    Toast.makeText(
+                        context,
+                        "$msg Re-import it via Data sources â†’ WHOOP import, on Android or Mac.",
+                        Toast.LENGTH_LONG,
+                    ).show()
+                },
+                onFailure = { e ->
+                    Toast.makeText(context, "CSV export problem: ${e.message}", Toast.LENGTH_LONG).show()
+                },
+            )
+        }
+    }
+
+    val importLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument(),
+    ) { uri ->
+        if (uri == null) { backupBusy = false; return@rememberLauncherForActivityResult }
+        scope.launch {
+            val result = withContext(Dispatchers.IO) {
+                DataBackup.importFrom(context, uri)
+            }
+            backupBusy = false
+            when (result) {
+                is DataBackup.ImportResult.NeedsRestart -> Toast.makeText(
+                    context,
+                    "Backup imported. Fully close and reopen NOOP for it to take effect.",
+                    Toast.LENGTH_LONG,
+                ).show()
+                is DataBackup.ImportResult.Failed -> Toast.makeText(
+                    context, result.message, Toast.LENGTH_LONG,
+                ).show()
+            }
+        }
+    }
+
+    // Modern Photo Picker for the optional profile photo (no READ_EXTERNAL_STORAGE permission needed).
+    // Returns a single image Uri (or null if cancelled); we decode + downscale + persist off the main
+    // thread via ProfileAvatarStore, which updates the live avatar everywhere. Stored only on this phone.
+    val avatarPickerLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.PickVisualMedia(),
+    ) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        scope.launch {
+            val ok = withContext(Dispatchers.IO) {
+                ProfileAvatarStore.setAvatarFromUri(context, uri)
+            }
+            if (!ok) {
+                Toast.makeText(context, "Couldn't use that photo. Try another.", Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+
+    ScreenScaffold(
+        title = LifeChapterLacquer.SETTINGS_TITLE,
+        subtitle = LifeChapterLacquer.SETTINGS_SUBTITLE,
+        // LIQUID SKY BACKDROP (the pilot pattern â€” LiquidScreenSky.kt): the static time-of-day sky settles
+        // into the theme canvas behind the top of the list, exactly like the liquid Today. This is a long,
+        // scroll-heavy list with NO hero gauge, so the liquid finish here is just the sky + liquidPress on
+        // the tappable rows. Gated on the same day-cycle background pref Today reads, so turning that off
+        // returns Settings to the plain dark canvas too.
+        topBackground = if (showDayCycleBackground) { { LiquidScreenSky(fillHeight = true) } } else null,
+        fullBleedBackground = showDayCycleBackground,
+        scrollState = settingsScroll,
+    ) {
+        // Read the revision counter so every profile write recomposes this subtree
+        // (SharedPreferences is not observable; `mutate` bumps `rev` after each write).
+        @Suppress("UNUSED_VARIABLE") val tick = rev
+
+        // --- Profile photo + age (optional avatar, chronological age for Fitness Age / Vitality) ---
+        // Avatar + Age live together so the pfp section is the place to set who you are for the engines.
+        // Age is the same ProfileStore.age the Health / Today Fitness Age path reads.
+        SettingsSection(
+            icon = Icons.Outlined.AccountCircle,
+            title = "Profile photo",
+            blurb = "Optional photo stays on this phone. Age feeds Fitness Age and Vitality â€” never uploaded.",
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(16.dp),
+            ) {
+                ProfileAvatar(size = 64.dp, contentDescription = "Profile photo")
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        NoopButton(
+                            text = if (ProfileAvatarStore.hasAvatar) "Change photo" else "Choose photo",
+                            kind = NoopButtonKind.Secondary,
+                            modifier = Modifier.weight(1f),
+                            onClick = {
+                                avatarPickerLauncher.launch(
+                                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
+                                )
+                            },
+                        )
+                        if (ProfileAvatarStore.hasAvatar) {
+                            NoopButton(
+                                text = "Remove photo",
+                                kind = NoopButtonKind.Tertiary,
+                                modifier = Modifier.weight(1f),
+                                onClick = { ProfileAvatarStore.clearAvatar(context) },
+                            )
+                        }
+                    }
+                }
+            }
+            RowDivider()
+            FormRow(label = "Age") {
+                StepperField(
+                    value = profile.age.toString(),
+                    accessibility = "Age, ${profile.age} years",
+                    // Bound to 13..100 to match iOS â€” age feeds Fitness Age + Vitality (gate on age > 0).
+                    onMinus = { mutate { profile.age = (profile.age - 1).coerceIn(13, 100) } },
+                    onPlus = { mutate { profile.age = (profile.age + 1).coerceIn(13, 100) } },
+                )
+            }
+        }
+
+        // --- Profile body ---
+        SettingsSection(
+            icon = Icons.Outlined.Person,
+            title = LifeChapterLacquer.SETTINGS_PROFILE_TITLE,
+            blurb = LifeChapterLacquer.SETTINGS_PROFILE_BLURB,
+        ) {
+            Column {
+                var displayNameDraft by remember { mutableStateOf(profile.displayName) }
+                FormRow(label = "Display name") {
+                    OutlinedTextField(
+                        value = displayNameDraft,
+                        onValueChange = {
+                            displayNameDraft = it.take(40)
+                            mutate { profile.displayName = displayNameDraft }
+                        },
+                        singleLine = true,
+                        placeholder = { Text("How NOOP addresses this profile") },
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = Palette.textPrimary,
+                            unfocusedTextColor = Palette.textPrimary,
+                            focusedBorderColor = Palette.accent,
+                            unfocusedBorderColor = Palette.hairline,
+                            focusedContainerColor = Palette.surfaceInset,
+                            unfocusedContainerColor = Palette.surfaceInset,
+                        ),
+                        modifier = Modifier.widthIn(min = 176.dp).semantics { contentDescription = "Profile display name" },
+                    )
+                }
+                Text(
+                    "Local to this phone. It does not change your strap, training data, exports, or backups.",
+                    style = NoopType.footnote,
+                    color = Palette.textTertiary,
+                )
+                RowDivider()
+                FormRow(label = "Sex") {
+                    SegmentedPillControl(
+                        items = SEX_OPTIONS,
+                        selection = SEX_OPTIONS.firstOrNull { it.tag == profile.sex } ?: SEX_OPTIONS[0],
+                        label = { it.label },
+                        onSelect = { mutate { profile.sex = it.tag } },
+                    )
+                }
+                RowDivider()
+                FormRow(label = "Weight") {
+                    // Imperial mode steps in whole pounds and stores the kg equivalent; metric steps in
+                    // 0.5 kg. The profile is always SI â€” only the entry unit changes.
+                    // Typeable field + steppers (same StepperField; draft syncs when âˆ’/+ fires).
+                    val imperial = unitSystem == UnitSystem.IMPERIAL
+                    var weightText by remember(unitSystem) {
+                        mutableStateOf(
+                            if (imperial) {
+                                "%.0f".format(UnitFormatter.kgToPounds(profile.weightKg))
+                            } else {
+                                "%.1f".format(profile.weightKg)
+                            },
+                        )
+                    }
+                    if (imperial) {
+                        val lb = UnitFormatter.kgToPounds(profile.weightKg)
+                        StepperField(
+                            value = weightText,
+                            unit = "lb",
+                            accessibility = "Weight, ${lb.roundToInt()} pounds",
+                            onMinus = {
+                                mutate {
+                                    val next = UnitFormatter.kgToPounds(profile.weightKg) - 1
+                                    profile.weightKg = next / UnitFormatter.POUNDS_PER_KILOGRAM
+                                    weightText = "%.0f".format(next)
+                                }
+                            },
+                            onPlus = {
+                                mutate {
+                                    val next = UnitFormatter.kgToPounds(profile.weightKg) + 1
+                                    profile.weightKg = next / UnitFormatter.POUNDS_PER_KILOGRAM
+                                    weightText = "%.0f".format(next)
+                                }
+                            },
+                            onValueChange = { raw ->
+                                val filtered = raw.filter { it.isDigit() || it == '.' }.take(6)
+                                weightText = filtered
+                                filtered.toDoubleOrNull()?.takeIf { it in 40.0..500.0 }?.let { lbs ->
+                                    mutate { profile.weightKg = lbs / UnitFormatter.POUNDS_PER_KILOGRAM }
+                                }
+                            },
+                        )
+                    } else {
+                        StepperField(
+                            value = weightText,
+                            unit = "kg",
+                            accessibility = "Weight in kilograms",
+                            onMinus = {
+                                mutate {
+                                    profile.weightKg = (profile.weightKg - 0.5).coerceAtLeast(20.0)
+                                    weightText = "%.1f".format(profile.weightKg)
+                                }
+                            },
+                            onPlus = {
+                                mutate {
+                                    profile.weightKg = (profile.weightKg + 0.5).coerceAtMost(400.0)
+                                    weightText = "%.1f".format(profile.weightKg)
+                                }
+                            },
+                            onValueChange = { raw ->
+                                val filtered = raw.filter { it.isDigit() || it == '.' }.take(6)
+                                weightText = filtered
+                                filtered.toDoubleOrNull()?.takeIf { it in 20.0..400.0 }?.let { kg ->
+                                    mutate { profile.weightKg = kg }
+                                }
+                            },
+                        )
+                    }
+                }
+                RowDivider()
+                FormRow(label = "Height") {
+                    // Imperial mode steps in whole inches and stores the cm equivalent; metric steps in cm.
+                    if (unitSystem == UnitSystem.IMPERIAL) {
+                        val (ft, inch) = UnitFormatter.cmToFeetInches(profile.heightCm)
+                        val totalInches = UnitFormatter.cmToInches(profile.heightCm).roundToInt()
+                        StepperField(
+                            value = "$ftâ€² $inchâ€³",
+                            accessibility = "Height, $ft feet $inch inches",
+                            onMinus = { mutate { profile.heightCm = (totalInches - 1) * UnitFormatter.CENTIMETERS_PER_INCH } },
+                            onPlus = { mutate { profile.heightCm = (totalInches + 1) * UnitFormatter.CENTIMETERS_PER_INCH } },
+                        )
+                    } else {
+                        StepperField(
+                            value = "%.0f".format(profile.heightCm),
+                            unit = "cm",
+                            accessibility = "Height in centimetres",
+                            onMinus = { mutate { profile.heightCm -= 1 } },
+                            onPlus = { mutate { profile.heightCm += 1 } },
+                        )
+                    }
+                }
+                RowDivider()
+                // Waist (optional): the one extra body measure that unlocks the Fitness Age VOâ‚‚max
+                // estimate. Unset (0) by design â€” the headline Fitness Age never needs it â€” so it shows
+                // "Add" until entered, then steps like Height (inches in imperial, cm in metric).
+                // First tap from unset seeds a typical adult waist rather than 1 cm.
+                FormRow(label = "Waist (optional)") {
+                    Column(horizontalAlignment = Alignment.End) {
+                        val hasWaist = profile.waistCm > 0.0
+                        if (unitSystem == UnitSystem.IMPERIAL) {
+                            val totalInches = UnitFormatter.cmToInches(profile.waistCm).roundToInt()
+                            StepperField(
+                                value = if (hasWaist) "%dâ€³".format(totalInches) else "Add",
+                                accessibility = if (hasWaist) {
+                                    "Waist, $totalInches inches"
+                                } else {
+                                    "Waist, not set. Optional: adds your VOâ‚‚max estimate"
+                                },
+                                valueColor = if (hasWaist) Palette.textPrimary else Palette.textTertiary,
+                                onMinus = { mutate { profile.waistCm = waistInchesStep(profile.waistCm, up = false) } },
+                                onPlus = { mutate { profile.waistCm = waistInchesStep(profile.waistCm, up = true) } },
+                            )
+                        } else {
+                            StepperField(
+                                value = if (hasWaist) "%.0f".format(profile.waistCm) else "Add",
+                                unit = if (hasWaist) "cm" else null,
+                                accessibility = if (hasWaist) {
+                                    "Waist in centimetres"
+                                } else {
+                                    "Waist, not set. Optional: adds your VOâ‚‚max estimate"
+                                },
+                                valueColor = if (hasWaist) Palette.textPrimary else Palette.textTertiary,
+                                onMinus = { mutate { profile.waistCm = waistCmStep(profile.waistCm, up = false) } },
+                                onPlus = { mutate { profile.waistCm = waistCmStep(profile.waistCm, up = true) } },
+                            )
+                        }
+                        Spacer(Modifier.height(6.dp))
+                        Text(
+                            text = if (hasWaist) "Adds your VOâ‚‚max estimate" else "Optional Â· adds your VOâ‚‚max estimate",
+                            style = NoopType.footnote,
+                            color = if (hasWaist) Palette.accent else Palette.textTertiary,
+                        )
+                    }
+                }
+                RowDivider()
+                FormRow(label = "Max heart rate") {
+                    Column(horizontalAlignment = Alignment.End) {
+                        StepperField(
+                            value = if (profile.hrMaxOverride > 0) profile.hrMaxOverride.toString() else "Auto",
+                            unit = "bpm",
+                            accessibility = if (profile.hrMaxOverride == 0) {
+                                "Max heart rate override, automatic"
+                            } else {
+                                "Max heart rate override, ${profile.hrMaxOverride} bpm"
+                            },
+                            valueColor = if (profile.hrMaxOverride > 0) Palette.textPrimary else Palette.textTertiary,
+                            onMinus = { mutate { profile.hrMaxOverride -= 1 } },
+                            onPlus = { mutate { profile.hrMaxOverride += 1 } },
+                        )
+                        Spacer(Modifier.height(6.dp))
+                        Text(
+                            text = if (profile.hrMaxOverride > 0) {
+                                "Manual override"
+                            } else {
+                                "Auto Â· ${profile.hrMaxAuto} bpm (Tanaka)"
+                            },
+                            style = NoopType.footnote,
+                            color = if (profile.hrMaxOverride > 0) Palette.accent else Palette.textTertiary,
+                        )
+                    }
+                }
+                // Step calibration (#139/#132): daily steps = @57 counter ticks Ã· this divisor.
+                // 1.0 = raw pass-through until the true 5/MG tick rate is known. The divisor goes
+                // up to 30 because a 5/MG motion counter can overcount by ~24Ã—; the stepper uses a
+                // variable increment (fine near 1.0, coarse up top) so high values stay reachable.
+                // 5/MG-only (the @57 counter doesn't exist on a 4.0) â€” hidden for a confident 4.0
+                // owner, the same one-way glass as the probes card.
+                if (showFiveMGControls) {
+                RowDivider()
+                FormRow(label = "Step calibration") {
+                    StepperField(
+                        value = "%.1f".format(profile.stepTicksPerStep),
+                        accessibility = "Step calibration, %.1f counter ticks per step"
+                            .format(profile.stepTicksPerStep),
+                        onMinus = { mutate { profile.stepTicksPerStep = ProfileStore.steppedStepScale(profile.stepTicksPerStep, up = false) } },
+                        onPlus = { mutate { profile.stepTicksPerStep = ProfileStore.steppedStepScale(profile.stepTicksPerStep, up = true) } },
+                    )
+                }
+                Text(
+                    "Counter ticks per step. Leave at 1.0 unless your steps run high. On a WHOOP 5/MG they can run very high (10Ã— or more), so this goes up to 30. Walk a known 1,000 steps and divide NOOP's count by the real count to get your value.",
+                    style = NoopType.footnote,
+                    color = Palette.textTertiary,
+                )
+                } // end if (showFiveMGControls) â€” 5/MG step divisor
+                // Tap-through to the WHOOP 4.0 steps-ESTIMATE calibration (a SEPARATE thing from the 5/MG
+                // @57 counter divisor above): a 4.0 sends no step count, so NOOP estimates steps from
+                // motion and calibrates that to the phone. Opens the explainer + fit + comparison + manual
+                // override screen. Mirrors the macOS Profile "Steps estimate" row. 4.0-only â€” a 5/MG
+                // sends a real counter, so its owner never needs the estimate path.
+                if (showWhoop4Controls) {
+                RowDivider()
+                val stepsSummary = when {
+                    profile.stepsManualCoefficient > 0 -> "Manual"
+                    profile.stepsCalibrationCoefficient > 0 ->
+                        "Auto Â· ${StepsCalibrationFormat.confidenceLabel(profile.stepsCalibrationConfidence)} confidence"
+                    else -> "Not calibrated"
+                }
+                val stepsRowInteraction = remember { MutableInteractionSource() }
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 44.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .liquidPress(stepsRowInteraction)
+                        .clickable(
+                            interactionSource = stepsRowInteraction,
+                            indication = null,
+                        ) { showStepsCalibration = true }
+                        .semantics {
+                            contentDescription =
+                                "Steps estimate calibration. $stepsSummary. Opens the calibration screen."
+                        }
+                        .padding(vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(16.dp),
+                ) {
+                    Text("Steps estimate", style = NoopType.body, color = Palette.textPrimary, modifier = Modifier.weight(1f))
+                    Text(
+                        stepsSummary,
+                        style = NoopType.footnote,
+                        color = if (profile.stepsManualCoefficient > 0) Palette.accent else Palette.textTertiary,
+                    )
+                    Icon(
+                        Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                        contentDescription = null,
+                        tint = Palette.textTertiary,
+                        modifier = Modifier.size(18.dp),
+                    )
+                }
+                Text(
+                    "For a WHOOP 4.0, which sends no step count: NOOP estimates steps from motion, calibrated to your phone. Tap to see how close it is and adjust it.",
+                    style = NoopType.footnote,
+                    color = Palette.textTertiary,
+                )
+                } // end if (showWhoop4Controls) â€” 4.0 steps estimate
+            }
+        }
+
+        // --- Units ---
+        // Imperial/Metric display toggle + a separate temperature override. Display-only â€” nothing
+        // stored changes; NOOP keeps everything in SI and converts at the point of display. Mirrors the
+        // macOS Settings â†’ Units card.
+        SettingsSection(
+            icon = Icons.Filled.Straighten,
+            // Fable 200 #74 â€” Units & time format sit next to Appearance.
+            title = LifeChapterLacquer.SETTINGS_UNITS_TITLE,
+            blurb = LifeChapterLacquer.SETTINGS_UNITS_BLURB,
+        ) {
+            Column {
+                FormRow(label = "Measurement system") {
+                    SegmentedPillControl(
+                        items = listOf(UnitSystem.METRIC, UnitSystem.IMPERIAL),
+                        selection = unitSystem,
+                        label = { if (it == UnitSystem.METRIC) "Metric" else "Imperial" },
+                        onSelect = {
+                            unitSystem = it
+                            NoopPrefs.setUnitSystem(context, it)
+                        },
+                    )
+                }
+                RowDivider()
+                FormRow(label = "Temperature") {
+                    // Three-way: "Match" follows the system above; Â°C / Â°F pin it explicitly. Stored as an
+                    // empty string ("match") or the TemperatureUnit raw value.
+                    SegmentedPillControl(
+                        items = listOf("", TemperatureUnit.CELSIUS.raw, TemperatureUnit.FAHRENHEIT.raw),
+                        selection = temperatureRaw,
+                        label = {
+                            when (it) {
+                                TemperatureUnit.CELSIUS.raw -> "Â°C"
+                                TemperatureUnit.FAHRENHEIT.raw -> "Â°F"
+                                else -> "Match"
+                            }
+                        },
+                        onSelect = {
+                            temperatureRaw = it
+                            NoopPrefs.setTemperatureUnit(context, TemperatureUnit.fromRaw(it))
+                        },
+                    )
+                }
+                RowDivider()
+                // Effort scale (#268) â€” NOOP's native 0â€“100 Effort or WHOOP's 0â€“21 Day Strain axis.
+                // Display-only; the stored value never changes, so a flip just re-labels every read-out.
+                FormRow(label = "Effort scale") {
+                    SegmentedPillControl(
+                        items = listOf(EffortScale.HUNDRED, EffortScale.WHOOP),
+                        selection = effortScale,
+                        label = { if (it == EffortScale.HUNDRED) "0-100" else "0-21" },
+                        onSelect = {
+                            effortScale = it
+                            UnitPrefs.setEffortScale(context, it)
+                        },
+                    )
+                }
+                Text(
+                    if (effortScale == EffortScale.WHOOP) "Example: WHOOP Strain 14.7 / 21"
+                    else "Example: NOOP Effort 70 / 100 (14.7Ã—100/21)",
+                    style = NoopType.caption,
+                    color = Palette.textTertiary,
+                    modifier = Modifier.padding(top = 4.dp),
+                )
+                RowDivider()
+                FormRow(label = "Time format") {
+                    Text(
+                        if (android.text.format.DateFormat.is24HourFormat(context)) "24-hour (system)"
+                        else "12-hour (system)",
+                        style = NoopType.subhead,
+                        color = Palette.textSecondary,
+                    )
+                }
+            }
+        }
+
+        // --- Appearance (Theme) ---
+        SettingsSection(
+            icon = Icons.Filled.Brightness6,
+            title = "Appearance",
+            blurb = "Light / Dark / System, plus named theme packs (Pink Blossom, Ocean Glass, and more). Frosted nav comes with packs that enable it.",
+        ) {
+            FormRow(label = "Brightness") {
+                SegmentedPillControl(
+                    items = listOf(AppearanceMode.SYSTEM, AppearanceMode.LIGHT, AppearanceMode.DARK),
+                    selection = themeMode,
+                    label = { it.label },
+                    onSelect = { mode ->
+                        themeMode = mode
+                        AppearancePrefs.set(context, mode)
+                    },
+                )
+            }
+            RowDivider()
+            var packMenuOpen by remember { mutableStateOf(false) }
+            val selectedPack = ThemePacks.byId(ThemePackPrefs.packId)
+            Text("Theme pack", style = NoopType.subhead, color = Palette.textPrimary)
+            Text(
+                "Named finish (not a marketing code). Frosted nav comes with packs that enable it.",
+                style = NoopType.footnote,
+                color = Palette.textTertiary,
+            )
+            Spacer(Modifier.height(4.dp))
+            Text(
+                selectedPack.blurb,
+                style = NoopType.caption,
+                color = Palette.textSecondary,
+            )
+            // SHIP #223 â€” one-breath preview swatch strip (not a weak empty dropdown).
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Box(
+                    Modifier
+                        .size(28.dp)
+                        .clip(CircleShape)
+                        .background(selectedPack.swatch),
+                )
+                Text(
+                    "Preview Â· ${selectedPack.label}",
+                    style = NoopType.footnote,
+                    color = Palette.textTertiary,
+                )
+            }
+            Spacer(Modifier.height(8.dp))
+            Box(Modifier.fillMaxWidth()) {
+                OutlinedTextField(
+                    value = selectedPack.label,
+                    onValueChange = {},
+                    readOnly = true,
+                    label = { Text("Theme pack") },
+                    trailingIcon = {
+                        IconButton(onClick = { packMenuOpen = !packMenuOpen }) {
+                            Icon(
+                                Icons.Filled.KeyboardArrowDown,
+                                contentDescription = null,
+                                modifier = Modifier.rotate(if (packMenuOpen) 180f else 0f),
+                            )
+                        }
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { packMenuOpen = true },
+                    colors = androidx.compose.material3.OutlinedTextFieldDefaults.colors(
+                        focusedTextColor = Palette.textPrimary,
+                        unfocusedTextColor = Palette.textPrimary,
+                    ),
+                )
+                DropdownMenu(
+                    expanded = packMenuOpen,
+                    onDismissRequest = { packMenuOpen = false },
+                    modifier = Modifier.fillMaxWidth(0.92f),
+                ) {
+                    ThemePacks.all.forEach { pack ->
+                        DropdownMenuItem(
+                            text = {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                ) {
+                                    Box(
+                                        Modifier
+                                            .size(14.dp)
+                                            .clip(CircleShape)
+                                            .background(pack.swatch),
+                                    )
+                                    Column {
+                                        Text(pack.label, style = NoopType.subhead, color = Palette.textPrimary)
+                                        Text(pack.blurb, style = NoopType.caption, color = Palette.textTertiary, maxLines = 1)
+                                    }
+                                }
+                            },
+                            onClick = {
+                                ThemePackPrefs.set(context, pack)
+                                packMenuOpen = false
+                                // SHIP #238 â€” one-breath confirm that the pack actually applied.
+                                android.widget.Toast.makeText(
+                                    context,
+                                    "Applied Â· ${pack.label} Â· holds for a breath",
+                                    android.widget.Toast.LENGTH_SHORT,
+                                ).show()
+                            },
+                        )
+                    }
+                }
+            }
+            RowDivider()
+            FormRow(label = "Chart colours") {
+                // Titanium = brand gold/amber/blue ramps; Classic = throwback redâ†’green readiness scale
+                // (coolâ†’hot zones, greenâ†’red stress). Re-colours every gauge/chart, in both schemes.
+                SegmentedPillControl(
+                    items = listOf(ChartStyle.TITANIUM, ChartStyle.CLASSIC),
+                    selection = chartStyle,
+                    label = { it.label },
+                    onSelect = { style ->
+                        chartStyle = style
+                        ChartStylePrefs.set(context, style)
+                    },
+                )
+            }
+
+            // Day-cycle background (#698): the time-of-day scene behind Today. On by default. Off swaps it
+            // for a plain dark canvas for people who find the moving scene distracting. Takes effect next
+            // time Today is opened (the pref is read once on entry, like the other Today-screen toggles).
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(16.dp),
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        "Day-cycle background",
+                        style = NoopType.subhead,
+                        color = Palette.textPrimary,
+                    )
+                    Text(
+                        "Shows a soft sunrise, day, dusk and night scene behind the Today screen. Turn it off for a plain dark canvas. Your cards stay exactly as readable.",
+                        style = NoopType.footnote,
+                        color = Palette.textTertiary,
+                    )
+                }
+                Switch(
+                    checked = showDayCycleBackground,
+                    onCheckedChange = {
+                        showDayCycleBackground = it
+                        NoopPrefs.setShowDayCycleBackground(context, it)
+                    },
+                    colors = SwitchDefaults.colors(
+                        checkedThumbColor = Palette.surfaceBase,
+                        checkedTrackColor = Palette.accent,
+                        uncheckedThumbColor = Palette.textSecondary,
+                        uncheckedTrackColor = Palette.surfaceInset,
+                        uncheckedBorderColor = Palette.hairline,
+                    ),
+                )
+            }
+
+            // Sky behind cards (opt-in): extend the day-cycle sky behind the WHOLE Today scroll so the Card
+            // transparency slider reveals it under every card, not just the hero. Off = the sky stays a top
+            // band and lower cards fade toward the flat canvas. Needs the day-cycle background to be on.
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(16.dp),
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        "Sky behind cards",
+                        style = NoopType.subhead,
+                        color = if (showDayCycleBackground) Palette.textPrimary else Palette.textTertiary,
+                    )
+                    Text(
+                        "Extends the sky behind the whole Today screen, so lowering Card transparency lets it show through every card. Needs the day-cycle background on.",
+                        style = NoopType.footnote,
+                        color = Palette.textTertiary,
+                    )
+                }
+                Switch(
+                    enabled = showDayCycleBackground,
+                    checked = skyBehindCards && showDayCycleBackground,
+                    onCheckedChange = {
+                        skyBehindCards = it
+                        NoopPrefs.setSkyBehindCards(context, it)
+                    },
+                    colors = SwitchDefaults.colors(
+                        checkedThumbColor = Palette.surfaceBase,
+                        checkedTrackColor = Palette.accent,
+                        uncheckedThumbColor = Palette.textSecondary,
+                        uncheckedTrackColor = Palette.surfaceInset,
+                        uncheckedBorderColor = Palette.hairline,
+                    ),
+                )
+            }
+
+            // Card transparency: scale every frosted card's glass toward the background. Live-preview (the
+            // cards on THIS screen update as you drag) via CardAppearance; saved on release. Default solid.
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(16.dp),
+                ) {
+                    Text(
+                        "Card transparency",
+                        style = NoopType.subhead,
+                        color = Palette.textPrimary,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Text(
+                        "${((1f - cardOpacity) * 100).toInt()}%",
+                        style = NoopType.number(15f),
+                        color = Palette.accent,
+                    )
+                }
+                Text(
+                    "How see-through the cards (Heart Rate, Key Metrics, â€¦) are. Left = solid, right = clear.",
+                    style = NoopType.footnote,
+                    color = Palette.textTertiary,
+                )
+                Slider(
+                    // The slider shows TRANSPARENCY (0 = solid, 1 = fully clear); we store the OPACITY.
+                    value = 1f - cardOpacity,
+                    onValueChange = { t ->
+                        cardOpacity = 1f - t
+                        CardAppearance.opacity = cardOpacity   // live preview on every card on-screen
+                    },
+                    onValueChangeFinished = {
+                        NoopPrefs.setCardOpacityPercent(context, (cardOpacity * 100).toInt())
+                    },
+                    valueRange = 0f..1f,
+                    colors = SliderDefaults.colors(
+                        thumbColor = Palette.accent,
+                        activeTrackColor = Palette.accent,
+                        inactiveTrackColor = Palette.surfaceInset,
+                    ),
+                )
+            }
+            RowDivider()
+            // #174 â€” grip-pulse opt-in (default OFF). AppRoot starts/stops via pref listener.
+            var gripPulse by remember { mutableStateOf(NoopPrefs.gripPulseEnabled(context)) }
+            ToggleRow(
+                title = "Grip pulse â†’ Workouts",
+                detail = "Optional. Double phone squeeze-pulse opens Workouts. Off by default â€” phone grip is experimental, not Apple Watchâ€“class.",
+                checked = gripPulse,
+                onCheckedChange = { on ->
+                    gripPulse = on
+                    NoopPrefs.setGripPulseEnabled(context, on)
+                },
+            )
+        }
+
+        // --- App icon (v3 "Titanium & Gold") ---
+        // Two staged launcher icons â€” machined titanium (default) and blued/dark-blue titanium. The
+        // swap is done by enabling exactly one <activity-alias> (.IconDefault / .IconNavy) at runtime;
+        // the launcher may take a beat (or briefly disappear/redraw) while it re-reads the icon.
+        SettingsSection(
+            icon = Icons.Filled.Palette,
+            title = "App icon",
+            blurb = "Choose how NOOP looks on your home screen. The launcher may take a moment to refresh the icon after you change it.",
+        ) {
+            FormRow(label = "Icon") {
+                SegmentedPillControl(
+                    items = listOf(false, true),
+                    selection = appIconNavy,
+                    label = { if (it) "Blue Titanium" else "Titanium" },
+                    onSelect = { navy ->
+                        appIconNavy = navy
+                        setAppIcon(context, navy)
+                    },
+                )
+            }
+        }
+
+        // --- Connections (#288) â€” quiet strap / HC / notifications status before Strap detail ---
+        SettingsSection(
+            icon = Icons.Filled.Link,
+            title = LifeChapterLacquer.SETTINGS_CONNECTIONS_TITLE,
+            blurb = LifeChapterLacquer.SETTINGS_CONNECTIONS_BLURB,
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                // SHIP #91 â€” taxonomy: Connections â‰  Cycle reminders â‰  Sleep alarms â‰  system Notifications.
+                Text(
+                    // SHIP #274 â€” three pairing stories named once, not three competing wizards.
+                    "Three stories, one home: Devices = strap BLE pair Â· Health Connect = phone health import Â· " +
+                        "Bluetooth settings = OS radio. Cycle reminders on Cycle. Alarms on Sleep | Alarm. System alerts under Notifications.",
+                    style = NoopType.caption,
+                    color = Palette.textTertiary,
+                )
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    StatePill(
+                        title = "Strap Â· ${settingsStrapStatusTitle(live.bonded, live.connected)}",
+                        tone = strapTone(live.bonded, live.connected),
+                        pulsing = live.connected,
+                        showsDot = live.connected || live.bonded,
+                        modifier = Modifier
+                            .clickable(onClick = onOpenDevices)
+                            .semantics {
+                                contentDescription =
+                                    "Strap ${settingsStrapStatusTitle(live.bonded, live.connected)}. Open devices."
+                            },
+                    )
+                    StatePill(
+                        title = when {
+                            !hcAvailable -> "HC Â· â€”"
+                            hcLinked -> "HC Â· On"
+                            else -> "HC Â· Off"
+                        },
+                        tone = when {
+                            !hcAvailable -> StrandTone.Neutral
+                            hcLinked -> StrandTone.Positive
+                            else -> StrandTone.Warning
+                        },
+                        showsDot = hcAvailable && hcLinked,
+                        modifier = Modifier
+                            .clickable(onClick = onOpenDataSources)
+                            .semantics { contentDescription = "Health Connect. Open data sources." },
+                    )
+                    StatePill(
+                        title = if (notifsEnabled) "Alerts Â· On" else "Alerts Â· Off",
+                        tone = if (notifsEnabled) StrandTone.Positive else StrandTone.Warning,
+                        showsDot = notifsEnabled,
+                        modifier = Modifier
+                            .clickable(onClick = onOpenNotifications)
+                            .semantics { contentDescription = "Notifications. Open notification settings." },
+                    )
+                }
+                Text(
+                    LifeChapterLacquer.SETTINGS_RECONNECT_POLICY,
+                    style = NoopType.footnote,
+                    color = Palette.textTertiary,
+                )
+            }
+        }
+
+        // --- Strap ---
+        SettingsSection(
+            icon = Icons.Filled.Sensors,
+            title = LifeChapterLacquer.SETTINGS_STRAP_TITLE,
+            blurb = LifeChapterLacquer.SETTINGS_STRAP_BLURB,
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                // L12 / P2 #9 â€” active strap name always obvious (same idea as Live ActiveBandRow).
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(Palette.surfaceInset)
+                        .clickable(onClick = onOpenDevices)
+                        .padding(horizontal = 12.dp, vertical = 10.dp)
+                        .semantics { contentDescription = "Active strap, manage devices" },
+                ) {
+                    Icon(
+                        Icons.Filled.Watch,
+                        contentDescription = null,
+                        tint = Palette.accent,
+                        modifier = Modifier.size(22.dp),
+                    )
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("Active strap", style = NoopType.footnote, color = Palette.textTertiary)
+                        Text(
+                            activeDeviceName ?: "WHOOP",
+                            style = NoopType.headline,
+                            color = Palette.textPrimary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                    Text("Manage", style = NoopType.subhead, color = Palette.accent)
+                    Icon(
+                        Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                        contentDescription = null,
+                        tint = Palette.accent,
+                        modifier = Modifier.size(18.dp),
+                    )
+                }
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    StatePill(
+                        title = settingsStrapStatusTitle(live.bonded, live.connected),
+                        tone = strapTone(live.bonded, live.connected),
+                        pulsing = live.connected,
+                    )
+                    live.batteryPct?.let { pct ->
+                        // Fable #445 â€” DEBUG: battery pill opens charging overlay preview (Test Centre path).
+                        val batteryTitle = "Battery ${pct.roundToInt()}%" +
+                            if (live.charging == true) " Â· Charging" else ""
+                        if (com.noop.BuildConfig.DEBUG) {
+                            StatePill(
+                                title = batteryTitle,
+                                tone = batteryTone(pct),
+                                showsDot = false,
+                                modifier = Modifier
+                                    .clickable {
+                                        ChargingUiPreview.show(pct.coerceIn(1.0, 100.0))
+                                    }
+                                    .semantics {
+                                        contentDescription = "$batteryTitle. Preview charging animation."
+                                    },
+                            )
+                        } else {
+                            StatePill(
+                                title = batteryTitle,
+                                tone = batteryTone(pct),
+                                showsDot = false,
+                            )
+                        }
+                    }
+                }
+                Text(
+                    settingsStrapStatusDetail(
+                        bonded = live.bonded,
+                        connected = live.connected,
+                        scanning = live.scanning,
+                        alongsideWhoopApp = alongsideWhoopApp,
+                    ),
+                    style = NoopType.subhead,
+                    color = Palette.textSecondary,
+                )
+                if (com.noop.BuildConfig.DEBUG && live.batteryPct != null) {
+                    Text(
+                        "Tap battery pill to preview charging (Test Centre).",
+                        style = NoopType.footnote,
+                        color = Palette.textTertiary,
+                    )
+                }
+                // Command framing override â€” MG often exposes both GATT UUIDs; Auto prefers 5/MG
+                // so buzz uses maverick 0x13 instead of WHOOP 4.0 cmd 79.
+                var protocolMode by remember {
+                    mutableStateOf(NoopPrefs.bleProtocolMode(context))
+                }
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Command protocol", style = NoopType.subhead, color = Palette.textPrimary)
+                    SegmentedPillControl(
+                        items = BleProtocolMode.entries,
+                        selection = protocolMode,
+                        label = { it.label },
+                        onSelect = {
+                            protocolMode = it
+                            vm.setBleProtocolMode(it)
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Text(
+                        buildString {
+                            append(
+                                when (protocolMode) {
+                                    BleProtocolMode.AUTO ->
+                                        "Auto: if the strap shows both WHOOP services, use 5.0/MG framing (correct buzz on MG)."
+                                    BleProtocolMode.WHOOP4 ->
+                                        "Force WHOOP 4.0 framing (cmd 79 buzz). Only if you own a 4.0."
+                                    BleProtocolMode.WHOOP5 ->
+                                        "Force 5.0/MG framing (maverick 0x13 buzz)."
+                                },
+                            )
+                            live.commandFamilyLabel?.let { append(" Active now: $it.") }
+                            if (live.alongsideMode) {
+                                append(" Alongside WHOOP app is on â€” buzz needs exclusive bond (turn alongside off + re-pair).")
+                            }
+                        },
+                        style = NoopType.footnote,
+                        color = Palette.textTertiary,
+                    )
+                    NoopButton(
+                        text = "Test strap buzz",
+                        leadingIcon = Icons.Filled.Sensors,
+                        kind = NoopButtonKind.Secondary,
+                        fullWidth = true,
+                        onClick = {
+                            vm.buzzStrapOnce()
+                            val fam = live.commandFamilyLabel ?: "unknown framing"
+                            val note = when {
+                                !live.connected -> "Not connected"
+                                live.alongsideMode -> "Alongside on â€” may stay silent"
+                                !live.encryptedBond && live.whoop5Detected -> "No exclusive bond yet"
+                                else -> "Sent ($fam)"
+                            }
+                            Toast.makeText(context, "Buzz: $note. Check wrist + Bug report / Share strap log if silent.", Toast.LENGTH_LONG).show()
+                        },
+                    )
+                }
+                // Fable 200 #75 / SHIP #268 â€” battery optimization deep link earlier (after 1 drop).
+                run {
+                    val prefs = NoopPrefs.of(context)
+                    val today = java.time.LocalDate.now().toString()
+                    val dropsToday = if (prefs.getString("fable_ble_drop_day", null) == today) {
+                        prefs.getInt("fable_ble_drop_count", 0)
+                    } else {
+                        0
+                    }
+                    val pm = context.getSystemService(Context.POWER_SERVICE) as? android.os.PowerManager
+                    val ignoring = pm?.isIgnoringBatteryOptimizations(context.packageName) == true
+                    if (dropsToday >= 1 && !ignoring) {
+                        NoopButton(
+                            text = "Allow background battery",
+                            leadingIcon = Icons.Filled.Bolt,
+                            kind = NoopButtonKind.Secondary,
+                            fullWidth = true,
+                            onClick = {
+                                val intent = Intent().apply {
+                                    action = android.provider.Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS
+                                }
+                                runCatching { context.startActivity(intent) }.onFailure {
+                                    runCatching {
+                                        context.startActivity(
+                                            Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                                                data = Uri.parse("package:${context.packageName}")
+                                            },
+                                        )
+                                    }
+                                }
+                            },
+                        )
+                        Text(
+                            if (dropsToday == 1) {
+                                "Strap dropped once today. Letting NOOP run in the background often fixes overnight disconnects."
+                            } else {
+                                "Frequent strap drops today ($dropsToday). Letting NOOP run in the background often fixes overnight disconnects."
+                            },
+                            style = NoopType.footnote,
+                            color = Palette.textTertiary,
+                        )
+                    }
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    NoopButton(
+                        text = if (live.scanning) "Searchingâ€¦" else "Re-scan",
+                        leadingIcon = Icons.Filled.Refresh,
+                        kind = NoopButtonKind.Primary,
+                        enabled = !live.scanning,
+                        onClick = { requestScan() },
+                    )
+
+                    NoopButton(
+                        text = "Disconnect",
+                        leadingIcon = Icons.Filled.Cancel,
+                        kind = NoopButtonKind.Secondary,
+                        enabled = live.connected || live.bonded,
+                        onClick = { vm.disconnect() },
+                    )
+                }
+
+                // Hardware advertising-name command (WHOOP 4.0 only). The reliable name for every device is
+                // the Room-backed "Name in NOOP" alias in Devices; this command is a separate 4.0 request.
+                if (live.connected && !live.whoop5Detected) {
+                    var nameDraft by remember(live.advertisingName) { mutableStateOf(live.advertisingName ?: "") }
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("Bluetooth strap name (WHOOP 4.0)", style = NoopType.subhead, color = Palette.textPrimary)
+                        Text(
+                            "Sends the observed WHOOP 4.0 advertising-name command. The strap reboots; confirm " +
+                                "the new Bluetooth name after reconnecting. WHOOP 5/MG uses your local NOOP alias instead.",
+                            style = NoopType.footnote,
+                            color = Palette.textTertiary,
+                        )
+                        OutlinedTextField(
+                            value = nameDraft,
+                            onValueChange = { nameDraft = it.take(24) },
+                            singleLine = true,
+                            placeholder = { Text("WHOOP", style = NoopType.body, color = Palette.textTertiary) },
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedTextColor = Palette.textPrimary,
+                                unfocusedTextColor = Palette.textPrimary,
+                                focusedBorderColor = Palette.accent,
+                                unfocusedBorderColor = Palette.hairline,
+                                cursorColor = Palette.accent,
+                                focusedContainerColor = Palette.surfaceInset,
+                                unfocusedContainerColor = Palette.surfaceInset,
+                            ),
+                        )
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            NoopButton(
+                                text = "Rename",
+                                leadingIcon = Icons.Filled.Edit,
+                                kind = NoopButtonKind.Primary,
+                                enabled = live.bonded && nameDraft.isNotBlank(),
+                                onClick = { vm.ble.renameStrap(nameDraft) },
+                            )
+                            live.renameStatus?.let {
+                                Text(it, style = NoopType.footnote, color = Palette.textSecondary, modifier = Modifier.weight(1f))
+                            }
+                        }
+                    }
+                }
+
+                // Coexist with the official WHOOP app: open live HR/battery only, no bond steal.
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(16.dp),
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            "Run alongside official WHOOP app",
+                            style = NoopType.subhead,
+                            color = Palette.textPrimary,
+                        )
+                        Text(
+                            "Leave the official WHOOP app open. NOOP collects open live heart rate, beat-to-beat R-R and battery only â€” it will not fight for the encrypted bond. History sync, buzz, SpO2 and blood pressure stay with WHOOP. Turn off when you want NOOP to take the full private bond instead. Takes effect on the next Connect.",
+                            style = NoopType.footnote,
+                            color = Palette.textTertiary,
+                        )
+                    }
+                    Switch(
+                        checked = alongsideWhoopApp,
+                        onCheckedChange = {
+                            alongsideWhoopApp = it
+                            vm.setAlongsideWhoopApp(it)
+                        },
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = Palette.surfaceBase,
+                            checkedTrackColor = Palette.accent,
+                            uncheckedThumbColor = Palette.textSecondary,
+                            uncheckedTrackColor = Palette.surfaceInset,
+                            uncheckedBorderColor = Palette.hairline,
+                        ),
+                    )
+                }
+
+                // TEMP (Gilbert): Test buzz auto-diag to PC collector â€” remove when buzz is solid.
+                var buzzAutoDiag by remember { mutableStateOf(NoopPrefs.buzzAutoDiag(context)) }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(16.dp),
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            "Auto-send Test buzz diagnostics",
+                            style = NoopType.subhead,
+                            color = Palette.textPrimary,
+                        )
+                        Text(
+                            "After Test buzz, push strap-log lines to the PC collector on your local network. Temporary â€” turn off when buzz is reliable.",
+                            style = NoopType.footnote,
+                            color = Palette.textTertiary,
+                        )
+                    }
+                    Switch(
+                        checked = buzzAutoDiag,
+                        onCheckedChange = {
+                            buzzAutoDiag = it
+                            NoopPrefs.setBuzzAutoDiag(context, it)
+                        },
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = Palette.surfaceBase,
+                            checkedTrackColor = Palette.accent,
+                            uncheckedThumbColor = Palette.textSecondary,
+                            uncheckedTrackColor = Palette.surfaceInset,
+                            uncheckedBorderColor = Palette.hairline,
+                        ),
+                    )
+                }
+
+                // Auto-capture Recovery / Day Strain from WHOOP *app* UI (for model training labels).
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(16.dp),
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            "Auto-capture WHOOP app scores",
+                            style = NoopType.subhead,
+                            color = Palette.textPrimary,
+                        )
+                        Text(
+                            "When you open the official WHOOP app, NOOP reads on-screen Recovery % and Day Strain (0â€“21) for model labels â€” not from the bracelet. Also parses WHOOP notifications. Grant Accessibility + Notification access below.",
+                            style = NoopType.footnote,
+                            color = Palette.textTertiary,
+                        )
+                    }
+                    Switch(
+                        checked = autoWhoopApp,
+                        onCheckedChange = {
+                            autoWhoopApp = it
+                            com.noop.data.WhoopAppAutoCapture.setEnabled(context, it)
+                        },
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = Palette.surfaceBase,
+                            checkedTrackColor = Palette.accent,
+                            uncheckedThumbColor = Palette.textSecondary,
+                            uncheckedTrackColor = Palette.surfaceInset,
+                            uncheckedBorderColor = Palette.hairline,
+                        ),
+                    )
+                }
+                OutlinedButton(
+                    onClick = {
+                        runCatching {
+                            context.startActivity(com.noop.data.WhoopAppAutoCapture.accessibilitySettingsIntent())
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                ) { Text("Open Accessibility settings", style = NoopType.footnote) }
+                OutlinedButton(
+                    onClick = {
+                        runCatching {
+                            context.startActivity(com.noop.data.WhoopAppAutoCapture.notificationListenerSettingsIntent())
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                ) { Text("Open Notification access", style = NoopType.footnote) }
+
+                // Keep streaming when the app is closed (Android foreground service). On Mac, NOOP
+                // already keeps your strap connected from the menu bar â€” just close the window.
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(16.dp),
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            "Keep connected in the background",
+                            style = NoopType.subhead,
+                            color = Palette.textPrimary,
+                        )
+                        Text(
+                            "Keeps streaming from your strap with an ongoing notification, even after you close NOOP. Turn off to disconnect when the app is closed.",
+                            style = NoopType.footnote,
+                            color = Palette.textTertiary,
+                        )
+                    }
+                    Switch(
+                        checked = backgroundConnection,
+                        onCheckedChange = {
+                            backgroundConnection = it
+                            vm.setBackgroundConnection(it)
+                        },
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = Palette.surfaceBase,
+                            checkedTrackColor = Palette.accent,
+                            uncheckedThumbColor = Palette.textSecondary,
+                            uncheckedTrackColor = Palette.surfaceInset,
+                            uncheckedBorderColor = Palette.hairline,
+                        ),
+                    )
+                }
+
+                // Continuous HRV capture: keep the dense beat-to-beat (R-R) stream armed even with no Live
+                // screen open, so the strap banks far more data overnight for better HRV/recovery/sleep.
+                // Honest battery framing â€” continuous HR streaming uses more battery. Needs background
+                // connection on (there's no background link to stream over otherwise). Default OFF.
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(16.dp),
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            "Continuous HRV capture",
+                            style = NoopType.subhead,
+                            color = Palette.textPrimary,
+                        )
+                        Text(
+                            "Keeps the detailed beat-to-beat stream running all day and night, not just while a live screen is open, so NOOP captures much more for overnight HRV, recovery and sleep. Uses more battery (your strap streams heart rate continuously). Needs \"Keep connected in the background\" on.",
+                            style = NoopType.footnote,
+                            color = Palette.textTertiary,
+                        )
+                    }
+                    Switch(
+                        checked = continuousHrv,
+                        onCheckedChange = {
+                            continuousHrv = it
+                            vm.setContinuousHrv(it)
+                        },
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = Palette.surfaceBase,
+                            checkedTrackColor = Palette.accent,
+                            uncheckedThumbColor = Palette.textSecondary,
+                            uncheckedTrackColor = Palette.surfaceInset,
+                            uncheckedBorderColor = Palette.hairline,
+                        ),
+                    )
+                }
+
+                // Overnight only (#927): window-gate the continuous stream to the nightly quiet-hours
+                // window. Shown only while Continuous HRV capture is on; default OFF so existing users
+                // keep the always-on behaviour with no migration.
+                if (continuousHrv) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(16.dp),
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                "Overnight only",
+                                style = NoopType.subhead,
+                                color = Palette.textPrimary,
+                            )
+                            Text(
+                                "Runs the continuous HRV stream only during your quiet hours window (22:00â€“07:00 by default), roughly halving the battery cost. Daytime Stress readings will be sparser. " +
+                                "Note: continuous background HRV capture (including daytime naps) is paused outside this window. " +
+                                "For on-demand daytime HRV readings (including naps), use the \"Take an HRV reading\" button on the Live screen.",
+                                style = NoopType.footnote,
+                                color = Palette.textTertiary,
+                            )
+                        }
+                        Switch(
+                            checked = continuousHrvOvernight,
+                            onCheckedChange = {
+                                continuousHrvOvernight = it
+                                vm.setContinuousHrvOvernight(it)
+                            },
+                            colors = SwitchDefaults.colors(
+                                checkedThumbColor = Palette.surfaceBase,
+                                checkedTrackColor = Palette.accent,
+                                uncheckedThumbColor = Palette.textSecondary,
+                                uncheckedTrackColor = Palette.surfaceInset,
+                                uncheckedBorderColor = Palette.hairline,
+                            ),
+                        )
+                    }
+                }
+
+                // Diagnostics: "Debug logging" mirrors the strap log to logcat (adb). Default OFF â€” a
+                // normal user never needs to write the connection log to the system log; the in-app log
+                // (and the "Share strap log" export below) work regardless. Developers flip this on to
+                // watch the connection live over `adb logcat -s WhoopBleClient`.
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(16.dp),
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            "Debug logging",
+                            style = NoopType.subhead,
+                            color = Palette.textPrimary,
+                        )
+                        Text(
+                            "Also write the strap log to the system log (logcat) for development over adb. Off by default; the in-app log and â€œShare strap logâ€ below work either way.",
+                            style = NoopType.footnote,
+                            color = Palette.textTertiary,
+                        )
+                    }
+                    Switch(
+                        checked = debugLogging,
+                        onCheckedChange = {
+                            debugLogging = it
+                            vm.setDebugLogging(it)
+                        },
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = Palette.surfaceBase,
+                            checkedTrackColor = Palette.accent,
+                            uncheckedThumbColor = Palette.textSecondary,
+                            uncheckedTrackColor = Palette.surfaceInset,
+                            uncheckedBorderColor = Palette.hairline,
+                        ),
+                        modifier = Modifier.semantics {
+                            contentDescription = "Debug logging"
+                        },
+                    )
+                }
+
+                // Raw strap log â€” full Bug report (photos + zip) lives under Settings â†’ Bug report / More â†’ App.
+                NoopButton(
+                    text = "Share strap log only",
+                    leadingIcon = Icons.Filled.Upload,
+                    kind = NoopButtonKind.Secondary,
+                    fullWidth = true,
+                    onClick = { scope.launch { LogExport.shareStrapLog(context, vm.ble.exportLogText()) } },
+                )
+                Text(
+                    "For a full report with screenshots, use Bug report (Settings or More â†’ App).",
+                    style = NoopType.caption,
+                    color = Palette.textTertiary,
+                )
+
+                // "WHOOP 4.0 vs 5.0/MG â€” what each can read and why" (FI-2 / #490). Shown to BOTH model
+                // owners, so a 4.0 user understands their strap is fully supported (and why the firmware
+                // broadcast-out is 5/MG-only while NOOP's own re-broadcast in Data Sources works on a 4.0).
+                val modelComparisonInteraction = remember { MutableInteractionSource() }
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .liquidPress(modelComparisonInteraction)
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(Palette.surfaceInset)
+                        .border(1.dp, Palette.hairline, RoundedCornerShape(10.dp))
+                        .clickable(
+                            interactionSource = modelComparisonInteraction,
+                            indication = null,
+                        ) { showModelComparison = true }
+                        .padding(horizontal = 14.dp, vertical = 12.dp)
+                        .semantics { contentDescription = "WHOOP 4.0 versus 5.0: what each can read and why" },
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        Icon(
+                            Icons.Filled.Info,
+                            contentDescription = null,
+                            tint = Palette.accent,
+                            modifier = Modifier.size(18.dp),
+                        )
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("WHOOP 4.0 vs 5.0/MG", style = NoopType.headline, color = Palette.textPrimary)
+                            Text(
+                                "What each strap can read, and why some features differ.",
+                                style = NoopType.footnote,
+                                color = Palette.textSecondary,
+                            )
+                        }
+                        Text("â€º", style = NoopType.title2, color = Palette.accent)
+                    }
+                }
+            }
+        }
+
+        // Power saving â€” ease strap load when SoC is low and discharging (product #477 ask).
+        SettingsSection(
+            icon = Icons.Filled.Bolt,
+            title = LifeChapterLacquer.SETTINGS_POWER_TITLE,
+            blurb = LifeChapterLacquer.SETTINGS_POWER_BLURB,
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(16.dp),
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            "Ease strap when battery is low",
+                            style = NoopType.subhead,
+                            color = Palette.textPrimary,
+                        )
+                        Text(
+                            "Stretches background history sync from every 15 minutes to every 45 while your strap is at or below the threshold and not charging. The strap still banks its own data â€” syncs just arrive in larger batches.",
+                            style = NoopType.footnote,
+                            color = Palette.textTertiary,
+                        )
+                    }
+                    Switch(
+                        checked = powerSaving,
+                        onCheckedChange = {
+                            powerSaving = it
+                            vm.setPowerSaving(it)
+                        },
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = Palette.surfaceBase,
+                            checkedTrackColor = Palette.accent,
+                            uncheckedThumbColor = Palette.textSecondary,
+                            uncheckedTrackColor = Palette.surfaceInset,
+                            uncheckedBorderColor = Palette.hairline,
+                        ),
+                    )
+                }
+                if (powerSaving) {
+                    val easingNow = com.noop.ble.PowerSavingPolicy.isActive(
+                        enabled = true,
+                        thresholdPct = powerSavingThreshold,
+                        batteryPct = live.batteryPct,
+                        charging = live.charging,
+                    )
+                    val powerLine = settingsPowerSavingStatus(
+                        easingNow = easingNow,
+                        batteryPct = live.batteryPct,
+                        charging = live.charging,
+                        thresholdPct = powerSavingThreshold,
+                    )
+                    Text(
+                        powerLine,
+                        style = NoopType.footnote,
+                        color = if (easingNow) Palette.accent else Palette.textTertiary,
+                    )
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(
+                            "Start easing at ${powerSavingThreshold}%",
+                            style = NoopType.subhead,
+                            color = Palette.textPrimary,
+                        )
+                        Text(
+                            "Choose 10â€“30%. Below this SoC (while discharging), sync stretches to 45 minutes.",
+                            style = NoopType.footnote,
+                            color = Palette.textTertiary,
+                        )
+                        Slider(
+                            value = powerSavingThreshold.toFloat(),
+                            onValueChange = {
+                                val v = com.noop.ble.PowerSavingPolicy.clampThreshold(it.toInt())
+                                powerSavingThreshold = v
+                            },
+                            onValueChangeFinished = {
+                                vm.setPowerSavingThresholdPct(powerSavingThreshold)
+                            },
+                            valueRange = 10f..30f,
+                            steps = 19,
+                            colors = SliderDefaults.colors(
+                                thumbColor = Palette.accent,
+                                activeTrackColor = Palette.accent,
+                                inactiveTrackColor = Palette.surfaceInset,
+                            ),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .semantics {
+                                    contentDescription = "Power saving threshold ${powerSavingThreshold} percent"
+                                },
+                        )
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(16.dp),
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                "Also release continuous HRV",
+                                style = NoopType.subhead,
+                                color = Palette.textPrimary,
+                            )
+                            Text(
+                                "While easing, pause the always-on continuous-HRV stream (the biggest continuous drain). Live still shows heart rate on demand.",
+                                style = NoopType.footnote,
+                                color = Palette.textTertiary,
+                            )
+                        }
+                        Switch(
+                            checked = powerSavingReleaseHrv,
+                            onCheckedChange = {
+                                powerSavingReleaseHrv = it
+                                vm.setPowerSavingReleaseContinuousHrv(it)
+                            },
+                            colors = SwitchDefaults.colors(
+                                checkedThumbColor = Palette.surfaceBase,
+                                checkedTrackColor = Palette.accent,
+                                uncheckedThumbColor = Palette.textSecondary,
+                                uncheckedTrackColor = Palette.surfaceInset,
+                                uncheckedBorderColor = Palette.hairline,
+                            ),
+                        )
+                    }
+                }
+            }
+        }
+
+        // Lower-frequency sections collapse behind a single default-closed disclosure (S3) so the
+        // screen opens at the everyday handful instead of the full wall of cards. Nothing is removed;
+        // the experimental probes, diagnostics, raw-capture export and Trends report all stay one tap
+        // away. Mirrors the iOS SettingsView "Advanced" disclosure and the Test Centre Advanced group.
+        SettingsDisclosure(
+            title = if (showFiveMGControls) "5/MG lab & Advanced" else "Advanced",
+            subtitle = if (showFiveMGControls) {
+                "WHOOP 5/MG opt-ins, diagnostics, raw-sensor export, band IMU lab, and the Trends report. Every experiment starts off."
+            } else {
+                "Experimental probes, diagnostics, band IMU lab, raw-sensor export, and the Trends report. Tucked away to keep the everyday screen tidy."
+            },
+            expanded = advancedOpen,
+            onToggle = { advancedOpen = !advancedOpen; SettingsDisclosurePrefs.write(NoopPrefs.of(context), advancedOpen) },
+        ) {
+        Column(verticalArrangement = Arrangement.spacedBy(Metrics.screenRowSpacing)) {
+        // 6-axis motion tester â€” band IMU only (never phone sensors). Lab tool, not everyday Settings.
+        SixAxisMotionTesterSection(ble = vm.ble)
+        // Debug builds expose the opt-in panel for 5/MG testers; toggles stay off and only affect 5/MG hardware.
+        if (showFiveMGControls) {
+        SettingsSection(
+            icon = Icons.Filled.Science,
+            title = "Experimental Â· WHOOP 5 / MG",
+            blurb = "Live HR already works on 5/MG. These probes try for more; off by default; 5/MG only.",
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    Text(
+                        "Try WHOOP 5/MG protocol probes",
+                        style = NoopType.footnote,
+                        color = Palette.textPrimary,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Switch(
+                        checked = puffinExperiments,
+                        onCheckedChange = {
+                            puffinExperiments = it
+                            puffinExperiment.isEnabled = it
+                        },
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = Palette.surfaceBase,
+                            checkedTrackColor = Palette.accent,
+                            uncheckedThumbColor = Palette.textSecondary,
+                            uncheckedTrackColor = Palette.surfaceInset,
+                            uncheckedBorderColor = Palette.hairline,
+                        ),
+                        modifier = Modifier.semantics {
+                            contentDescription = "Try WHOOP 5/MG protocol probes"
+                        },
+                    )
+                }
+                Text(
+                    "On a 5/MG connection NOOP will send a puffin realtime-stream request after the handshake, and log what comes back. If you have a 5/MG strap, turning this on and sharing your strap log helps map the protocol. No effect on WHOOP 4.0.",
+                    style = NoopType.caption,
+                    color = Palette.textTertiary,
+                )
+
+                // --- Broadcast heart rate (turn the strap into a standard BLE HR sensor). (#181) ---
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(16.dp),
+                ) {
+                    Text(
+                        "Broadcast heart rate (Garmin/ANT)",
+                        style = NoopType.subhead,
+                        color = Palette.textPrimary,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Switch(
+                        checked = broadcastHr,
+                        onCheckedChange = {
+                            broadcastHr = it
+                            puffinExperiment.broadcastHr = it
+                            vm.ble.setBroadcastHr(it)
+                        },
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = Palette.surfaceBase,
+                            checkedTrackColor = Palette.accent,
+                            uncheckedThumbColor = Palette.textSecondary,
+                            uncheckedTrackColor = Palette.surfaceInset,
+                            uncheckedBorderColor = Palette.hairline,
+                        ),
+                        modifier = Modifier.semantics {
+                            contentDescription = "Broadcast heart rate"
+                        },
+                    )
+                }
+                Text(
+                    "Makes your WHOOP 5.0/MG advertise its heart rate as a standard Bluetooth HR sensor, so a Garmin (Edge/watch), Zwift or gym equipment can use it during a workout. Applied on the next connection (and immediately if connected); writes the strap's whoop_live_hr_in_adv_ind_pkt flag. Reversible. 5/MG only.",
+                    style = NoopType.caption,
+                    color = Palette.textTertiary,
+                )
+
+                // --- R22 deep-data unlock â€” the one probe that writes to the strap. (#174) ---
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(16.dp),
+                ) {
+                    Text(
+                        "Unlock WHOOP 5/MG deep data (R22)",
+                        style = NoopType.subhead,
+                        color = Palette.textPrimary,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Switch(
+                        checked = deepData,
+                        onCheckedChange = {
+                            deepData = it
+                            puffinExperiment.isDeepDataEnabled = it
+                        },
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = Palette.surfaceBase,
+                            checkedTrackColor = Palette.accent,
+                            uncheckedThumbColor = Palette.textSecondary,
+                            uncheckedTrackColor = Palette.surfaceInset,
+                            uncheckedBorderColor = Palette.hairline,
+                        ),
+                        modifier = Modifier.semantics {
+                            contentDescription = "Unlock WHOOP 5/MG deep data"
+                        },
+                    )
+                }
+                Text(
+                    "WHOOP 5/MG straps hand a fresh app only live heart rate. The official app switches on the deeper streams (high-rate HR + motion + history) by writing a set of feature flags, a sequence two independent projects have documented. With this on, the button below sends that exact sequence to your strap. Unlike everything else here it does write to the strap, but it's reversible (it only changes which data the strap emits) and is the same thing the official app does. Experimental: it may do nothing on your firmware.",
+                    style = NoopType.caption,
+                    color = Palette.textTertiary,
+                )
+                if (deepData) {
+                    NoopButton(
+                        text = "Send enable sequence to strap",
+                        leadingIcon = Icons.Filled.Bolt,
+                        kind = NoopButtonKind.Primary,
+                        enabled = live.encryptedBond && live.worn,
+                        onClick = { vm.ble.enableWhoop5DeepData() },
+                    )
+                    Text(
+                        if (!live.encryptedBond) "Needs the full encrypted bond: close the official WHOOP app and pair the strap to NOOP first (a live-HR-only link can't carry the unlock)."
+                        else if (!live.worn) "Put the strap on first. The deep stream is on-wrist only."
+                        else "Wear the strap, tap once, then let it sync and share your strap log.",
+                        style = NoopType.caption,
+                        color = Palette.textTertiary,
+                    )
+                    // Live R22 telemetry (#174): proof of what the strap is doing right now.
+                    if (live.r22FlagsAccepted > 0) {
+                        Text(
+                            if (live.r22FlagsAccepted >= 15) "âœ“ Strap accepted all 15 R22 flags"
+                            else "Strap accepted ${live.r22FlagsAccepted}/15 R22 flagsâ€¦",
+                            style = NoopType.caption,
+                            color = if (live.r22FlagsAccepted >= 15) Palette.statusPositive else Palette.textSecondary,
+                        )
+                    }
+                    if (live.deepPacketsThisSession > 0) {
+                        Text(
+                            "${live.deepPacketsThisSession} type-0x2F historical-offload frame(s) seen outside our sync. These are history (e.g. another app pulling the strap's backlog), not a live R22 stream (#494).",
+                            style = NoopType.caption,
+                            color = Palette.textSecondary,
+                        )
+                    } else if (live.r22FlagsAccepted >= 15) {
+                        Text(
+                            "Flags accepted â€” that is not activation. ACK â‰  live types 51â€“56 / live IMU. " +
+                                "Cmd 106 (TOGGLE_IMU_MODE) can ACK without streaming. Dual-strap captures still " +
+                                "show type-40 HR + R-R only after full R22 ACK. Historical 1244-B offload is the " +
+                                "real 6-axis path. NOOP never invents SpOâ‚‚/BP from an unlocked flag ACK.",
+                            style = NoopType.caption,
+                            color = Palette.textTertiary,
+                        )
+                    }
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(16.dp),
+                ) {
+                    Text(
+                        "Record 5/MG raw capture (research)",
+                        style = NoopType.subhead,
+                        color = Palette.textPrimary,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Switch(
+                        checked = puffinCapture,
+                        onCheckedChange = {
+                            puffinCapture = it
+                            puffinExperiment.isCaptureEnabled = it
+                        },
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = Palette.surfaceBase,
+                            checkedTrackColor = Palette.accent,
+                            uncheckedThumbColor = Palette.textSecondary,
+                            uncheckedTrackColor = Palette.surfaceInset,
+                            uncheckedBorderColor = Palette.hairline,
+                        ),
+                        modifier = Modifier.semantics {
+                            contentDescription = "Record 5/MG raw capture"
+                        },
+                    )
+                }
+                Text(
+                    "Records the raw frames of each 5/MG history sync to a file on this phone, so you can share them and help NOOP learn to decode 5/MG sleep, recovery and strain. The file contains raw biometric frames (heart rate, R-R, skin temperature, motion) and the strap's own diagnostic text. Nothing leaves the phone unless you share it. Off by default.",
+                    style = NoopType.caption,
+                    color = Palette.textTertiary,
+                )
+                NoopButton(
+                    text = "Share 5/MG capture (for the decode effort)",
+                    leadingIcon = Icons.Filled.Upload,
+                    kind = NoopButtonKind.Secondary,
+                    fullWidth = true,
+                    onClick = { LogExport.shareWhoop5Capture(context, live.whoop5Detected) },
+                )
+
+                // One-tap "matched pair" export (#510): hands a reporter BOTH the raw capture file and
+                // the strap log together (timestamped, same minute) so a protocol-mapping issue arrives
+                // with the frames AND the context that produced them.
+                NoopButton(
+                    text = "Export raw + log (matched pair)",
+                    leadingIcon = Icons.Filled.IosShare,
+                    kind = NoopButtonKind.Secondary,
+                    fullWidth = true,
+                    onClick = { scope.launch { LogExport.shareRawAndLog(context, vm.ble.exportLogText(), live.whoop5Detected) } },
+                )
+            }
+        }
+        } // end if (showFiveMGControls)
+
+        // --- Diagnostics (every model) --- the raw-sensor CSV export is split out of the 5/MG card so it
+        // stays available on a WHOOP 4.0 too (#22): a 4.0 owner still needs it to share decoded streams.
+        SettingsSection(
+            icon = Icons.Filled.Science,
+            title = "Diagnostics",
+            blurb = "A read-only export of the decoded sensor streams NOOP already stores. Works on any strap. Nothing is written to your device, and nothing is uploaded.",
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                // --- Experimental sleep staging (V2) â€” opt-in, default OFF, every model. (V7 Pillar 3b) ---
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(16.dp),
+                ) {
+                    Text(
+                        "Experimental sleep staging (V2 Â· research)",
+                        style = NoopType.subhead,
+                        color = Palette.textPrimary,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Switch(
+                        checked = experimentalSleepV2,
+                        onCheckedChange = {
+                            experimentalSleepV2 = it
+                            puffinExperiment.experimentalSleepV2 = it
+                        },
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = Palette.surfaceBase,
+                            checkedTrackColor = Palette.accent,
+                            uncheckedThumbColor = Palette.textSecondary,
+                            uncheckedTrackColor = Palette.surfaceInset,
+                            uncheckedBorderColor = Palette.hairline,
+                        ),
+                        modifier = Modifier.semantics {
+                            contentDescription = "Experimental sleep staging V2"
+                        },
+                    )
+                }
+                Text(
+                    "A transparent cardiorespiratory recipe that recovers deep and REM better than the " +
+                        "default staging. Opt-in and experimental: it only changes how already-detected " +
+                        "nights are split into stages (detection and scores are unchanged). " +
+                        "5.0/MG nights only â€” a WHOOP 4.0 banks motion too sparsely for V2, so its " +
+                        "nights always use the default staging (#319). " +
+                        "Research path: PhysioNet sleep-accel / DREAMT for Îº benchmarks; future ML models " +
+                        "stay opt-in. Default staging stays if you leave this off. Next nights staged.",
+                    style = NoopType.caption,
+                    color = Palette.textTertiary,
+                )
+
+                // Diagnostics: dump the decoded per-sample sensor streams (last 24h) to one long-format
+                // CSV so power users / external devs can prototype sleep/activity/VBT algorithms on real
+                // data without a BLE stream (#308/#276/#322). On-device only; plain text, no BLE hex.
+                NoopButton(
+                    text = "Export raw sensor data (CSV)",
+                    leadingIcon = Icons.Filled.Upload,
+                    kind = NoopButtonKind.Secondary,
+                    fullWidth = true,
+                    onClick = { scope.launch { RawSensorExport.export(context, vm.repo) } },
+                )
+                Text(
+                    "Saves the last 24h of decoded sensor samples (heart rate, R-R, motion, steps and any 5/MG deep streams you've unlocked) as one CSV you can share, for tinkering with your own data. Nothing leaves the phone unless you share it.",
+                    style = NoopType.caption,
+                    color = Palette.textTertiary,
+                )
+
+                // Haptic clock (#460): buzz the current time on the strap as a sequence of buzzes. No-ops
+                // safely when disconnected, so it stays enabled regardless of connection (matches the
+                // "Share strap log" row above, which also doesn't gate on a live strap). 12/24h follows the
+                // phone's own clock setting.
+                NoopButton(
+                    text = "${LifeChapterLacquer.ALARM_BUZZ_TIME_LABEL} on your strap",
+                    leadingIcon = Icons.Filled.Vibration,
+                    kind = NoopButtonKind.Secondary,
+                    fullWidth = true,
+                    onClick = {
+                        vm.ble.buzzTimeNow(
+                            is24h = android.text.format.DateFormat.is24HourFormat(context),
+                            speed = NoopPrefs.hapticClockSpeed(context),
+                            announce = NoopPrefs.hapticClockAnnounce(context),
+                        )
+                    },
+                )
+                Text(
+                    alarmBuzzWallClockHint(),
+                    style = NoopType.caption,
+                    color = Palette.textTertiary,
+                )
+                var showHapticPractice by remember { mutableStateOf(false) }
+                NoopButton(
+                    text = "Practice on phone (see digits)",
+                    leadingIcon = Icons.Filled.Vibration,
+                    kind = NoopButtonKind.Secondary,
+                    fullWidth = true,
+                    onClick = { showHapticPractice = true },
+                )
+                if (showHapticPractice) {
+                    HapticClockPracticeDialog(
+                        onDismiss = { showHapticPractice = false },
+                        onBuzzStrap = { is24h, speed, announce ->
+                            vm.ble.buzzTimeNow(is24h = is24h, speed = speed, announce = announce)
+                        },
+                        speed = NoopPrefs.hapticClockSpeed(context),
+                        announce = NoopPrefs.hapticClockAnnounce(context),
+                    )
+                }
+                Text(
+                    com.noop.protocol.HapticClock.readLegend() +
+                        " Speed/announce live under Automations â†’ Double-tap â†’ ${LifeChapterLacquer.ALARM_BUZZ_TIME_LABEL}. Practice lights each digit on phone.",
+                    style = NoopType.caption,
+                    color = Palette.textTertiary,
+                )
+                NoopButton(
+                    text = "Sync phone time to strap",
+                    leadingIcon = Icons.Filled.AccessTime,
+                    kind = NoopButtonKind.Secondary,
+                    fullWidth = true,
+                    onClick = { vm.ble.syncPhoneTimeToStrap() },
+                )
+                Text(
+                    "Pushes SET_CLOCK to the strap RTC (both firmware payload forms). Auto-runs on connect; use when the clock drifted.",
+                    style = NoopType.caption,
+                    color = Palette.textTertiary,
+                )
+            }
+        }
+
+        // --- Scheduled debug export (#510, maddognik) --- a daily, no-UI drop of the timestamped strap
+        // log (+ raw .bin when a 5/MG capture exists) into the app's export folder at a time you choose, so
+        // an intermittent overnight fault leaves a dated log waiting instead of needing a manual share. The
+        // feature core lives in DebugExportScheduler/DebugExportSettings; this is just the controls. OFF by
+        // default. SharedPreferences isn't reactive, so the Switch + time mirror into local state.
+        SettingsSection(
+            icon = Icons.Filled.Storage,
+            title = "Scheduled debug export (#510)",
+            blurb = "Once a day at a time you choose, NOOP writes a timestamped strap log (plus the raw 5/MG capture, if you have one) to its export folder. No sharing, nothing leaves the phone. Useful for chasing an intermittent overnight fault. Off by default.",
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(16.dp),
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            "Daily auto-export",
+                            style = NoopType.subhead,
+                            color = Palette.textPrimary,
+                        )
+                        Text(
+                            "Writes a timestamped strap log (and the raw .bin if a 5/MG capture exists) to the app's export folder once a day at the time below.",
+                            style = NoopType.footnote,
+                            color = Palette.textTertiary,
+                        )
+                    }
+                    Switch(
+                        checked = debugExportEnabled,
+                        onCheckedChange = {
+                            debugExportEnabled = it
+                            debugExportSettings.enabled = it
+                            DebugExportScheduler.reschedule(context)
+                        },
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = Palette.surfaceBase,
+                            checkedTrackColor = Palette.accent,
+                            uncheckedThumbColor = Palette.textSecondary,
+                            uncheckedTrackColor = Palette.surfaceInset,
+                            uncheckedBorderColor = Palette.hairline,
+                        ),
+                        modifier = Modifier.semantics {
+                            contentDescription = "Daily auto-export"
+                        },
+                    )
+                }
+
+                if (debugExportEnabled) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(16.dp),
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Export time", style = NoopType.subhead, color = Palette.textPrimary)
+                            Text(
+                                "The daily export runs at this time.",
+                                style = NoopType.footnote,
+                                color = Palette.textTertiary,
+                            )
+                        }
+                        TimeChip(
+                            minutes = debugExportMinutes,
+                            accessibilityLabel = "Daily export time",
+                            onPicked = {
+                                debugExportMinutes = it
+                                debugExportSettings.timeMinutes = it
+                                DebugExportScheduler.applyTimeChange(context)
+                            },
+                        )
+                    }
+                }
+
+                // "Export now" writes the dated file immediately (off the main thread, like the CSV export
+                // above) and confirms with a Toast naming the folder, so the user sees the feature work
+                // without waiting for the scheduled run.
+                NoopButton(
+                    text = "Export now",
+                    leadingIcon = Icons.Filled.SaveAlt,
+                    kind = NoopButtonKind.Secondary,
+                    fullWidth = true,
+                    onClick = {
+                        scope.launch {
+                            val files = withContext(Dispatchers.IO) {
+                                LogExport.writeScheduledExport(context, vm.ble.exportLogText())
+                            }
+                            Toast.makeText(
+                                context,
+                                if (files.isNotEmpty()) "Wrote a dated debug export (${files.size} file${if (files.size == 1) "" else "s"}) to the app's export folder."
+                                else "Couldn't write the debug export.",
+                                Toast.LENGTH_LONG,
+                            ).show()
+                        }
+                    },
+                )
+            }
+        }
+
+        // --- Trends report (#436) â€” shareable offline PDF over a date range. Self-contained
+        // card (its own NoopCard + range picker + CTA), so it drops in without a SettingsSection wrapper.
+        TrendsReportExportSection(vm)
+        } // end Advanced disclosure content Column
+        } // end SettingsDisclosure("Advanced")
+
+        // --- Health & wellness (v5 opt-in toggles) ---
+        SettingsSection(
+            icon = Icons.Filled.Science,
+            title = "Health & wellness",
+            blurb = "Optional, on-device wellness signals. Each is off by default, computed only on this phone from data you already have, and never a medical diagnosis.",
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                ToggleRow(
+                    title = "Illness heads-up",
+                    detail = "Watches your resting heart rate, HRV and skin temperature for the pattern that often shows up before you feel unwell, and surfaces a gentle heads-up. An observation about your own numbers, not a diagnosis.",
+                    checked = illnessWatch,
+                    onCheckedChange = {
+                        illnessWatch = it
+                        vm.setIllnessWatchEnabled(it)
+                    },
+                )
+                RowDivider()
+                // #801 â€” not offered on a male profile (it would just sit at "Learning your pattern"). Hidden
+                // when off for a male profile so it can't be enabled here; still shown when already on so it
+                // can be turned off â€” mirroring HealthScreen's cycle opt-in gate (cycleOptInApplies). The
+                // sister surfaces (Health opt-in, the card's off-control) were sex-gated in v7.3.2; this
+                // Settings toggle was the one surface that was missed, so a male profile could enable it here.
+                if (showCycleTabPref || cycleTracking || cycleOptInApplies(profile.sex)) {
+                    ToggleRow(
+                        title = "Cycle in More + quick actions",
+                        detail = "Shows Cycle under More â†’ For your body and in the + quick-actions sheet. Off hides those shortcuts (logging stays on-device; Health cycle awareness is separate).",
+                        checked = showCycleTabPref,
+                        onCheckedChange = { want ->
+                            if (!want && showCycleTabPref) {
+                                // Fable 200 #41 â€” warn before hiding Cycle tab.
+                                confirmHideCycle = true
+                            } else {
+                                showCycleTabPref = want
+                                vm.setShowCycleTab(want)
+                            }
+                        },
+                    )
+                    if (confirmHideCycle) {
+                        AlertDialog(
+                            onDismissRequest = { confirmHideCycle = false },
+                            title = { Text("Hide Cycle tab?") },
+                            text = {
+                                Text(
+                                    "Cycle moves under More â†’ For your body. Logging stays on-device; " +
+                                        "you can turn the tab back on anytime.",
+                                    style = NoopType.body,
+                                    color = Palette.textSecondary,
+                                )
+                            },
+                            confirmButton = {
+                                TextButton(
+                                    onClick = {
+                                        showCycleTabPref = false
+                                        vm.setShowCycleTab(false)
+                                        confirmHideCycle = false
+                                        Toast.makeText(
+                                            context,
+                                            LifeChapterLacquer.CYCLE_TAB_HIDDEN_TOAST,
+                                            Toast.LENGTH_SHORT,
+                                        ).show()
+                                    },
+                                ) {
+                                    Text("Hide tab", color = Palette.statusWarning)
+                                }
+                            },
+                            dismissButton = {
+                                TextButton(onClick = { confirmHideCycle = false }) {
+                                    Text("Keep tab")
+                                }
+                            },
+                        )
+                    }
+                    // Fable 200 #40 â€” replay Cycle first-run setup without wiping logged periods.
+                    var confirmReplayCycle by remember { mutableStateOf(false) }
+                    NoopButton(
+                        text = "Replay Cycle setup",
+                        leadingIcon = Icons.Filled.Autorenew,
+                        kind = NoopButtonKind.Secondary,
+                        fullWidth = true,
+                        modifier = Modifier.semantics { contentDescription = "Replay Cycle setup" },
+                        onClick = { confirmReplayCycle = true },
+                    )
+                    Text(
+                        "Walk through the Cycle welcome again. Logged periods stay on this phone.",
+                        style = NoopType.caption,
+                        color = Palette.textTertiary,
+                    )
+                    // SHIP #243 â€” when Cycle tab is hidden, setup isn't orphaned: More still owns it.
+                    if (!showCycleTabPref && cycleTracking) {
+                        Text(
+                            "Cycle tab is off â€” open More â†’ For your body â†’ Cycle (or Replay above). Setup isnâ€™t lost.",
+                            style = NoopType.footnote,
+                            color = Palette.textSecondary,
+                        )
+                    }
+                    if (confirmReplayCycle) {
+                        AlertDialog(
+                            onDismissRequest = { confirmReplayCycle = false },
+                            title = { Text("Replay Cycle setup?") },
+                            text = {
+                                Text(
+                                    "Opens the Cycle welcome flow again next time you visit Cycle. " +
+                                        "Your logged periods stay on this phone.",
+                                    style = NoopType.body,
+                                    color = Palette.textSecondary,
+                                )
+                            },
+                            confirmButton = {
+                                TextButton(
+                                    onClick = {
+                                        val store = com.noop.data.PeriodCalendarStore.from(context)
+                                        store.savePrefs(
+                                            store.loadPrefs().copy(
+                                                onboardingComplete = false,
+                                                enabled = true,
+                                            ),
+                                        )
+                                        if (!cycleTracking) {
+                                            cycleTracking = true
+                                            vm.setCycleTrackingEnabled(true)
+                                        }
+                                        confirmReplayCycle = false
+                                    },
+                                ) {
+                                    Text("Replay setup", color = Palette.accent)
+                                }
+                            },
+                            dismissButton = {
+                                TextButton(onClick = { confirmReplayCycle = false }) {
+                                    Text("Cancel")
+                                }
+                            },
+                        )
+                    }
+                    RowDivider()
+                }
+                ToggleRow(
+                    title = "Hydration tracking",
+                    detail = "Adds a simple fluid log with a daily goal that adjusts to your effort. Tap to add a sip, cup or bottle and watch a progress ring fill. On this phone only. Nothing is synced.",
+                    checked = hydrationTracking,
+                    onCheckedChange = {
+                        hydrationTracking = it
+                        NoopPrefs.setHydrationTracking(context, it)
+                    },
+                )
+                RowDivider()
+                ToggleRow(
+                    title = "Auto-detect workouts",
+                    detail = "After a sync, NOOP looks over your recent heart rate for a sustained, raised stretch that looks like exercise and offers to save it. It only ever suggests. Nothing is saved until you tap Save, and you can dismiss any suggestion. Deliberately conservative, so the odd workout may be missed. On this phone only.",
+                    checked = autoDetectWorkouts,
+                    onCheckedChange = {
+                        autoDetectWorkouts = it
+                        NoopPrefs.setAutoDetectWorkouts(context, it)
+                    },
+                )
+                // SHIP #163 â€” Sport ML collection is not buried under expert-only docs.
+                Text(
+                    "Sport labels you confirm after a session (and mid-set cues) train on-device sport ID. " +
+                        "Nothing leaves the phone. See docs/SPORT_ML_COLLECTION.md for the optional export path.",
+                    style = NoopType.footnote,
+                    color = Palette.textTertiary,
+                )
+                RowDivider()
+                ToggleRow(
+                    title = "Keep screen on during a workout",
+                    detail = "Holds the screen awake while you're recording a workout, so your live heart rate stays visible without the phone dimming. Only applies during a recording. The screen sleeps normally the rest of the time. Leaving it on does use a bit more battery, and means your unlocked screen stays visible for the whole workout, so flip it off if that's a concern.",
+                    checked = workoutKeepScreenOn,
+                    onCheckedChange = {
+                        workoutKeepScreenOn = it
+                        NoopPrefs.of(context).edit().putBoolean("workoutKeepScreenOn", it).apply()
+                    },
+                )
+                RowDivider()
+                // BETA + default ON (the one exception to this section's off-by-default rule): the flag
+                // gates the Today entry so anyone can wave the beta away here with one flip.
+                ToggleRow(
+                    title = "Live Sessions (beta)",
+                    detail = "Silence-first strap coaching during workouts.",
+                    checked = liveSessionsBeta,
+                    onCheckedChange = {
+                        liveSessionsBeta = it
+                        LiveSessionPrefs.setEnabled(context, it)
+                    },
+                )
+                RowDivider()
+                ToggleRow(
+                    title = "Stress check-ins (haptic)",
+                    detail = "Lets NOOP notice a fresh HRV dip while you're still and offer a minute to breathe. \"Stress\" here is an autonomic proxy from your own baseline, never a diagnosis. The strap gives one light confirming buzz; no push notification.",
+                    checked = stressCheckIn,
+                    onCheckedChange = {
+                        stressCheckIn = it
+                        BiofeedbackPrefs.setCheckInEnabled(context, it)
+                        // Turning the master off also disarms the auto-nudge sub-toggle so it can't fire.
+                        if (!it) { stressAutoNudge = false; BiofeedbackPrefs.setAutoNudge(context, false) }
+                    },
+                )
+                if (stressCheckIn) {
+                    ToggleRow(
+                        title = "Offer a breath automatically",
+                        detail = "When a dip is detected, surface the check-in card on its own (rate-limited, quiet-hours aware). Off keeps it manual.",
+                        checked = stressAutoNudge,
+                        onCheckedChange = {
+                            stressAutoNudge = it
+                            BiofeedbackPrefs.setAutoNudge(context, it)
+                        },
+                    )
+                }
+                RowDivider()
+                ToggleRow(
+                    title = "Tighter daytime stress window",
+                    detail = "Score waking Stress from 07:00â€“21:00 instead of 06:00â€“22:00. Early-morning and late-evening buckets stay night-calm. Does not invent numbers.",
+                    checked = stressTightWaking,
+                    onCheckedChange = {
+                        stressTightWaking = it
+                        NoopPrefs.setStressTightWaking(context, it)
+                    },
+                )
+                RowDivider()
+                ToggleRow(
+                    title = "Rhythm (experimental)",
+                    detail = "An experimental picture of your beat-to-beat timing: a PoincarÃ© scatter and plain regularity stats from quiet resting windows. Not an ECG and not a diagnosis; you'll read a short disclaimer and accept before it turns on.",
+                    checked = rhythmEnabled,
+                    onCheckedChange = {
+                        // Enabling here just un-gates the experimental item; the screen itself still shows
+                        // its consent clickwrap on first open (and re-prompts on a version bump). Disabling
+                        // clears the flag so the screen returns to its gate.
+                        rhythmEnabled = it
+                        if (it) {
+                            NoopPrefs.of(context).edit().putBoolean(RhythmConsent.KEY_ENABLED, true).apply()
+                        } else {
+                            NoopPrefs.of(context).edit().putBoolean(RhythmConsent.KEY_ENABLED, false).apply()
+                        }
+                    },
+                )
+                RowDivider()
+                ToggleRow(
+                    title = "Share on-device signals with the Coach",
+                    detail = "When the opt-in Coach is set up with your own key, also include a short summary of your strongest on-device patterns and Lab Book markers in its context. Summary only; no raw data leaves your phone. Requires the Coach's own data consent first.",
+                    checked = coachSignals,
+                    onCheckedChange = {
+                        coachSignals = it
+                        NoopPrefs.setCoachSignals(context, it)
+                    },
+                )
+            }
+        }
+
+        // --- Test Centre (the diagnostic home, #507/#509) ---
+        // A nav row into the Test Centre: the single home for the diagnostic, log and test controls (spec
+        // section 7). The strap log, recalibrate, scheduled export and experimental toggles also live there
+        // on the same bindings, so this is a faster door to the full set without growing this screen.
+        SettingsSection(
+            icon = Icons.AutoMirrored.Filled.DirectionsWalk,
+            title = "Steps & training",
+            blurb = "Live MG step counter, tap-to-count and shake sessions that evolve your personal ticks-per-step model. Re-train weekly for best accuracy.",
+        ) {
+            NoopButton(
+                text = "Open step training",
+                leadingIcon = Icons.AutoMirrored.Filled.DirectionsWalk,
+                kind = NoopButtonKind.Secondary,
+                fullWidth = true,
+                onClick = onOpenStepTraining,
+            )
+            // Quick Start removed â€” Goals board is the durable checklist (answers must weight real tests).
+        }
+
+        SettingsSection(
+            icon = Icons.Filled.Flag,
+            title = "Goals",
+            blurb = "Honest complete / partial / not complete for WHOOP compare, sleep ML, BLE listen, and UI. Each card says how to test, what breaks later if unfinished, and why it feels better when done.",
+        ) {
+            NoopButton(
+                text = "Open Goals board",
+                leadingIcon = Icons.Filled.Flag,
+                kind = NoopButtonKind.Secondary,
+                fullWidth = true,
+                onClick = onOpenGoals,
+            )
+        }
+
+        SettingsSection(
+            icon = Icons.Filled.BugReport,
+            title = "Bug report",
+            blurb = "Screenshots + one-tap diagnostics zip. Reaches GitHub Issues (user-bug) or email.",
+        ) {
+            NoopButton(
+                text = "Report a bug",
+                leadingIcon = Icons.Filled.BugReport,
+                kind = NoopButtonKind.Secondary,
+                fullWidth = true,
+                onClick = onOpenBugReport,
+            )
+        }
+
+        if (com.noop.BuildConfig.DEBUG) {
+        SettingsSection(
+            icon = Icons.Filled.BugReport,
+            title = LifeChapterLacquer.TEST_CENTRE_TITLE,
+            blurb = LifeChapterLacquer.TEST_CENTRE_SUBTITLE,
+        ) {
+            NoopButton(
+                text = LifeChapterLacquer.GOALS_OPEN_TEST_CENTRE,
+                leadingIcon = Icons.Filled.BugReport,
+                kind = NoopButtonKind.Secondary,
+                fullWidth = true,
+                onClick = onOpenTestCentre,
+            )
+        }
+        }
+
+        // --- Charge (Recovery) advanced ---
+        // A manual reset for the personal Charge baseline. If a bad first week poisons it â€” worn while
+        // sick, or the first few nights read high (a common cold-start artefact) â€” the baseline anchors
+        // off and holds your Charge wrong for a couple of weeks while the rolling average catches up.
+        // Recalibrate re-learns it from tonight onward. Writes now-seconds to BOTH noop.hrvBaselineEpoch
+        // and noop.recoveryBaselineEpoch (so HRV plus resting HR / respiration / skin temp re-anchor);
+        // foldHistory drops every night before that epoch and re-seeds. Mirrors the iOS/Mac button.
+        SettingsSection(
+            icon = Icons.Filled.Favorite,
+            title = "Charge",
+            blurb = "Charge is NOOP's daily readiness score, learned from your own HRV, resting heart rate and more over time. Your history stays.",
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text("Recalibrate Charge baseline", style = NoopType.subhead, color = Palette.textPrimary)
+                    Text(
+                        "Restarts the roughly 4-night build-up for Charge and your HRV baseline from tonight. Use it if a bad first week set your baseline off. Your history stays.",
+                        style = NoopType.footnote,
+                        color = Palette.textTertiary,
+                    )
+                }
+                NoopButton(
+                    text = "Recalibrate Charge baseline",
+                    leadingIcon = Icons.Filled.Autorenew,
+                    kind = NoopButtonKind.Secondary,
+                    fullWidth = true,
+                    modifier = Modifier.semantics { contentDescription = "Recalibrate Charge baseline" },
+                    onClick = { showRecalibrateConfirm = true },
+                )
+            }
+        }
+
+        if (showRecalibrateConfirm) {
+            AlertDialog(
+                onDismissRequest = { showRecalibrateConfirm = false },
+                containerColor = Palette.surfaceOverlay,
+                title = { Text("Recalibrate your Charge baseline?", style = NoopType.title2, color = Palette.textPrimary) },
+                text = {
+                    Text(
+                        "This restarts the roughly 4-night build-up for Charge and your HRV baseline. Your history stays. Use it if a bad first week, like wearing it while sick, set your baseline off.",
+                        style = NoopType.subhead,
+                        color = Palette.textSecondary,
+                    )
+                },
+                confirmButton = {
+                    TextButton(
+                        onClick = {
+                            // Re-anchor EVERY baseline that feeds Charge â€” HRV plus resting HR /
+                            // respiration / skin temp â€” by writing now-seconds to BOTH shared epoch keys
+                            // (the EXACT same keys the iOS/Mac button + Baselines.foldHistory use), via
+                            // the single cross-platform source of truth. Stored as whole epoch SECONDS in
+                            // a Long (SharedPreferences has no putDouble; the readers do getLongâ†’toDouble),
+                            // matching the "epoch SECONDS" the keys document. No stored day is deleted.
+                            val nowSeconds = System.currentTimeMillis() / 1000L
+                            val editor = NoopPrefs.of(context).edit()
+                            Baselines.recalibrateRecoveryBaselines(editor, nowSeconds)
+                            editor.apply()
+                            showRecalibrateConfirm = false
+                            // Nudge an immediate re-analyze so the change is felt now; the standing
+                            // 15-min analyze loop also re-runs foldHistory regardless. No-ops cleanly
+                            // when the strap isn't connected.
+                            vm.syncNow()
+                            Toast.makeText(
+                                context,
+                                "Charge baseline reset. NOOP will re-learn it from tonight. Your history stays, and it takes a few nights to settle.",
+                                Toast.LENGTH_LONG,
+                            ).show()
+                        },
+                    ) { Text("Recalibrate", style = NoopType.body, color = Palette.accent) }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showRecalibrateConfirm = false }) {
+                        Text("Cancel", style = NoopType.body, color = Palette.textSecondary)
+                    }
+                },
+            )
+        }
+
+        SettingsSection(
+            icon = Icons.Filled.Storage,
+            title = "Backup & restore",
+            blurb = "Move all your NOOP data to another phone. Export saves everything (history, sleeps, workouts, settings, Stress series keys) to a single .noopbak you can copy across; import replaces this phone's data with a backup.",
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                // #255 â€” quiet reminder when install is â‰¥7 days old and no .noopbak has been stamped.
+                val installAgeMs = remember(context) {
+                    runCatching {
+                        @Suppress("DEPRECATION")
+                        System.currentTimeMillis() -
+                            context.packageManager.getPackageInfo(context.packageName, 0).firstInstallTime
+                    }.getOrDefault(0L)
+                }
+                val showNeverBackupBanner =
+                    !backupNeverBannerDismissed &&
+                        lastBackupMs == 0L &&
+                        installAgeMs >= BackupRemindPrefs.SEVEN_DAYS_MS
+                if (showNeverBackupBanner) {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        NoteRow(
+                            icon = Icons.Filled.Info,
+                            iconTint = Palette.textTertiary,
+                            text = LifeChapterLacquer.SETTINGS_BACKUP_NEVER_BANNER,
+                        )
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            TextButton(
+                                onClick = {
+                                    backupBusy = true
+                                    exportLauncher.launch(
+                                        "noop-backup-${java.time.LocalDate.now()}.noopbak",
+                                    )
+                                },
+                                enabled = !backupBusy,
+                            ) {
+                                Text(
+                                    LifeChapterLacquer.SETTINGS_BACKUP_NEVER_CTA,
+                                    style = NoopType.subhead,
+                                    color = Palette.accent,
+                                )
+                            }
+                            TextButton(
+                                onClick = {
+                                    BackupRemindPrefs.dismiss(context)
+                                    backupNeverBannerDismissed = true
+                                },
+                            ) {
+                                Text("Later", style = NoopType.footnote, color = Palette.textTertiary)
+                            }
+                        }
+                    }
+                }
+                // Fable 200 #69 â€” Export and Import as sibling full-width rows; CSV stays secondary below.
+                NoopButton(
+                    text = "Exportâ€¦",
+                    kind = NoopButtonKind.Primary,
+                    enabled = !backupBusy,
+                    fullWidth = true,
+                    onClick = {
+                        backupBusy = true
+                        exportLauncher.launch("noop-backup-${java.time.LocalDate.now()}.noopbak")
+                    },
+                )
+                NoopButton(
+                    text = "Importâ€¦",
+                    kind = NoopButtonKind.Secondary,
+                    enabled = !backupBusy,
+                    fullWidth = true,
+                    onClick = {
+                        backupBusy = true
+                        importLauncher.launch(arrayOf("*/*"))
+                    },
+                )
+                NoopButton(
+                    text = "Export CSVâ€¦",
+                    kind = NoopButtonKind.Secondary,
+                    enabled = !backupBusy,
+                    fullWidth = true,
+                    onClick = {
+                        backupBusy = true
+                        csvExportLauncher.launch("noop-export-${java.time.LocalDate.now()}.zip")
+                    },
+                )
+
+                if (backupBusy) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        CircularProgressIndicator(
+                            color = Palette.accent,
+                            strokeWidth = 2.dp,
+                            modifier = Modifier.size(18.dp),
+                        )
+                        Text("Workingâ€¦", style = NoopType.footnote, color = Palette.textSecondary)
+                    }
+                }
+
+                NoteRow(
+                    icon = Icons.Filled.Info,
+                    iconTint = Palette.textTertiary,
+                    text = "Importing overwrites everything currently on this phone. Your old data is kept in a side file just in case. NOOP needs a relaunch for an import to take effect. " +
+                        "Export CSV writes a WHOOP-format zip of your days, sleeps, workouts and journal that re-imports into NOOP on Android or Mac. On-device computed rows are marked APPROXIMATE in its Source column; the .noopbak backup stays the lossless restore path.",
+                )
+            }
+        }
+
+        // --- Automatic backups ---
+        // Discoverability signpost: the daily-backup toggle, folder picker and keep-count live on the
+        // separate Backup & Sync screen; surface an entry here, right under the one-off Backup & restore,
+        // since that's where a user looks for "turn on automatic backups".
+        SettingsSection(
+            icon = Icons.Filled.CloudSync,
+            title = "Automatic backups",
+            blurb = "Have NOOP save a dated backup to a folder every day (around 1am) and keep the last several - so if data ever corrupts, restore the newest. Point the folder at Drive/Dropbox for off-device copies. Off until you switch it on.",
+        ) {
+            NoopButton(
+                text = "Set up automatic backups",
+                leadingIcon = Icons.Filled.CloudSync,
+                kind = NoopButtonKind.Primary,
+                fullWidth = true,
+                onClick = onOpenBackupSync,
+            )
+        }
+
+        // --- About ---
+        SettingsSection(
+            icon = Icons.Filled.Info,
+            title = "About",
+            blurb = "NOOP: all your data, none of the cloud.",
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    Text("NOOP", style = NoopType.title2, color = Palette.textPrimary)
+                    StatePill("v${BuildConfig.VERSION_NAME}", tone = StrandTone.Neutral, showsDot = false)
+                }
+                // SHIP #224 â€” dual-app / side-by-side notes in Settings help (not docs-only).
+                // SHIP #269 â€” WHOOP vs NOOP honesty before numbers appear (not only after).
+                Text(
+                    "Dual-app tip: keep official WHOOP open for pairing/export; NOOP for open BLE scores. " +
+                        "Open BLE is not the WHOOP appâ€™s Strain/Recovery â€” compare only when both columns are labeled. " +
+                        "On Fold, NOOP + WHOOP side-by-side is fine â€” donâ€™t expect identical tip numbers every hour.",
+                    style = NoopType.footnote,
+                    color = Palette.textTertiary,
+                )
+
+                // Project home â€” NOOP's code, releases, issues and wiki live on GitHub.
+                val projectHomeInteraction = remember { MutableInteractionSource() }
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .liquidPress(projectHomeInteraction)
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(Palette.accent.copy(alpha = 0.10f))
+                        .border(1.dp, Palette.accent.copy(alpha = 0.25f), RoundedCornerShape(10.dp))
+                        .clickable(
+                            interactionSource = projectHomeInteraction,
+                            indication = null,
+                        ) {
+                            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(UpdateCheck.PROJECT_HOME_URL))
+                            try {
+                                context.startActivity(intent)
+                            } catch (_: ActivityNotFoundException) {
+                                Toast.makeText(context, UpdateCheck.PROJECT_HOME_URL, Toast.LENGTH_LONG).show()
+                            }
+                        }
+                        .padding(horizontal = 14.dp, vertical = 12.dp)
+                        .semantics { contentDescription = "Project home and source on GitHub" },
+                ) {
+                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text("This build (Gilbert fork)", style = NoopType.body, color = Palette.textPrimary)
+                        Text(
+                            "Public GitHub: Newbbsss/noop-public-release. Upstream: ryanbr/noop.",
+                            style = NoopType.caption,
+                            color = Palette.textTertiary,
+                        )
+                    }
+                }
+
+                // Friends network â€” private pipe (LAN / Tailscale). Invite + share live there only.
+                NoopButton(
+                    text = "Friends network",
+                    leadingIcon = Icons.Filled.IosShare,
+                    kind = NoopButtonKind.Secondary,
+                    fullWidth = true,
+                    onClick = onOpenFriendsNetwork,
+                )
+                Text(
+                    "Invite codes, opt-in Charge/Effort day shares, private network install help. " +
+                        "Not the app-update path.",
+                    style = NoopType.caption,
+                    color = Palette.textTertiary,
+                )
+
+                // Check for updates â€” GitHub catalog / Releases (apk_github preferred).
+                // User-initiated here; a quiet launch probe also posts the Updates inbox when newer.
+                // Nothing about you is sent. INTERNET already held for the opt-in Coach.
+                var updChecking by remember { mutableStateOf(false) }
+                var updResult by remember { mutableStateOf<UpdateCheck.Result?>(null) }
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        OutlinedButton(
+                            onClick = {
+                                if (!updChecking) {
+                                    updChecking = true
+                                    updResult = null
+                                    scope.launch {
+                                        updResult = UpdateCheck.check(
+                                            currentVersion = BuildConfig.VERSION_NAME,
+                                            currentVersionCode = BuildConfig.VERSION_CODE,
+                                            applicationId = BuildConfig.APPLICATION_ID,
+                                        )
+                                        updChecking = false
+                                    }
+                                }
+                            },
+                            enabled = !updChecking,
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = Palette.accent),
+                        ) {
+                            if (updChecking) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(14.dp).padding(end = 6.dp),
+                                    strokeWidth = 2.dp,
+                                    color = Palette.accent,
+                                )
+                                Text("Checkingâ€¦", style = NoopType.captionNumber)
+                            } else {
+                                Text("Check for updates", style = NoopType.captionNumber)
+                            }
+                        }
+                        when (val r = updResult) {
+                            is UpdateCheck.Result.UpToDate ->
+                                Text(
+                                    "You're on the latest (${r.version}).",
+                                    style = NoopType.footnote, color = Palette.textSecondary,
+                                )
+                            UpdateCheck.Result.Failed ->
+                                Text(
+                                    // SHIP #326 â€” recoverable next step, not a dead end.
+                                    "Couldn't check. Retry Â· or open GitHub Releases for this build.",
+                                    style = NoopType.footnote, color = Palette.statusWarning,
+                                )
+                            else -> {}
+                        }
+                    }
+
+                    // Update available: show what's new, with a download straight to the release.
+                    (updResult as? UpdateCheck.Result.Available)?.let { avail ->
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(Palette.surfaceInset)
+                                .border(1.dp, Palette.accent.copy(alpha = 0.3f), RoundedCornerShape(10.dp))
+                                .padding(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    "Version ${avail.version} is available" +
+                                        (avail.versionCode?.let { " ($it)" } ?: ""),
+                                    style = NoopType.subhead, color = Palette.textPrimary,
+                                    modifier = Modifier.weight(1f),
+                                )
+                                NoopButton(
+                                    text = "Download",
+                                    leadingIcon = Icons.Filled.Download,
+                                    kind = NoopButtonKind.Primary,
+                                    onClick = {
+                                        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(avail.url)))
+                                    },
+                                )
+                            }
+                            Text(
+                                when (avail.source) {
+                                    "ai-store+github", "github" ->
+                                        "From GitHub Releases Â· Newbbsss/noop-public-release"
+                                    "ai-store" ->
+                                        "From GitHub catalog Â· ${BuildConfig.APPLICATION_ID}"
+                                    else -> "Update catalog"
+                                },
+                                style = NoopType.caption,
+                                color = Palette.textTertiary,
+                            )
+                            if (avail.notes.isNotEmpty()) {
+                                Text(
+                                    avail.notes,
+                                    style = NoopType.footnote, color = Palette.textSecondary,
+                                    modifier = Modifier
+                                        .heightIn(max = 160.dp)
+                                        .verticalScroll(rememberScrollState()),
+                                )
+                            }
+                        }
+                    }
+
+                    Text(
+                        "Checks GitHub for the latest version when you tap. Nothing else is sent.",
+                        style = NoopType.footnote, color = Palette.textTertiary,
+                    )
+
+                    // Version select â€” list GitHub Releases, download APK, install;
+                    // downgrade asks Are you sure?
+                    VersionSelectSection()
+                }
+
+                Text(
+                    "A standalone companion for your WHOOP. Everything stays on this phone: your history, your live stream, your numbers. Nothing is uploaded.",
+                    style = NoopType.subhead,
+                    color = Palette.textSecondary,
+                )
+
+                // What's new â€” re-open the changelog sheet any time (macOS About parity).
+                val whatsNewInteraction = remember { MutableInteractionSource() }
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .liquidPress(whatsNewInteraction)
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(Palette.surfaceInset)
+                        .border(1.dp, Palette.hairline, RoundedCornerShape(10.dp))
+                        .clickable(
+                            interactionSource = whatsNewInteraction,
+                            indication = null,
+                        ) { showWhatsNew = true }
+                        .padding(horizontal = 14.dp, vertical = 12.dp)
+                        .semantics { contentDescription = "What's new in NOOP ${AppChangelog.CURRENT_VERSION}" },
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        Icon(
+                            Icons.Filled.Campaign,
+                            contentDescription = null,
+                            tint = Palette.accent,
+                            modifier = Modifier.size(18.dp),
+                        )
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("What's new", style = NoopType.headline, color = Palette.textPrimary)
+                            // Fable 200 #73 â€” Show again affordance.
+                            Text(
+                                "Show again Â· recent changes and what to expect",
+                                style = NoopType.footnote,
+                                color = Palette.textSecondary,
+                            )
+                        }
+                        Text("â€º", style = NoopType.title2, color = Palette.accent)
+                    }
+                }
+
+                // How your scores work â€” the honest explainer for Charge/Effort/Rest + the
+                // confidence labels, opened any time (macOS/iOS About parity).
+                val scoringGuideInteraction = remember { MutableInteractionSource() }
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .liquidPress(scoringGuideInteraction)
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(Palette.surfaceInset)
+                        .border(1.dp, Palette.hairline, RoundedCornerShape(10.dp))
+                        .clickable(
+                            interactionSource = scoringGuideInteraction,
+                            indication = null,
+                        ) { showScoringGuide = true }
+                        .padding(horizontal = 14.dp, vertical = 12.dp)
+                        .semantics { contentDescription = "How your scores work" },
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        Icon(
+                            Icons.Filled.Science,
+                            contentDescription = null,
+                            tint = Palette.accent,
+                            modifier = Modifier.size(18.dp),
+                        )
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("How your scores work", style = NoopType.headline, color = Palette.textPrimary)
+                            Text(
+                                "Charge, Effort and Rest, and how they differ from WHOOP",
+                                style = NoopType.footnote,
+                                color = Palette.textSecondary,
+                            )
+                        }
+                        Text("â€º", style = NoopType.title2, color = Palette.accent)
+                    }
+                }
+
+                // Fable 200 #122 â€” Cycle medical disclaimer also reachable from About.
+                Text(
+                    "Cycle predictions are awareness only, not contraception or medical advice.",
+                    style = NoopType.footnote,
+                    color = Palette.textTertiary,
+                    modifier = Modifier.padding(top = 4.dp),
+                )
+                // SHIP #250 â€” in-app Help links (Gestures / Scales / Cycle predictions).
+                Text(
+                    "Help Â· Gestures: Settings â†’ Appearance (grip pulse). " +
+                        "Scales: Settings â†’ Units (Effort 0â€“100 vs WHOOP 0â€“21 Â· Â°C/Â°F). " +
+                        "Cycle predictions: More â†’ Cycle Â· awareness only.",
+                    style = NoopType.footnote,
+                    color = Palette.textTertiary,
+                    modifier = Modifier.padding(top = 6.dp),
+                )
+                // SHIP #258 â€” reviewer charging preview path (DEBUG Test Centre / battery pill).
+                Text(
+                    if (com.noop.BuildConfig.DEBUG) {
+                        "Reviewer: More â†’ Test Centre Â· charging preview, or tap the battery pill above."
+                    } else {
+                        "Reviewer: charging overlay preview is on the DEBUG build (Test Centre). MAIN shows the real overlay when the strap charges."
+                    },
+                    style = NoopType.footnote,
+                    color = Palette.textTertiary,
+                    modifier = Modifier.padding(top = 4.dp),
+                )
+
+                // How NOOP works â€” the plain-English primer (COMPONENT 5 of the explainability layer):
+                // how sleep is sorted, how scores + calibration work, what recording means, and where
+                // each number comes from. The one "?" entry point into the primer (macOS/iOS parity).
+                val howNoopWorksInteraction = remember { MutableInteractionSource() }
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .liquidPress(howNoopWorksInteraction)
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(Palette.surfaceInset)
+                        .border(1.dp, Palette.hairline, RoundedCornerShape(10.dp))
+                        .clickable(
+                            interactionSource = howNoopWorksInteraction,
+                            indication = null,
+                        ) { showHowNoopWorks = true }
+                        .padding(horizontal = 14.dp, vertical = 12.dp)
+                        .semantics { contentDescription = "How NOOP works" },
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        Icon(
+                            Icons.AutoMirrored.Filled.MenuBook,
+                            contentDescription = null,
+                            tint = Palette.accent,
+                            modifier = Modifier.size(18.dp),
+                        )
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("How NOOP works", style = NoopType.headline, color = Palette.textPrimary)
+                            Text(
+                                "Sleep sorting, scores, recording, and where your numbers come from.",
+                                style = NoopType.footnote,
+                                color = Palette.textSecondary,
+                            )
+                        }
+                        Text("â€º", style = NoopType.title2, color = Palette.accent)
+                    }
+                }
+
+                // Medical disclaimer â€” inset well with a warning-tinted hairline.
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(Palette.surfaceInset)
+                        .border(1.dp, Palette.statusWarning.copy(alpha = 0.25f), RoundedCornerShape(10.dp))
+                        .padding(12.dp),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalAlignment = Alignment.Top,
+                ) {
+                    Icon(
+                        Icons.Filled.Info,
+                        contentDescription = null,
+                        tint = Palette.statusWarning,
+                        modifier = Modifier.size(16.dp),
+                    )
+                    Text(
+                        "NOOP is not a medical device. It is for informational and personal-insight purposes only and is not intended to diagnose, treat, cure or prevent any condition. Talk to a clinician for medical advice.",
+                        style = NoopType.footnote,
+                        color = Palette.textSecondary,
+                    )
+                }
+                // SHIP #329 â€” privacy / SAFEGUARDS reachable from store About.
+                Text(
+                    "Privacy & safeguards: docs in the repo (PRIVACY_SECURITY Â· SAFEGUARDS Â· DISCLAIMER). " +
+                        "Nothing leaves this phone unless you share it.",
+                    style = NoopType.footnote,
+                    color = Palette.textTertiary,
+                    modifier = Modifier.padding(top = 6.dp),
+                )
+                // SHIP #327 â€” store vs DEBUG package icon confusion.
+                Text(
+                    if (com.noop.BuildConfig.DEBUG) {
+                        "This is the DEBUG package (com.noop.whoop.debug) â€” not the store MAIN icon. Donâ€™t OTA store over this."
+                    } else {
+                        "This is store MAIN (com.noop.whoop). Donâ€™t install DEBUG over it if you want OTA updates to stay clean."
+                    },
+                    style = NoopType.footnote,
+                    color = Palette.textTertiary,
+                    modifier = Modifier.padding(top = 4.dp),
+                )
+                // SHIP #328 â€” quiet reminder before major upgrades.
+                Text(
+                    "Before a major store upgrade: More â†’ Data Sources â†’ Export .noopbak (Backup).",
+                    style = NoopType.footnote,
+                    color = Palette.textTertiary,
+                    modifier = Modifier.padding(top = 4.dp),
+                )
+
+                RowDivider()
+
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Overline("Built on")
+                    AttributionRow(repo = "my-whoop", note = "WHOOP 4.0 protocol")
+                    AttributionRow(repo = "goose", note = "WHOOP 5.0 protocol")
+                }
+                Text(
+                    "Open-source BLE reverse-engineering work. Thank you.",
+                    style = NoopType.footnote,
+                    color = Palette.textTertiary,
+                )
+
+                RowDivider()
+
+                // Support link â€” opens the project's contact email (same address the
+                // Support screen lists). NOOP is anonymous, so email is the support channel.
+                val supportInteraction = remember { MutableInteractionSource() }
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .liquidPress(supportInteraction)
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(Palette.accent.copy(alpha = 0.10f))
+                        .border(1.dp, Palette.accent.copy(alpha = 0.25f), RoundedCornerShape(10.dp))
+                        .clickable(
+                            interactionSource = supportInteraction,
+                            indication = null,
+                        ) {
+                            val intent = Intent(Intent.ACTION_SENDTO).apply {
+                                data = Uri.parse("mailto:$SUPPORT_EMAIL")
+                                putExtra(Intent.EXTRA_SUBJECT, "NOOP support")
+                            }
+                            try {
+                                context.startActivity(intent)
+                            } catch (_: ActivityNotFoundException) {
+                                Toast.makeText(context, "Email us at $SUPPORT_EMAIL", Toast.LENGTH_LONG).show()
+                            }
+                        }
+                        .padding(horizontal = 14.dp, vertical = 12.dp)
+                        .semantics { contentDescription = "Contact support at $SUPPORT_EMAIL" },
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Support & contact", style = NoopType.headline, color = Palette.textPrimary)
+                            Text(
+                                "Questions, feedback, bugs: $SUPPORT_EMAIL",
+                                style = NoopType.footnote,
+                                color = Palette.textSecondary,
+                            )
+                        }
+                        Text("â€º", style = NoopType.title2, color = Palette.accent)
+                    }
+                }
+            }
+        }
+
+        // What's new sheet, opened from the About row above. Full-screen Dialog so it
+        // covers the whole screen like the macOS .sheet; closing just hides it.
+        if (showWhatsNew) {
+            Dialog(
+                onDismissRequest = { showWhatsNew = false },
+                properties = DialogProperties(usePlatformDefaultWidth = false),
+            ) {
+                Surface(modifier = Modifier.fillMaxSize(), color = Palette.surfaceBase) {
+                    WhatsNewSheet(onClose = { showWhatsNew = false })
+                }
+            }
+        }
+
+        // Scoring guide sheet, opened from the About row above. Same full-screen Dialog idiom.
+        if (showScoringGuide) {
+            Dialog(
+                onDismissRequest = { showScoringGuide = false },
+                properties = DialogProperties(usePlatformDefaultWidth = false),
+            ) {
+                Surface(modifier = Modifier.fillMaxSize(), color = Palette.surfaceBase) {
+                    ScoringGuideScreen(onClose = { showScoringGuide = false })
+                }
+            }
+        }
+
+        // "How NOOP works" primer sheet, opened from the About row above. Same full-screen Dialog idiom.
+        if (showHowNoopWorks) {
+            Dialog(
+                onDismissRequest = { showHowNoopWorks = false },
+                properties = DialogProperties(usePlatformDefaultWidth = false),
+            ) {
+                Surface(modifier = Modifier.fillMaxSize(), color = Palette.surfaceBase) {
+                    HowNoopWorksScreen(onClose = { showHowNoopWorks = false })
+                }
+            }
+        }
+
+        // "WHOOP 4.0 vs 5.0/MG" explainer sheet (FI-2 / #490), opened from the Strap section. Same idiom.
+        if (showModelComparison) {
+            Dialog(
+                onDismissRequest = { showModelComparison = false },
+                properties = DialogProperties(usePlatformDefaultWidth = false),
+            ) {
+                Surface(modifier = Modifier.fillMaxSize(), color = Palette.surfaceBase) {
+                    WhoopModelComparisonScreen(onClose = { showModelComparison = false })
+                }
+            }
+        }
+
+        // Steps-estimate calibration, opened from the Profile card's "Steps estimate" row. Same
+        // full-screen Dialog idiom; a manual-coefficient write bumps `rev` so the Profile summary
+        // row reflects the new state on dismiss.
+        if (showStepsCalibration) {
+            Dialog(
+                onDismissRequest = { showStepsCalibration = false },
+                properties = DialogProperties(usePlatformDefaultWidth = false),
+            ) {
+                Surface(modifier = Modifier.fillMaxSize(), color = Palette.surfaceBase) {
+                    StepsCalibrationScreen(
+                        vm = vm,
+                        profile = profile,
+                        onProfileChanged = { rev++ },
+                        onClose = { showStepsCalibration = false },
+                    )
+                }
+            }
+        }
+    }
+}
+
+private const val SUPPORT_EMAIL = "thenoopapp@gmail.com"
+
+// MARK: - App icon swap (v3 "Titanium & Gold")
+
+/**
+ * The two launcher-icon aliases declared in AndroidManifest.xml. Exactly one is ever enabled â€” the
+ * enabled one is the app's home-screen entry point and supplies the launcher icon.
+ */
+private const val ALIAS_DEFAULT = "com.noop.IconDefault" // machined titanium
+private const val ALIAS_NAVY = "com.noop.IconNavy"       // blued / dark-blue titanium
+
+/**
+ * Persist the chosen launcher icon and flip the manifest aliases so exactly one is enabled:
+ * [navy] true enables `.IconNavy` and disables `.IconDefault`, false does the inverse. We use
+ * DONT_KILL_APP so the toggle doesn't tear down our own process. The home launcher may briefly hide
+ * and redraw the icon (or take a few seconds) while it re-reads the component state â€” that's expected
+ * and is the only user-visible side effect.
+ */
+private fun setAppIcon(context: Context, navy: Boolean) {
+    NoopPrefs.setAppIconNavy(context, navy)
+    val pm = context.packageManager
+    pm.setComponentEnabledSetting(
+        ComponentName(context, ALIAS_NAVY),
+        if (navy) PackageManager.COMPONENT_ENABLED_STATE_ENABLED
+        else PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
+        PackageManager.DONT_KILL_APP,
+    )
+    pm.setComponentEnabledSetting(
+        ComponentName(context, ALIAS_DEFAULT),
+        if (navy) PackageManager.COMPONENT_ENABLED_STATE_DISABLED
+        else PackageManager.COMPONENT_ENABLED_STATE_ENABLED,
+        PackageManager.DONT_KILL_APP,
+    )
+}
+
+// MARK: - Waist stepper (optional VOâ‚‚max input)
+
+/** A typical adult waist (cm) used as the first value when stepping up from "unset" (0), so the field
+ *  jumps to a sensible starting point rather than 1 cm. ~34" â€” the rough population midpoint. */
+private const val WAIST_SEED_CM = 86.0
+
+/** Step the waist by one centimetre, seeding [WAIST_SEED_CM] when starting from unset (0). Stepping
+ *  down from the seed cannot go below the seed (it never silently re-enters the "unset" sentinel). */
+private fun waistCmStep(current: Double, up: Boolean): Double {
+    if (current <= 0.0) return if (up) WAIST_SEED_CM else 0.0
+    return (current + if (up) 1.0 else -1.0).coerceAtLeast(WAIST_SEED_CM - 30.0)
+}
+
+/** Step the waist by one inch (entry unit in imperial; stored as cm), seeding [WAIST_SEED_CM] from
+ *  unset. Snaps to whole inches so the up/down sequence is symmetric, mirroring the Height field. */
+private fun waistInchesStep(current: Double, up: Boolean): Double {
+    if (current <= 0.0) return if (up) WAIST_SEED_CM else 0.0
+    val inches = UnitFormatter.cmToInches(current).roundToInt()
+    val nextInches = (inches + if (up) 1 else -1)
+    val nextCm = nextInches * UnitFormatter.CENTIMETERS_PER_INCH
+    return nextCm.coerceAtLeast(WAIST_SEED_CM - 30.0)
+}
+
+// MARK: - Strap status helpers (mirror SettingsView's computed properties)
+
+private fun strapTone(bonded: Boolean, connected: Boolean): StrandTone = when {
+    connected -> StrandTone.Positive
+    bonded -> StrandTone.Warning
+    else -> StrandTone.Critical
+}
+
+// `internal` shim â€” unit tests + callers use lacquer-backed [settingsStrapStatusDetail].
+internal fun strapStatusDetail(
+    bonded: Boolean,
+    connected: Boolean,
+    scanning: Boolean,
+    alongsideWhoopApp: Boolean = false,
+): String = settingsStrapStatusDetail(bonded, connected, scanning, alongsideWhoopApp)
+
+private fun batteryTone(pct: Double): StrandTone = when {
+    pct <= 15 -> StrandTone.Critical
+    pct <= 30 -> StrandTone.Warning
+    else -> StrandTone.Positive
+}
+
+// MARK: - Sex options
+
+private data class SexOption(val tag: String, val label: String)
+
+private val SEX_OPTIONS = listOf(
+    SexOption("male", "Male"),
+    SexOption("female", "Female"),
+    SexOption("nonbinary", "Non-binary"),
+)
+
+// MARK: - Advanced disclosure persistence (S3)
+
+/**
+ * The persisted open/closed state of the Settings "Advanced" disclosure. Keyed identically to the iOS
+ * `@AppStorage("settingsAdvancedOpen")` (here under the `noop.` SharedPreferences namespace), and it
+ * DEFAULTS to false so a first-run user lands collapsed. Pulled out so the default is a single testable
+ * fact: a regression that ships it defaulting open would dump the full wall of cards on first run again.
+ */
+internal object SettingsDisclosurePrefs {
+    const val KEY = "noop.settingsAdvancedOpen"
+    const val DEFAULT_OPEN = false
+
+    fun read(prefs: SharedPreferences): Boolean = prefs.getBoolean(KEY, DEFAULT_OPEN)
+    fun write(prefs: SharedPreferences, open: Boolean) { prefs.edit().putBoolean(KEY, open).apply() }
+}
+
+// MARK: - Advanced disclosure (S3, ports SettingsView's SettingsDisclosureGroup)
+
+/**
+ * A collapsible group that tucks the lower-frequency settings sections behind one tap. It is NOT a
+ * section card itself (the cards it wraps keep their own [SettingsSection] chrome). It's a header row
+ * plus a default-collapsed reveal, modelled on the Test Centre "Advanced" group. Nothing is removed:
+ * collapsed simply means the wrapped sections aren't composed until the row is tapped open. A custom
+ * header (not Material's ExposedDropdown / accordion) keeps it on NOOP's near-black instrument look.
+ */
+@Composable
+private fun SettingsDisclosure(
+    title: String,
+    subtitle: String,
+    expanded: Boolean,
+    onToggle: () -> Unit,
+    content: @Composable () -> Unit,
+) {
+    val chevronRotation by animateFloatAsState(
+        targetValue = if (expanded) 0f else -90f,
+        label = "advancedChevron",
+    )
+    val headerInteraction = remember { MutableInteractionSource() }
+    Column(verticalArrangement = Arrangement.spacedBy(Metrics.screenRowSpacing)) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .liquidPress(headerInteraction)
+                .clip(RoundedCornerShape(12.dp))
+                .clickable(
+                    interactionSource = headerInteraction,
+                    indication = null,
+                    onClick = onToggle,
+                )
+                .semantics {
+                    contentDescription = title
+                    stateDescription = if (expanded) "Expanded" else "Collapsed"
+                },
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(title, style = NoopType.title2, color = Palette.textPrimary)
+                Text(subtitle, style = NoopType.subhead, color = Palette.textSecondary)
+            }
+            Icon(
+                Icons.Filled.KeyboardArrowDown,
+                contentDescription = null,
+                tint = Palette.textTertiary,
+                modifier = Modifier.size(22.dp).rotate(chevronRotation),
+            )
+        }
+        if (expanded) {
+            content()
+        }
+    }
+}
+
+// MARK: - Section card (ports SettingsView's private SettingsSection)
+
+/**
+ * A grouped settings card: icon + title header, an explanatory blurb, then content.
+ * No repeating "Settings" overline on every card (page title already says Settings).
+ */
+@Composable
+private fun SettingsSection(
+    icon: ImageVector,
+    title: String,
+    blurb: String,
+    content: @Composable () -> Unit,
+) {
+    NoopCard(padding = 16.dp, tint = null) {
+        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Icon(icon, contentDescription = null, tint = Palette.accent, modifier = Modifier.size(18.dp))
+                Text(title, style = NoopType.title2, color = Palette.textPrimary)
+            }
+            Text(blurb, style = NoopType.footnote, color = Palette.textTertiary)
+            content()
+        }
+    }
+}
+
+// MARK: - Labelled toggle row (title + detail + trailing Switch)
+
+/**
+ * A title + explanatory detail on the left with a trailing [Switch], matching the in-section toggle idiom
+ * the Strap/Health Connect sections already use. Used by the v5 Health & wellness group so every opt-in
+ * reads consistently. The switch colours mirror the rest of Settings (gold track when on).
+ */
+@Composable
+private fun ToggleRow(
+    title: String,
+    detail: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(16.dp),
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(title, style = NoopType.subhead, color = Palette.textPrimary)
+            Text(detail, style = NoopType.footnote, color = Palette.textTertiary)
+        }
+        Switch(
+            checked = checked,
+            onCheckedChange = onCheckedChange,
+            colors = SwitchDefaults.colors(
+                checkedThumbColor = Palette.surfaceBase,
+                checkedTrackColor = Palette.accent,
+                uncheckedThumbColor = Palette.textSecondary,
+                uncheckedTrackColor = Palette.surfaceInset,
+                uncheckedBorderColor = Palette.hairline,
+            ),
+        )
+    }
+}
+
+// MARK: - Two-column form row (ports SettingsView's private FormRow)
+
+/** Label on the left, control on the right â€” the two-column form feel. */
+@Composable
+private fun FormRow(label: String, control: @Composable () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 44.dp)
+            .padding(vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(16.dp),
+    ) {
+        Text(
+            label,
+            style = NoopType.body,
+            color = Palette.textPrimary,
+            // SHIP #225 â€” locale/long labels truncate cleanly instead of crushing the control.
+            maxLines = 2,
+            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+        )
+        control()
+    }
+}
+
+// MARK: - Shared bits
+
+@Composable
+private fun RowDivider() {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp)
+            .height(1.dp)
+            .background(Palette.hairline),
+    )
+}
+
+@Composable
+private fun NoteRow(icon: ImageVector, iconTint: Color, text: String) {
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        verticalAlignment = Alignment.Top,
+    ) {
+        Icon(icon, contentDescription = null, tint = iconTint, modifier = Modifier.size(16.dp))
+        Text(text, style = NoopType.footnote, color = Palette.textSecondary)
+    }
+}
+
+/** Persists dismiss for the Settings "never backed up" quiet banner (#255). */
+object BackupRemindPrefs {
+    const val SEVEN_DAYS_MS = 7L * 24 * 60 * 60 * 1000
+    private const val KEY = "noop.settings.backup_never_banner_dismissed"
+
+    fun isDismissed(c: Context): Boolean = NoopPrefs.of(c).getBoolean(KEY, false)
+    fun dismiss(c: Context) = NoopPrefs.of(c).edit().putBoolean(KEY, true).apply()
+}
+
+@Composable
+private fun AttributionRow(repo: String, note: String) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        modifier = Modifier.semantics { contentDescription = "$repo, $note" },
+    ) {
+        Text("â€º", style = NoopType.headline, color = Palette.accent)
+        Text(repo, style = NoopType.mono(12f), color = Palette.textPrimary)
+        Text("Â· $note", style = NoopType.footnote, color = Palette.textTertiary)
+    }
+}
