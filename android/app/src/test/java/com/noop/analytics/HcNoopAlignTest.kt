@@ -54,20 +54,23 @@ class HcNoopAlignTest {
     }
 
     @Test
-    fun preferSteps_order() {
+    fun preferSteps_bandOnly_neverPhone() {
+        // Gilbert 2026-07-17: Today Steps = band @57 / IMU estimate — never phone pedometer.
         assertEquals(9000, HcNoopAlign.preferSteps(9000, 8000, 7000))
-        assertEquals(8000, HcNoopAlign.preferSteps(null, 8000, 7000))
+        assertEquals(7000, HcNoopAlign.preferSteps(null, 8000, 7000)) // phone ignored
         assertEquals(7000, HcNoopAlign.preferSteps(null, null, 7000))
+        assertNull(HcNoopAlign.preferSteps(null, 8000, null)) // phone alone → no display digit
         assertNull(HcNoopAlign.preferSteps(null, null, null))
     }
 
     @Test
     fun stepsTileCaption_strapVsPhoneGap_explainsDualSource() {
-        // Fable #320: strap 615 vs phone/WHOOP-app-ish 2831 must not look like one number.
-        assertEquals("strap · ≠ phone", HcNoopAlign.stepsTileCaption(615, 2831, null))
-        assertEquals("strap", HcNoopAlign.stepsTileCaption(2800, 2831, null))
-        assertEquals("phone", HcNoopAlign.stepsTileCaption(null, 2831, 900))
+        // Band digit stays; phone is caption-only compare.
+        assertEquals("band · ≠ phone", HcNoopAlign.stepsTileCaption(615, 2831, null))
+        assertEquals("band", HcNoopAlign.stepsTileCaption(2800, 2831, null))
+        assertEquals("est. · band motion", HcNoopAlign.stepsTileCaption(null, 2831, 900))
         assertEquals("est. · low", HcNoopAlign.stepsTileCaption(null, null, 900, "est. · low"))
+        assertEquals("no band steps", HcNoopAlign.stepsTileCaption(null, 2831, null))
         assertNull(HcNoopAlign.stepsTileCaption(null, null, null))
     }
 

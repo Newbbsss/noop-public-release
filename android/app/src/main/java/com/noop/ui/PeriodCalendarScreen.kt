@@ -6,6 +6,11 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.ui.input.pointer.changedToUp
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
@@ -64,6 +69,7 @@ import java.util.Calendar
 import java.util.Locale
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlin.math.abs
 
 /**
  * Cycle calendar — designed first for people who bleed: full month grid, symptoms,
@@ -498,10 +504,10 @@ fun PeriodCalendarScreen(vm: AppViewModel) {
                 },
             )
         }
-        // SHIP #49 — month chrome vs day panel: keep focus cue so swipe doesn't orphan the panel.
+        // SHIP #49/#229 — month chrome vs day panel; swipe month only when clearly horizontal.
         item {
             Text(
-                "Month above · day panel below (selected day stays put when you change months).",
+                "Swipe the month sideways (or use arrows) · day panel below stays on the selected day.",
                 style = NoopType.caption,
                 color = Palette.textTertiary,
                 modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp),
@@ -842,7 +848,44 @@ private fun MonthCalendarCard(
     } || (snap.nextPeriodLikely != null &&
         runCatching { LocalDate.parse(snap.nextPeriodLikely!!).isAfter(LocalDate.now()) }.getOrDefault(false))
     // Flat on sky — no nested GlowCard (nested cards = ugly / heavy).
-    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+    // SHIP #229 — month swipe is axis-locked so LazyColumn vertical scroll wins on diagonal/vertical.
+    val forecastFloodScale = remember(grid) {
+        val predictedInMonth = grid.count {
+            it.inMonth && (it.isPredictedPeriod || it.isPredictedWindow)
+        }
+        when {
+            predictedInMonth >= 18 -> 0.35f
+            predictedInMonth >= 12 -> 0.55f
+            predictedInMonth >= 8 -> 0.75f
+            else -> 1f
+        }
+    }
+    Column(
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+        modifier = Modifier.pointerInput(Unit) {
+            awaitEachGesture {
+                awaitFirstDown(requireUnconsumed = false)
+                var totalX = 0f
+                var totalY = 0f
+                do {
+                    val event = awaitPointerEvent()
+                    val change = event.changes.firstOrNull() ?: break
+                    if (change.changedToUp()) break
+                    val d = change.positionChange()
+                    totalX += d.x
+                    totalY += d.y
+                    if (abs(totalY) > abs(totalX) && abs(totalY) > 28f) {
+                        return@awaitEachGesture
+                    }
+                    if (abs(totalX) > abs(totalY) * 1.5f && abs(totalX) > 16f) {
+                        change.consume()
+                    }
+                } while (event.changes.any { it.pressed })
+                if (abs(totalX) < 96f || abs(totalX) < abs(totalY) * 1.8f) return@awaitEachGesture
+                if (totalX < 0f) onNext() else onPrev()
+            }
+        },
+    ) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 IconButton(onClick = onPrev) {
                     Icon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, "Previous month")
@@ -888,12 +931,21 @@ private fun MonthCalendarCard(
                         DayCellView(
                             cell = cell,
                             selected = cell.day == selectedDay,
+                            // SHIP #359 — when import noise paints many forecast days, dial washes way down.
+                            floodScale = forecastFloodScale,
                             modifier = Modifier.weight(1f),
                             onClick = { onSelect(cell.day) },
                             onLongClick = { onLongSelect(cell.day) },
                         )
                     }
                 }
+            }
+            if (forecastFloodScale < 1f) {
+                Text(
+                    "Forecast soft · many estimated days this month (not a logged orange flood).",
+                    style = NoopType.footnote,
+                    color = Palette.textTertiary,
+                )
             }
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 LegendDot(Palette.metricRose, "Period")
@@ -919,16 +971,19 @@ private fun DayCellView(
     cell: PeriodCalendar.DayCell,
     selected: Boolean,
     modifier: Modifier = Modifier,
+    /** 1f = normal; lower when the month is forecast-heavy (#359). */
+    floodScale: Float = 1f,
     onClick: () -> Unit,
     onLongClick: () -> Unit = {},
 ) {
     val dayNum = cell.day.takeLast(2).trimStart('0').ifEmpty { "0" }
     // Quiet calendar: logged period is clear; forecasts are hairline washes, not orange flood.
     // No phase letters on every cell — that read as "period-aware chrome" across the month.
+    val predScale = floodScale.coerceIn(0.25f, 1f)
     val bg = when {
         cell.hasPeriod -> Palette.metricRose.copy(alpha = 0.38f)
-        cell.isPredictedPeriod -> Palette.metricRose.copy(alpha = 0.10f)
-        cell.isPredictedWindow -> Palette.metricAmber.copy(alpha = 0.07f)
+        cell.isPredictedPeriod -> Palette.metricRose.copy(alpha = 0.10f * predScale)
+        cell.isPredictedWindow -> Palette.metricAmber.copy(alpha = 0.07f * predScale)
         cell.hasWhoopMarker -> Palette.accent.copy(alpha = 0.10f)
         selected -> Palette.surfaceInset
         else -> Color.Transparent

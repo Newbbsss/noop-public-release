@@ -380,6 +380,10 @@ object IntelligenceEngine {
                 restingHR = resting,
                 sex = profile.sex,
             ) ?: continue
+            // Don't bank a calm-day 0.0 from overnight-only HR: that locks the row (strain != null)
+            // and reads as a fake "0.0 load" until a full re-score. Leave null so Today shows "—" /
+            // live Effort until there's real cardio TRIMP or the daily pass commits the day.
+            if (strain <= 0.0) continue
             updates.add(
                 (prior ?: DailyMetric(deviceId = computedId, day = day)).copy(
                     deviceId = computedId,
@@ -1297,36 +1301,23 @@ object IntelligenceEngine {
                 MetricSeriesRow(deviceId = computedId, day = satKey, key = "body_age", value = vRes.bodyAge)))
         }
 
-        // ── Steps ESTIMATE (WHOOP 4.0) , DAILY, keyed to each strap-only day ──
-        // A WHOOP 4.0 sends no step count over BLE, so for days the phone DIDN'T also count steps we
-        // estimate them: calibrate the strap's daily MOTION VOLUME against the phone's real step count on
-        // the days both exist, then apply that personal coefficient to the strap-only days. Engine =
-        // StepsEstimateEngine (fully unit-tested); this block is pure orchestration , gather points, fit,
-        // store under the same "-noop" source, and hand the fit back to the caller for ProfileStore.
-        // Idempotent: re-upserts the same (computedId, day, "steps_est") rows. Inert until there's a
-        // calibration , a single-source / no-phone user sees no estimate until they set a manual `k`.
-        // Mirrors the Swift IntelligenceEngine steps-estimate block byte-for-byte (60-day window, the
-        // apple-health daily `steps` reference, the [localMidnight,+24h) motion volume).
+        // ── Steps ESTIMATE (band IMU / gravity) — DAILY ──
+        // Gilbert 2026-07-17: Today Steps are **band-sourced only**. Phone/HC pedometer is a
+        // calibration *reference* (fit personal k), never the displayed day total and never a
+        // reason to skip writing `steps_est`. WHOOP 5/MG prefer @57 via analyzeDay; this block
+        // fills WHOOP 4 / sparse-counter days from strap gravity motion volume.
         val stepsCalDays = 60
         val calOldest = AnalyticsEngine.dayString(
             nowLocalMidnight - (stepsCalDays - 1) * SECONDS_PER_DAY, tzOffsetSeconds)
-        // Phone reference steps per day, from the apple-health daily rows (steps > 0 only). On Android the
-        // Apple-Health importer banks `steps` in AppleDaily (DailyMetric holds only sleep/HR/HRV , see
-        // AppleHealthImporter), so read appleDaily here, not dailyMetrics, or the reference is always empty
-        // and NO phone-step calibration ever fits (the cause of the "Not calibrated" reports on #37).
+        // Phone reference (Apple / HC) — Settings fit only. Not written onto DailyMetric.steps.
         val appleRows = repo.appleDaily(WhoopRepository.APPLE_HEALTH_SOURCE, calOldest, newestDay)
         val refStepsByDay = HashMap<String, Double>()
         for (r in appleRows) { val s = r.steps; if (s != null && s > 0) refStepsByDay[r.day] = s.toDouble() }
-        // #37: Health Connect steps (imported under "health-connect", also in appleDaily) are a phone
-        // reference too , union them in so HC-only users get a step calibration. Apple-health WINS on a
-        // same-day overlap (only fill days apple didn't already supply).
         val hcStepRows = repo.appleDaily(WhoopRepository.HEALTH_CONNECT_SOURCE, calOldest, newestDay)
         for (r in hcStepRows) {
             val s = r.steps
             if (s != null && s > 0 && !refStepsByDay.containsKey(r.day)) refStepsByDay[r.day] = s.toDouble()
         }
-        // Per-day motion volume over the calibration window, read from the owner-resolved strap streams.
-        // (Owner resolution mirrors the scoring loop; a single-device install resolves to importedDeviceId.)
         val motionByDay = HashMap<String, Double>()
         for (off in 0 until stepsCalDays) {
             val dayMid = midnightLocal(nowLocalMidnight - off * SECONDS_PER_DAY, tzOffsetSeconds)
@@ -1337,22 +1328,19 @@ object IntelligenceEngine {
             val m = StepsEstimateEngine.dayMotionIntensity(grav)
             if (m > 0) motionByDay[dayKey] = m
         }
-        // Build calibration points only for days with BOTH a motion volume and a real phone step count.
         val calPoints = motionByDay.mapNotNull { (day, motion) ->
             refStepsByDay[day]?.let { StepsEstimateEngine.CalibrationPoint(motion = motion, steps = it) }
         }
         val stepsCal = StepsEstimateEngine.calibrate(calPoints, manualOverride = manualStepCoefficient)
         if (stepsCal != null) {
-            // Estimate + upsert for each recent scored day that has motion but NO real phone step count.
+            // Always upsert band-motion estimates when gravity exists — even if phone also counted
+            // that day (phone is compare/fit only; Today never prefers HC over band).
             val estRows = ArrayList<MetricSeriesRow>()
             for (dm in dailies) {
-                if (refStepsByDay.containsKey(dm.day)) continue
                 val motion = motionByDay[dm.day] ?: continue
                 val est = StepsEstimateEngine.estimate(motion, stepsCal) ?: continue
                 estRows.add(MetricSeriesRow(deviceId = computedId, day = dm.day, key = "steps_est", value = est.toDouble()))
-                // WHOOP 4.0 has no pedometer BLE field. When the daily row's steps is null, surface the
-                // calibrated estimate on the daily row so Today is not blank — still an ESTIMATE
-                // (Today shows "est." when using steps_est path). Never invent without calibration.
+                // Surface estimate on daily only when no @57 strap counter was scored — still ESTIMATE.
                 if (dm.steps == null && est > 0) {
                     repo.upsertDailyMetrics(
                         listOf(dm.copy(steps = est)),
@@ -1360,7 +1348,6 @@ object IntelligenceEngine {
                 }
             }
             if (estRows.isNotEmpty()) repo.upsertMetricSeries(estRows)
-            // Hand the fit back so the caller mirrors it into ProfileStore for the Settings/Steps screen.
             persistStepsCalibration(stepsCal)
         }
         // Steps test mode: emit the WHOOP-4 motion-volume calibration trace (per-day points + the fitted /

@@ -360,6 +360,13 @@ object StrandAlpha {
     const val unselectedBar = 0.88f
     const val warningFill = 0.12f
     const val warningBorder = 0.40f
+
+    /** Light paper needs denser chart washes (THEMES_LIGHT_DARK · chart fill alphas). */
+    fun chartFillStrongResolved(): Float =
+        if (Palette.schemeIsLight) 0.40f else chartFillStrong
+
+    fun chartFillSoftResolved(): Float =
+        if (Palette.schemeIsLight) 0.10f else chartFillSoft
 }
 
 // MARK: - Metrics (ported from StrandDesign/Components.swift NoopMetrics)

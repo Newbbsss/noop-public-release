@@ -1,4 +1,4 @@
-package com.noop.update
+﻿package com.noop.update
 
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -10,26 +10,45 @@ import java.net.URL
 /**
  * User-initiated + quiet launch "Check for updates".
  *
- * Public release builds update from GitHub Releases on `Newbbsss/noop-public-release` only.
- * Upstream `ryanbr/noop` is a separate lineage.
+ * Gilbert's daily-driver builds (`com.noop.whoop` / `com.noop.whoop.debug`) update from
+ * GitHub (`Newbbsss/noop-public-release` + `Newbbsss/noop-public-release` Releases). Optional LAN catalog
+ * hosts remain as fallbacks for on-network installs â€” not user-facing "AI store" copy.
+ * Upstream `ryanbr/noop` releases are a separate lineage and must not drive this fork's prompts.
  *
- * Friends invite copy lives in [friendsNetworkShareText] — see Friends network UI.
+ * Sources (first hit wins):
+ *  1. GitHub apps catalog (`apk_github` preferred in parse) â€” matches [applicationId]
+ *  2. Optional LAN catalog hosts (same Wiâ€‘Fi / private net fallback)
+ *  3. GitHub Releases latest on `Newbbsss/noop-public-release`
+ *
+ * Version select ([listAvailableVersions]) lists Releases APKs for install/downgrade.
+ *
+ * Runs only when asked (Settings tap) or once per quiet window on launch. Nothing about the user
+ * is sent â€” the client only GETs a catalog or the releases JSON.
+ *
+ * Friends / Tailscale invite copy lives in [friendsNetworkShareText] â€” see Friends network UI.
  */
 object UpdateCheck {
 
-    /** Public release: no private LAN/Tailscale catalogs — GitHub Releases only. */
-    val STORE_CATALOGS: List<String> = emptyList()
+    /**
+     * Catalog URLs. GitHub first so Fold/away updates don't depend on LAN.
+     * LAN hosts stay as fallback for on-network installs (not user-facing store branding).
+     */
+    val STORE_CATALOGS: List<String> = listOf(
+        // Public release: GitHub Releases only (no private LAN / Tailscale catalogs).
+    ). Private raw needs network auth;
+        // unauthenticated clients fall through to Releases latest below.
+        "",
+        "",
+    )
 
     const val GITHUB_APPS_CATALOG_URL =
-        "https://api.github.com/repos/Newbbsss/noop-public-release/releases/latest"
-
-    /** Public release repo. */
+    /** Private fork releases (Newbbsss). Backup when catalog GETs fail. */
     const val GITHUB_RELEASES_LATEST =
         "https://api.github.com/repos/Newbbsss/noop-public-release/releases/latest"
 
     /**
      * GitHub Releases list endpoints for in-app version select.
-     * Primary: this public repo. Optional upstream mirror second.
+     * Primary: Gilbert APK home. Optional public mirror listed second (merged, primary wins on tag).
      */
     val GITHUB_RELEASES_LIST: List<String> = listOf(
         "https://api.github.com/repos/Newbbsss/noop-public-release/releases?per_page=40",
@@ -39,42 +58,43 @@ object UpdateCheck {
     const val PROJECT_HOME_URL = "https://github.com/Newbbsss/noop-public-release"
     const val UPSTREAM_HOME_URL = "https://github.com/ryanbr/noop"
 
-    /** Friends install help points at GitHub Releases (not a private LAN catalog). */
-    const val FRIENDS_LAN_INSTALL_URL =
-        "https://github.com/Newbbsss/noop-public-release/releases/latest"
-    const val FRIENDS_TAILSCALE_INSTALL_URL =
-        "https://github.com/Newbbsss/noop-public-release/releases/latest"
+    /** Private-net install hosts for Friends network invite text only (not Settings updates). */
+    const val FRIENDS_LAN_INSTALL_URL = "https://github.com/Newbbsss/noop-public-release/releases/latest"
+    const val FRIENDS_TAILSCALE_INSTALL_URL = "https://github.com/Newbbsss/noop-public-release/releases/latest"
 
-    /** @deprecated Use [FRIENDS_LAN_INSTALL_URL]. */
+    /** @deprecated Use [FRIENDS_LAN_INSTALL_URL] â€” kept for older call sites. */
     const val AI_STORE_BROWSER_URL = FRIENDS_LAN_INSTALL_URL
-    /** @deprecated Use [FRIENDS_TAILSCALE_INSTALL_URL]. */
+    /** @deprecated Use [FRIENDS_TAILSCALE_INSTALL_URL] â€” Friends network only. */
     const val AI_STORE_TAILSCALE_URL = FRIENDS_TAILSCALE_INSTALL_URL
 
-    /** AltStore / SideStore source (Newbbsss/noop when IPA is published). */
+    /**
+     * Upstream AltStore / SideStore source was ryanbr. Gilbert ships from the private fork â€”
+     * Friends install help uses Newbbsss/noop (match Android version when IPA is published).
+     */
     const val ALTSTORE_SOURCE_URL =
         "https://raw.githubusercontent.com/Newbbsss/noop/main/altstore-source.json"
 
     /**
      * Plain-text invite for Friends network (LAN / Tailscale private pipe).
-     * Not the app-update path — Settings → Check for updates uses GitHub.
+     * Not the app-update path â€” Settings â†’ Check for updates uses GitHub.
      */
     fun friendsNetworkShareText(inviteCode: String? = null): String = buildString {
-        appendLine("NOOP — Friends network invite (private pipe only).")
+        appendLine("NOOP â€” Friends network invite (private pipe only).")
         appendLine()
-        appendLine("1. Join the same home Wi-Fi — or a Tailscale tailnet — as your friend.")
+        appendLine("1. Join the same home Wi-Fi â€” or a Tailscale tailnet â€” as your friend.")
         appendLine("2. Android: install from GitHub Releases:")
         appendLine("   https://github.com/Newbbsss/noop-public-release/releases/latest")
         appendLine("3. iPhone: add this AltStore / SideStore source, then install NOOP:")
         appendLine("   $ALTSTORE_SOURCE_URL")
-        appendLine("   (AltStore: https://altstore.io — free Apple ID, re-signs every 7 days.)")
+        appendLine("   (AltStore: https://altstore.io â€” free Apple ID, re-signs every 7 days.)")
         val code = inviteCode?.trim().orEmpty()
         if (code.isNotBlank()) {
             appendLine()
-            appendLine("4. In NOOP → Friends network, enter invite code: $code")
+            appendLine("4. In NOOP â†’ Friends network, enter invite code: $code")
         }
         appendLine()
         appendLine("Opt-in Charge / Effort day shares stay on the private pipe. No cloud accounts.")
-        appendLine("App updates for you still come from GitHub — Friends is not the update channel.")
+        appendLine("App updates for you still come from GitHub â€” Friends is not the update channel.")
         appendLine("Fully offline once installed. No WHOOP cloud. Not affiliated with WHOOP.")
     }
 
@@ -230,8 +250,8 @@ object UpdateCheck {
         val source = when {
             isAbsoluteHttp(apkGithub) ||
                 (isAbsoluteHttp(apkRel) && apkRel.contains("github.com", ignoreCase = true)) ->
-                "github"
-            else -> "github"
+                "ai-store+github"
+            else -> "ai-store"
         }
         if (versionName.isBlank() && versionCode == null) return Result.Failed
         val newerByCode = versionCode != null && currentVersionCode > 0 && versionCode > currentVersionCode
@@ -381,7 +401,7 @@ object UpdateCheck {
         return fallback
     }
 
-    /** Optional `versionCode: N` hint in release notes. */
+    /** Optional `versionCode: N` hint in release notes for fable builds. */
     fun versionCodeFromTagNotes(tag: String, notes: String): Int? {
         val fromNotes = Regex("""versionCode\s*[:=]\s*(\d+)""", RegexOption.IGNORE_CASE)
             .find(notes)?.groupValues?.getOrNull(1)?.toIntOrNull()
@@ -401,7 +421,7 @@ object UpdateCheck {
                 connectTimeout = 8_000
                 readTimeout = 10_000
                 setRequestProperty("Accept", "application/json, application/vnd.github+json, */*")
-                setRequestProperty("User-Agent", "NOOP-UpdateCheck")
+                setRequestProperty("User-Agent", "NOOP-Public-UpdateCheck")
             }
             try {
                 if (conn.responseCode !in 200..299) return null

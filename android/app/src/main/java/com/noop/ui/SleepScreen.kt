@@ -294,10 +294,20 @@ fun SleepScreen(
     val alarmTargetForWind by vm.phoneAlarmTargetMinutes.collectAsStateWithLifecycle()
     val is24Wind = remember(context) { android.text.format.DateFormat.is24HourFormat(context) }
 
-    // Sleep tab hosts two pages: Sleep (night) and Alarm (WHOOP-like wake controls).
+    // Sleep tab hosts two pages: Sleep (night) and Alarm (unified wake controls — no Wake settings hop).
     var sleepPage by remember { mutableStateOf(SleepInnerPage.Sleep) }
     var sleepAlarmForward by remember { mutableStateOf(true) }
     var sleepAlarmIndex by remember { mutableIntStateOf(0) }
+    // Today Quick Alarm / Automations / More → land on Alarm pill (one-shot).
+    // mutableStateOf flag: consumes even when Sleep is already resumed (launchSingleTop).
+    val openAlarmTab = SessionUiFlags.openSleepAlarmTab
+    LaunchedEffect(openAlarmTab) {
+        if (!openAlarmTab) return@LaunchedEffect
+        SessionUiFlags.openSleepAlarmTab = false
+        sleepAlarmForward = true
+        sleepAlarmIndex = 1
+        sleepPage = SleepInnerPage.Alarm
+    }
     val sleepListState = rememberLazyListState()
     val stagesBring = remember { BringIntoViewRequester() }
     val ledgerBring = remember { BringIntoViewRequester() }
@@ -467,7 +477,7 @@ fun SleepScreen(
         lifecycleOwnerForSub.lifecycle.addObserver(observer)
         onDispose { lifecycleOwnerForSub.lifecycle.removeObserver(observer) }
     }
-    // Wake settings / Alarm page DRY — same Off · may-drift · Armed·Rest copy.
+    // Alarm page DRY — same Off · may-drift · Armed·Rest copy.
     val alarmSubtitle = alarmWakeLiveSubtitle(alarmEnabledForSubtitle, alarmExactOk)
 
     LazyScreenScaffold(
@@ -491,7 +501,14 @@ fun SleepScreen(
                         Box(
                             Modifier
                                 .fillMaxSize()
-                                .background(Color.Black.copy(alpha = 0.38f)),
+                                // Light: paper wash (Color.Black on day-cycle sky is a dark leftover).
+                                .background(
+                                    if (Palette.isLight) {
+                                        Palette.surfaceBase.copy(alpha = 0.46f)
+                                    } else {
+                                        Color.Black.copy(alpha = 0.38f)
+                                    },
+                                ),
                         )
                     }
                 }
@@ -547,21 +564,8 @@ fun SleepScreen(
                 exit = NoopMotion.siblingPageExit(forward = sleepAlarmForward, reduced = reduced),
             ) {
                 Column(verticalArrangement = Arrangement.spacedBy(Metrics.space8)) {
-                    WhoopLikeQuickAlarmCard(
-                        vm = vm,
-                        onOpenFullAlarm = onOpenAlarm,
-                        onOpenCharge = onOpenCharge,
-                        sleepNeedMinutes = sleepNeedMinutesForAlarm(tilesModel?.typicalTotalMin),
-                        asleepMinForBridge = display?.stages?.asleep?.takeIf { it > 0 }
-                            ?: model?.stages?.asleep?.takeIf { it > 0 },
-                        showingRestPct = run {
-                            val dayKey = night?.dayKey ?: days.lastOrNull()?.day
-                            val seriesRest = dayKey?.let { imported.performance[it] }
-                            val modelRest = (model ?: tilesModel)?.performance?.latest
-                            sleepHeroRestScore(seriesRest, modelRest) != null
-                        },
-                    )
-                    // ALARM_PAGE #37/#60 — TZ travel honesty also on Alarm (early-return used to skip it).
+                    // One Alarm home — full editor embedded (no separate Wake settings hop).
+                    SmartAlarmScreen(vm = vm, embedded = true)
                     Text(
                         LifeChapterLacquer.ALARM_TRAVEL_CLOCK_NOTE,
                         style = NoopType.footnote,
@@ -679,8 +683,15 @@ fun SleepScreen(
             item {
                 val dayKey = night?.dayKey ?: days.lastOrNull()?.day
                 val restDay = dayKey?.let { key -> days.firstOrNull { it.day == key } }
-                val restTier = remember(restDay, night?.session) {
-                    ScoreConfidence.forRestFromDaily(restDay, hasSession = night?.session != null)
+                val restTier = remember(restDay, night?.session, days) {
+                    val scoredNights = days.count { d ->
+                        ((d.deepMin ?: 0.0) + (d.remMin ?: 0.0)) > 0.0 || (d.totalSleepMin ?: 0.0) > 0.0
+                    }
+                    ScoreConfidence.forRestFromDaily(
+                        restDay,
+                        hasSession = night?.session != null,
+                        scoredRestNights = scoredNights.coerceAtLeast(1),
+                    )
                 }
                 // Fable Rest #25: same sleep_performance series as Today Rest vessel (not a second truth).
                 val seriesRest = dayKey?.let { imported.performance[it] }
@@ -840,11 +851,16 @@ fun SleepScreen(
                 val dayKey = night?.dayKey ?: days.lastOrNull()?.day
                 val restDay = dayKey?.let { key -> days.firstOrNull { it.day == key } }
                 if (restDay != null) {
-                    val needHours = maxOf(
-                        RestScorer.minPersonalNeedHours,
-                        ((model ?: tilesModel)?.typicalTotalMin ?: 450.0) / 60.0,
+                    val needHours = RestScorer.personalNeedHours(
+                        listOfNotNull((model ?: tilesModel)?.typicalTotalMin?.takeIf { it > 0.0 }),
+                    ).first
+                    RestDriversSection(
+                        daily = restDay,
+                        sleepNeedHours = needHours,
+                        scoredRestNights = days.count { d ->
+                            ((d.deepMin ?: 0.0) + (d.remMin ?: 0.0)) > 0.0 || (d.totalSleepMin ?: 0.0) > 0.0
+                        }.coerceAtLeast(1),
                     )
-                    RestDriversSection(daily = restDay, sleepNeedHours = needHours)
                 }
             }
             // Dual truth strip — NOOP asleep for the *navigated* night vs HC staged asleep
@@ -2377,7 +2393,7 @@ private fun SleepToolsStrip(
     onMark: (SleepMarkType) -> Unit,
     onPreviewChime: () -> Unit = {},
 ) {
-    val need = typicalMinutes?.coerceAtLeast(450.0)
+    val need = typicalMinutes?.coerceAtLeast(RestScorer.minPersonalNeedHours * 60.0)
     Column(
         Modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -5607,8 +5623,10 @@ internal fun buildSleepModel(
     val typicalRemMin = mean(days.mapNotNull { it.remMin }.filter { it > 0.0 })
     val typicalLightMin = mean(days.mapNotNull { it.lightMin }.filter { it > 0.0 })
 
-    // Personal sleep need (minutes): mean asleep, floored at 7.5h (450 min).
-    val needMin = max(450.0, typicalTotalMin ?: 450.0)
+    // Personal sleep need (minutes): mean asleep floored at minPersonalNeedHours; empty → RestScorer default.
+    val needMin = RestScorer.personalNeedHours(
+        listOfNotNull(typicalTotalMin?.takeIf { it > 0.0 }),
+    ).first * 60.0
 
     // Per-tile metrics — each a full pass over the FULL day history (asleep totals, no in-bed
     // substitution), latest = the most-recent day. Mirrors iOS SleepView, where every tile series
@@ -5793,18 +5811,29 @@ private fun mean(vals: List<Double>): Double? = if (vals.isEmpty()) null else va
  * Lay the stage minutes end-to-end as proportional hypnogram segments: light → deep →
  * light → rem → light → awake (deep early, REM later, awake last). Weights are minutes;
  * the Hypnogram normalizes them to width.
+ *
+ * SHIP #79 — never invent Deep/REM shares: only emit stages with positive banked minutes.
  */
 internal fun stageSegments(s: Stages): List<Pair<String, Float>> {
     val out = ArrayList<Pair<String, Float>>()
     fun add(name: String, minutes: Double) {
         if (minutes > 0.0) out.add(name to minutes.toFloat())
     }
-    add("light", s.light * 0.4)
-    add("deep", s.deep)
-    add("light", s.light * 0.3)
-    add("rem", s.rem)
-    add("light", s.light * 0.3)
-    add("awake", s.awake)
+    val light = s.light.coerceAtLeast(0.0)
+    val deep = s.deep.coerceAtLeast(0.0)
+    val rem = s.rem.coerceAtLeast(0.0)
+    val awake = s.awake.coerceAtLeast(0.0)
+    if (light > 0.0) {
+        add("light", light * 0.4)
+        add("deep", deep)
+        add("light", light * 0.3)
+        add("rem", rem)
+        add("light", light * 0.3)
+    } else {
+        add("deep", deep)
+        add("rem", rem)
+    }
+    add("awake", awake)
     return out
 }
 
@@ -6612,13 +6641,14 @@ private fun sleepMetricSpec(key: String): SleepMetricSpec = when (key) {
 }
 
 private fun buildSleepMetricPoints(days: List<DailyMetric>, key: String): List<Pair<String, Double>> {
-    val needMin = max(450.0, days.mapNotNull { it.totalSleepMin?.takeIf { m -> m > 0.0 } }.average().let { if (it.isNaN()) 480.0 else it })
+    val needMin = RestScorer.personalNeedHours(
+        days.mapNotNull { it.totalSleepMin?.takeIf { m -> m > 0.0 } },
+    ).first * 60.0
     // Fable #375 — sleep_debt detail = running Σ(slept − need) hours, same ledger as SleepDebtLedgerCard.
     if (key == "sleep_debt") {
-        val typicalAsleep = days.mapNotNull { RestScorer.canonicalAsleepMin(it)?.takeIf { m -> m > 0.0 } }
-            .average()
-            .let { if (it.isNaN()) 450.0 else it }
-        val needHours = max(450.0, typicalAsleep) / 60.0
+        val needHours = RestScorer.personalNeedHours(
+            days.mapNotNull { RestScorer.canonicalAsleepMin(it)?.takeIf { m -> m > 0.0 } },
+        ).first
         val ledger = SleepDebt.ledger(
             series = days.map { it.day to RestScorer.canonicalAsleepMin(it) },
             needHours = needHours,
@@ -6786,12 +6816,18 @@ private fun SleepMetricDetailSheetContent(vm: AppViewModel, key: String) {
 
 /** Fable Rest #10 — "What shaped Rest" under the Sleep hero. Flat on sky; hidden when unscored. */
 @Composable
-private fun RestDriversSection(daily: DailyMetric, sleepNeedHours: Double) {
+private fun RestDriversSection(
+    daily: DailyMetric,
+    sleepNeedHours: Double,
+    scoredRestNights: Int = 1,
+) {
     val drivers = remember(daily, sleepNeedHours) {
         com.noop.analytics.RestDrivers.restDrivers(daily, sleepNeedHours = sleepNeedHours)
     }
     if (drivers.isEmpty()) return
-    val tier = remember(daily) { ScoreConfidence.forRestFromDaily(daily, hasSession = true) }
+    val tier = remember(daily, scoredRestNights) {
+        ScoreConfidence.forRestFromDaily(daily, hasSession = true, scoredRestNights = scoredRestNights)
+    }
     Column(
         verticalArrangement = Arrangement.spacedBy(Metrics.gap),
         modifier = Modifier

@@ -629,6 +629,14 @@ class WhoopRepository(private val dao: WhoopDao) {
     suspend fun rrIntervals(deviceId: String, from: Long, to: Long, limit: Int = DEFAULT_LIMIT) =
         dao.rrIntervals(deviceId, from, to, limit)
 
+    /**
+     * #908 twin of [hrSamplesUnion]: R-R for Stress / Baevsky / LF-HF after a re-pair banks under
+     * `whoop-<mac>` while history stays on `my-whoop`. Fold pull 2026-07-16: active WHOOP 5 id had
+     * empty RR while `my-whoop` held 269k intervals — active-only reads blanked Advanced HRV.
+     */
+    suspend fun rrIntervalsUnion(activeDeviceId: String, from: Long, to: Long, limit: Int = DEFAULT_LIMIT):
+        List<RrInterval> = mergeRrByTs(importedSourceIds(activeDeviceId).map { dao.rrIntervals(it, from, to, limit) })
+
     suspend fun events(deviceId: String, from: Long, to: Long, limit: Int = DEFAULT_LIMIT) =
         dao.events(deviceId, from, to, limit)
 
@@ -799,6 +807,18 @@ class WhoopRepository(private val dao: WhoopDao) {
 
     suspend fun gravitySamples(deviceId: String, from: Long, to: Long, limit: Int = DEFAULT_LIMIT) =
         dao.gravitySamples(deviceId, from, to, limit)
+
+    /** #908 / Fold 2026-07-16 — gravity under active∪canonical so Stress motion survives re-pair. */
+    suspend fun gravitySamplesUnion(activeDeviceId: String, from: Long, to: Long, limit: Int = DEFAULT_LIMIT):
+        List<GravitySample> = mergeGravityByTs(
+            importedSourceIds(activeDeviceId).map { dao.gravitySamples(it, from, to, limit) },
+        )
+
+    /** #908 twin — steps for sedentary/busy Stress lanes after strap re-add. */
+    suspend fun stepSamplesUnion(activeDeviceId: String, from: Long, to: Long, limit: Int = DEFAULT_LIMIT):
+        List<StepSample> = mergeStepsByTs(
+            importedSourceIds(activeDeviceId).map { dao.stepSamples(it, from, to, limit) },
+        )
 
     suspend fun sleepSessions(deviceId: String, from: Long, to: Long, limit: Int = DEFAULT_LIMIT) =
         dao.sleepSessions(deviceId, from, to, limit)
@@ -1535,6 +1555,28 @@ class WhoopRepository(private val dao: WhoopDao) {
         internal fun mergeHrByTs(lists: List<List<HrSample>>): List<HrSample> {
             if (lists.size == 1) return lists[0]
             val byTs = LinkedHashMap<Long, HrSample>()
+            for (list in lists) for (s in list) byTs.putIfAbsent(s.ts, s)
+            return byTs.values.sortedBy { it.ts }
+        }
+
+        /** Active-strap-first R-R union — same dedupe rule as [mergeHrByTs]. (#908 / Fold 2026-07-16) */
+        internal fun mergeRrByTs(lists: List<List<RrInterval>>): List<RrInterval> {
+            if (lists.size == 1) return lists[0]
+            val byTs = LinkedHashMap<Long, RrInterval>()
+            for (list in lists) for (s in list) byTs.putIfAbsent(s.ts, s)
+            return byTs.values.sortedBy { it.ts }
+        }
+
+        internal fun mergeGravityByTs(lists: List<List<GravitySample>>): List<GravitySample> {
+            if (lists.size == 1) return lists[0]
+            val byTs = LinkedHashMap<Long, GravitySample>()
+            for (list in lists) for (s in list) byTs.putIfAbsent(s.ts, s)
+            return byTs.values.sortedBy { it.ts }
+        }
+
+        internal fun mergeStepsByTs(lists: List<List<StepSample>>): List<StepSample> {
+            if (lists.size == 1) return lists[0]
+            val byTs = LinkedHashMap<Long, StepSample>()
             for (list in lists) for (s in list) byTs.putIfAbsent(s.ts, s)
             return byTs.values.sortedBy { it.ts }
         }

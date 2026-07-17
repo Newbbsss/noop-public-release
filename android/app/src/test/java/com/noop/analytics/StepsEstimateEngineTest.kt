@@ -123,7 +123,7 @@ class StepsEstimateEngineTest {
         assertEquals(3, status.sampleDays)
         assertTrue(status.confidence > 0)
         assertTrue(status.canEstimate)
-        assertEquals("Estimated from 3 days your phone also counted", status.headline)
+        assertEquals("Band motion fit from 3 days (phone compare only)", status.headline)
     }
 
     @Test fun statusManualOverrideWinsEvenWithNoDays() {

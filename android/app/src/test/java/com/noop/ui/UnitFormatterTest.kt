@@ -154,4 +154,14 @@ class UnitFormatterTest {
         assertEquals(TemperatureUnit.FAHRENHEIT, TemperatureUnit.fromRaw("fahrenheit"))
         assertEquals(null, TemperatureUnit.fromRaw(""))
     }
+
+    @Test
+    fun effortDisplayOrEmpty_skipsZeroAndNull() {
+        assertEquals("—", UnitFormatter.effortDisplayOrEmpty(null, EffortScale.WHOOP))
+        assertEquals("—", UnitFormatter.effortDisplayOrEmpty(0.0, EffortScale.WHOOP))
+        assertEquals("—", UnitFormatter.effortDisplayOrEmpty(0.0, EffortScale.HUNDRED))
+        assertEquals("4.2", UnitFormatter.effortDisplayOrEmpty(20.0, EffortScale.WHOOP))
+        assertEquals("20", UnitFormatter.effortDisplayOrEmpty(20.0, EffortScale.HUNDRED))
+        assertEquals("Awaiting", UnitFormatter.effortDisplayOrEmpty(0.0, EffortScale.WHOOP, empty = "Awaiting"))
+    }
 }

@@ -437,8 +437,13 @@ fun LiveScreen(viewModel: AppViewModel, onManageDevices: () -> Unit = {}) {
                             accent = if (bpm == null) Palette.textPrimary else Palette.metricRose)
                         StatTile(modifier = Modifier.weight(1f), label = "Avg", value = if (w.avgHr > 0) "${w.avgHr}" else "—")
                         StatTile(modifier = Modifier.weight(1f), label = "Peak", value = if (w.peakHr > 0) "${w.peakHr}" else "—")
-                        StatTile(modifier = Modifier.weight(1f), label = "Effort", value = UnitFormatter.effortDisplay(w.liveStrain, effortScale),
-                            accent = Palette.strainColor(w.liveStrain))
+                        StatTile(
+                            modifier = Modifier.weight(1f),
+                            label = "Effort",
+                            value = UnitFormatter.effortDisplayOrEmpty(w.liveStrain, effortScale),
+                            accent = w.liveStrain.takeIf { it > 0.0 }?.let { Palette.strainColor(it) }
+                                ?: Palette.textPrimary,
+                        )
                     }
                     if (w.gpsEnabled) {
                         Row(horizontalArrangement = Arrangement.spacedBy(Metrics.gap)) {
@@ -503,7 +508,9 @@ fun LiveScreen(viewModel: AppViewModel, onManageDevices: () -> Unit = {}) {
                     "$mins min",
                     row.distanceM?.let { liveDistance(it, unitSystem) },
                     row.avgHr?.let { "$it avg bpm" },
-                    row.strain?.let { "strain ${UnitFormatter.effortDisplay(it, effortScale)}" },
+                    row.strain?.takeIf { it > 0.0 }?.let {
+                        "strain ${UnitFormatter.effortDisplay(it, effortScale)}"
+                    },
                 )
                 Text(
                     "✓ ${row.sport} saved · ${parts.joinToString(" · ")}",
@@ -1596,7 +1603,7 @@ private fun LiveStepsCard(viewModel: AppViewModel, model: WhoopModel, connected:
                     if (model == WhoopModel.WHOOP5_MG)
                         "Steps from the strap this session. Train the step scale in Settings if the count feels off."
                     else
-                        "WHOOP 4 has no live pedometer field. Daily steps use motion calibration vs phone steps when available.",
+                        "WHOOP 4 has no live @57 pedometer field. Daily steps use band gravity/IMU motion (est.) — not the phone pedometer.",
                     style = NoopType.footnote,
                     color = Palette.textTertiary,
                 )

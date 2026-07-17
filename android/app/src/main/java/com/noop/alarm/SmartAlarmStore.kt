@@ -109,7 +109,7 @@ class SmartAlarmStore(private val prefs: SharedPreferences) {
         get() = prefs.getInt(KEY_RESTED_SLEEP_PCT, DEFAULT_RESTED_SLEEP_PCT).coerceIn(50, 100)
         set(v) = prefs.edit().putInt(KEY_RESTED_SLEEP_PCT, v.coerceIn(50, 100)).apply()
 
-    /** Learned / last-used sleep need minutes for rested evaluation. Default 450 (7h30). */
+    /** Learned / last-used sleep need minutes for rested evaluation. Default 480 (8h adult typical). */
     var restedSleepNeedMinutes: Int
         get() = prefs.getInt(KEY_RESTED_SLEEP_NEED, DEFAULT_SLEEP_NEED).coerceIn(300, 600)
         set(v) = prefs.edit().putInt(KEY_RESTED_SLEEP_NEED, v.coerceIn(300, 600)).apply()
@@ -118,6 +118,27 @@ class SmartAlarmStore(private val prefs: SharedPreferences) {
     var restedChargeHint: Int
         get() = prefs.getInt(KEY_RESTED_CHARGE_HINT, 0).coerceIn(0, 100)
         set(v) = prefs.edit().putInt(KEY_RESTED_CHARGE_HINT, v.coerceIn(0, 100)).apply()
+
+    /**
+     * Opt-in math challenge to dismiss the phone wake alarm. Default OFF.
+     * When on, [AlarmRingActivity] requires a short arithmetic answer before the alarm can be cleared.
+     */
+    var mathChallengeEnabled: Boolean
+        get() = prefs.getBoolean(KEY_MATH_CHALLENGE, false)
+        set(v) = prefs.edit().putBoolean(KEY_MATH_CHALLENGE, v).apply()
+
+    /**
+     * At the hard-deadline fire, force loud + math when live HR looks drowsy (below [drowsyHrBpm]).
+     * Only applies when a live HR sample is available; otherwise the normal math toggle wins.
+     */
+    var mathOnDrowsyHr: Boolean
+        get() = prefs.getBoolean(KEY_MATH_DROWSY, false)
+        set(v) = prefs.edit().putBoolean(KEY_MATH_DROWSY, v).apply()
+
+    /** HR below this bpm counts as drowsy for [mathOnDrowsyHr]. Default 55. */
+    var drowsyHrBpm: Int
+        get() = prefs.getInt(KEY_DROWSY_HR, DEFAULT_DROWSY_HR).coerceIn(40, 70)
+        set(v) = prefs.edit().putInt(KEY_DROWSY_HR, v.coerceIn(40, 70)).apply()
 
     /** Classic custom phone alarms (JSON). Cap enforced on write. */
     var customAlarms: List<CustomAlarm>
@@ -145,6 +166,9 @@ class SmartAlarmStore(private val prefs: SharedPreferences) {
         private const val KEY_RESTED_SLEEP_NEED = "alarm.restedSleepNeedMinutes"
         private const val KEY_RESTED_CHARGE_HINT = "alarm.restedChargeHint"
         private const val KEY_CUSTOM_ALARMS = "alarm.customAlarmsJson"
+        private const val KEY_MATH_CHALLENGE = "alarm.mathChallengeEnabled"
+        private const val KEY_MATH_DROWSY = "alarm.mathOnDrowsyHr"
+        private const val KEY_DROWSY_HR = "alarm.drowsyHrBpm"
 
         const val MINUTES_PER_DAY = 24 * 60
         const val DEFAULT_TARGET = 6 * 60 + 30   // 06:30
@@ -155,7 +179,8 @@ class SmartAlarmStore(private val prefs: SharedPreferences) {
         const val DEFAULT_TURN_BACK_DROP = 8
         const val DEFAULT_RESTED_CHARGE = 67
         const val DEFAULT_RESTED_SLEEP_PCT = 90
-        const val DEFAULT_SLEEP_NEED = 450
+        const val DEFAULT_SLEEP_NEED = 8 * 60 // 8h adult typical (not 7h30); 9h remains settable
+        const val DEFAULT_DROWSY_HR = 55
         const val MAX_CUSTOM_ALARMS = 5
 
         fun from(context: Context): SmartAlarmStore =

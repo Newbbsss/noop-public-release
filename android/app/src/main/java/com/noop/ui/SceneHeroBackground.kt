@@ -143,7 +143,7 @@ private fun Modifier.SceneHeroBackgroundModifier(
             val fadeBrush = Brush.verticalGradient(
                 colorStops = arrayOf(
                     0.0f to Color.Transparent,
-                    0.45f to canvas.copy(alpha = if (dark) 0.55f else 0.72f),
+                    0.45f to canvas.copy(alpha = if (dark) 0.55f else 0.82f),
                     1.0f to canvas,
                 ),
                 startY = 0f,
@@ -164,9 +164,9 @@ private fun Modifier.SceneHeroBackgroundModifier(
                     Brush.verticalGradient(
                         colors = listOf(
                             Color.Transparent,
-                            canvas.copy(alpha = 0.42f),
+                            canvas.copy(alpha = 0.58f),
                         ),
-                        startY = h * 0.40f,
+                        startY = h * 0.32f,
                         endY = h,
                     )
                 }
@@ -176,7 +176,7 @@ private fun Modifier.SceneHeroBackgroundModifier(
             onDrawWithContent {
                 // 1) The scene image, top-aligned (origin 0,0), at the capped alpha. clipToBounds crops the
                 //    overflow below the hero. A plain source-over draw — no layer, no blend mode.
-                val drawAlpha = if (dark) maxAlpha else (maxAlpha * 0.62f).coerceAtMost(0.32f)
+                val drawAlpha = if (dark) maxAlpha else (maxAlpha * 0.48f).coerceAtMost(0.22f)
                 with(painter) {
                     draw(size = imageSize, alpha = drawAlpha)
                 }
@@ -260,8 +260,8 @@ fun Modifier.sceneScreenBackground(
             val fadeBrush = Brush.verticalGradient(
                 colorStops = arrayOf(
                     0.0f to Color.Transparent,
-                    0.34f to canvas.copy(alpha = if (dark) 0.10f else 0.28f),
-                    0.62f to canvas.copy(alpha = if (dark) 0.60f else 0.78f),
+                    0.34f to canvas.copy(alpha = if (dark) 0.10f else 0.38f),
+                    0.62f to canvas.copy(alpha = if (dark) 0.60f else 0.86f),
                     1.0f to canvas,
                 ),
                 startY = 0f,
@@ -277,20 +277,21 @@ fun Modifier.sceneScreenBackground(
                     endY = (band * 0.22f).coerceIn(1f, h.coerceAtLeast(1f)),
                 )
             } else {
-                // Light: soft paper veil under bright midday so header ink stays readable.
+                // Light: denser paper veil under bright midday so header ink stays readable.
                 Brush.verticalGradient(
                     colors = listOf(
-                        canvas.copy(alpha = 0.22f),
+                        canvas.copy(alpha = 0.38f),
+                        canvas.copy(alpha = 0.12f),
                         Color.Transparent,
                     ),
                     startY = 0f,
-                    endY = (band * 0.28f).coerceIn(1f, h.coerceAtLeast(1f)),
+                    endY = (band * 0.36f).coerceIn(1f, h.coerceAtLeast(1f)),
                 )
             }
             onDrawBehind {
                 // 1) The scene image, top-aligned (origin 0,0), at the capped alpha. A plain source-over
                 //    draw — no layer, no blend mode (the same robust idiom as the hero background).
-                val drawAlpha = if (dark) maxAlpha else (maxAlpha * 0.55f).coerceAtMost(0.52f)
+                val drawAlpha = if (dark) maxAlpha else (maxAlpha * 0.40f).coerceAtMost(0.34f)
                 with(painter) {
                     draw(size = imageSize, alpha = drawAlpha)
                 }

@@ -651,6 +651,10 @@ public final class BLEManager: NSObject, ObservableObject {
     /// Multi-WHOOP Add-a-WHOOP wizard surface: straps seen while `isPresentingScan` is true, WITHOUT
     /// auto-connecting. Cleared at the start of each `scanForWhoops()`. Empty/unused on the default path.
     @Published public private(set) var discoveredWhoops: [(uuid: String, name: String, rssi: Int)] = []
+    /// Last decoded band IMU sample for the Settings / Test Centre 6-axis motion tester.
+    /// Prefer live type-51 when present; else last sample of a 1244-B offload buffer (honestly
+    /// labeled not-live). Never phone CoreMotion. Twin of Android `WhoopBleClient.latestStrapImu`.
+    @Published private(set) var latestStrapImu: SixAxisSample?
     /// Peripheral captured during `willRestoreState`; cleared in `didConnect`.
     /// Non-nil signals that `centralManagerDidUpdateState` should reconnect this
     /// specific peripheral rather than starting a fresh scan.
@@ -1037,6 +1041,7 @@ public final class BLEManager: NSObject, ObservableObject {
         readoptingTo = nil   // #52: a clean teardown abandons any in-flight pin handoff
         standardHRFallback = false
         state.standardHRMode = nil
+        latestStrapImu = nil
         if let p = peripheral {
             central.cancelPeripheralConnection(p)
         }
@@ -2553,20 +2558,33 @@ public final class BLEManager: NSObject, ObservableObject {
     /// pulse from the app; instead we map a LONG pulse to two stacked buzzes and a SHORT pulse to one,
     /// which the wrist feels as "longer vs shorter". Pulse-feel timing can only be confirmed on a real
     /// strap motor — best-effort here (see `hardwareUnverifiable`).
-    public func buzzTimeNow(is24h: Bool = false, at date: Date = Date()) {
+    public func buzzTimeNow(
+        is24h: Bool = false,
+        at date: Date = Date(),
+        style: HapticClock.Style = .digitHold,
+        speed: HapticClock.Speed = .normal,
+        announce: Bool = false
+    ) {
         let cal = Calendar.current
         let comps = cal.dateComponents([.hour, .minute], from: date)
-        let pulses = HapticClock.pulses(hour: comps.hour ?? 0, minute: comps.minute ?? 0, is24h: is24h)
+        let pulses = HapticClock.pulses(
+            hour: comps.hour ?? 0,
+            minute: comps.minute ?? 0,
+            is24h: is24h,
+            speed: speed,
+            announce: announce,
+            style: style
+        )
         guard !pulses.isEmpty else {
-            log("Haptic Clock: nothing to buzz (00:00 in 24h form).")
+            log("Haptic Clock: nothing to buzz (00:00 / empty schedule).")
             return
         }
-        log("Haptic Clock: buzzing \(pulses.count) pulses for the current time (\(is24h ? "24h" : "12h")).")
-        // Walk the encoder's pulse list, converting each (durationMs,gapMs) into a scheduled buzz.
-        // A long pulse is felt as a heavier buzz (2 stacked loops); a short pulse as a light one (1).
+        let styleLabel = style == .digitHold ? "digit-hold" : "morse"
+        log("Haptic Clock: buzzing \(pulses.count) pulses (\(styleLabel), \(is24h ? "24h" : "12h")).")
+        // Walk the encoder's pulse list. Digit-hold uses holdLoops (2 per tick); Morse uses isLong.
         var offsetMs = 0
         for pulse in pulses {
-            let loops = pulse.isLong ? 2 : 1
+            let loops = style == .digitHold ? pulse.holdLoops : (pulse.isLong ? 2 : 1)
             DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(offsetMs)) { [weak self] in
                 // patternId/loops payload — send() remaps this to the 5/MG maverick notify buzz; on a
                 // WHOOP 4.0 it's the native runHapticsPattern. Same call the inactivity nudge uses.
@@ -2574,6 +2592,21 @@ public final class BLEManager: NSObject, ObservableObject {
             }
             offsetMs += pulse.durationMs + pulse.gapMs
         }
+    }
+
+    /// Publish a decoded band IMU sample for the 6-axis motion tester.
+    /// Offload never clobbers a live type-51 sample. Twin of Android `publishStrapImu`.
+    func publishStrapImu(from frame: [UInt8], isOffload: Bool) {
+        guard let decoded = Whoop5RawImu.decode(frame),
+              let last = decoded.samples.last else { return }
+        let kind: SixAxisSourceKind = isOffload ? .strapOffload : .strapLive
+        if kind == .strapOffload, latestStrapImu?.source == .strapLive { return }
+        latestStrapImu = SixAxisSample(
+            ax: Float(last.ax), ay: Float(last.ay), az: Float(last.az),
+            gx: Float(last.gx), gy: Float(last.gy), gz: Float(last.gz),
+            source: kind,
+            tsMs: Int64(decoded.baseTs) * 1000
+        )
     }
 
     /// Inactivity reminder (#419): on each natural offload completion, run the shipped, unit-tested
@@ -2826,6 +2859,7 @@ extension BLEManager: @preconcurrency CBCentralManagerDelegate {
         state.strapFirmware = nil     // a stale firmware version must not outlive the link
         state.clearBiometrics()       // and a stale HR / R-R must not outlive the link either
         state.liveFeedActive = false  // a drop while Live is open must not leave a stale "Stop live feed"
+        latestStrapImu = nil          // 6-axis tester: band sample must not outlive the link
         didBond = false
         whoop5RealtimeArmed = false
         // The strap forgets the realtime-HR toggle across a disconnect; the post-bond branch re-arms it
@@ -3552,6 +3586,8 @@ extension BLEManager: @preconcurrency CBPeripheralDelegate {
                     // reverse-engineering — BEFORE the offload branch so it catches the burst.
                     // 1244-B IMU lines get an inline decoded `"imu":{…}` summary (#476).
                     puffinDeepBufferLog.appendIfDeepBuffer(frame: frame, char: characteristic.uuid, isOffload: isOffload)
+                    // Feed the 6-axis motion tester (band-only; offload labeled not-live).
+                    publishStrapImu(from: frame, isOffload: isOffload)
                     if isOffload {
                         // Same policy as WHOOP4: historical offload frames are bulk sync traffic.
                         // Keep them out of the live UI parser during backfill and let Backfiller

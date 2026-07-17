@@ -236,6 +236,13 @@ object UnitFormatter {
             "${effortValue(value, scale).roundToInt()}"
         }
 
+    /**
+     * Effort readout honesty — null / ≤0 never paints **"0.0"** / **"0"** (calm TRIMP or empty shell).
+     * Matches [effectiveEffortStrain] on Today.
+     */
+    fun effortDisplayOrEmpty(value: Double?, scale: EffortScale, empty: String = "—"): String =
+        value?.takeIf { it > 0.0 }?.let { effortDisplay(it, scale) } ?: empty
+
     /** The "out of" denominator label for the selected Effort scale — "100" or "21". */
     fun effortScaleMax(scale: EffortScale): String =
         if (scale == EffortScale.WHOOP) "21" else "100"

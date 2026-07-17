@@ -37,4 +37,14 @@ class WhoopAppScoreParserTest {
         )
         assertEquals(72.0, p.recoveryPct!!, 0.01)
     }
+
+    @Test
+    fun notificationDayStrainIs() {
+        val p = WhoopAppScoreParser.parseNotification(
+            "WHOOP",
+            "Your Day Strain is 11.2",
+            null,
+        )
+        assertEquals(11.2, p.dayStrain021!!, 0.01)
+    }
 }

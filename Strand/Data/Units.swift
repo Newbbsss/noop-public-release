@@ -222,7 +222,17 @@ enum UnitFormatter {
     /// helper every Effort read-out (Today tile, Intelligence, Live, Trends, Workouts) routes through so
     /// the toggle reaches all of them at once. The stored value is unchanged; only the display converts.
     static func effortDisplay(_ value: Double, scale: EffortScale) -> String {
-        oneDecimal(effortValue(value, scale: scale))
+        if scale == .whoop {
+            return oneDecimal(effortValue(value, scale: scale))
+        }
+        return "\(Int(effortValue(value, scale: scale).rounded()))"
+    }
+
+    /// Effort readout honesty — null / ≤0 never paints **"0.0"** / **"0"** (calm TRIMP or empty shell).
+    /// Twin of Android `UnitFormatter.effortDisplayOrEmpty` (8.6.163–164).
+    static func effortDisplayOrEmpty(_ value: Double?, scale: EffortScale, empty: String = "—") -> String {
+        guard let value, value > 0 else { return empty }
+        return effortDisplay(value, scale: scale)
     }
 
     /// The "out of" denominator label for the selected Effort scale — "100" or "21". Used by the tile

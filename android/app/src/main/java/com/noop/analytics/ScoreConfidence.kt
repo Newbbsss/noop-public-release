@@ -138,6 +138,8 @@ enum class ScoreConfidence(val raw: String) {
         fun forRestFromDaily(
             daily: com.noop.data.DailyMetric?,
             hasSession: Boolean,
+            /** Distinct prior nights with a Rest score — SHIP #75 softens premature SOLID. */
+            scoredRestNights: Int = 1,
         ): ScoreConfidence {
             val asleepMin = daily?.totalSleepMin ?: 0.0
             val restorativeMin = (daily?.deepMin ?: 0.0) + (daily?.remMin ?: 0.0)
@@ -150,13 +152,16 @@ enum class ScoreConfidence(val raw: String) {
                 rawEff > 1.0 -> rawEff / 100.0
                 else -> rawEff
             }
-            return forRest(
+            val base = forRest(
                 hasSession = true,
                 hasStagedSleep = hasStaged,
                 asleepSeconds = asleepMin * 60.0,
                 restorativeSeconds = restorativeMin * 60.0,
                 efficiency = efficiency,
             )
+            // One staged night is BUILDING, not SOLID/STANDARD — need a few Rest scores first (#75).
+            if (base == SOLID && scoredRestNights < 3) return BUILDING
+            return base
         }
     }
 }

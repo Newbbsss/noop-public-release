@@ -131,6 +131,8 @@ fun WorkoutsScreen(vm: AppViewModel) {
     val allRows by vm.workouts.collectAsState()
     // Cached daily metrics — the Charge side of the post-log activity-cost note (#439).
     val recentDays by vm.recentDays.collectAsStateWithLifecycle()
+    val context = LocalContext.current
+    val showDayCycleBackground = remember { NoopPrefs.showDayCycleBackground(context) }
     var loaded by remember { mutableStateOf(false) }
     var range by remember { mutableStateOf(WorkoutRange.All) }
     // Pick the default range ONCE on first non-empty load; later mutations must not fight a range the
@@ -204,12 +206,9 @@ fun WorkoutsScreen(vm: AppViewModel) {
     LazyScreenScaffold(
         title = "Workouts",
         subtitle = "Every session, threaded together.",
-        // LIQUID SKY BACKDROP (the pilot pattern — LiquidScreenSky.kt): the time-of-day liquid sky settles
-        // into the theme canvas behind the header + top rows (bled full-width up behind the status bar via
-        // the scaffold's topBackground plumbing), and the cards float OVER it on the flat surface below. The
-        // Android equivalent of the iOS `ScreenScaffold(topBackground: liquidScaffoldSky())`. This screen has
-        // no day-cycle preference gate (unlike Today), so the sky is always on.
-        topBackground = { LiquidScreenSky() },
+        // LIQUID SKY BACKDROP — same day-cycle pref as Today/Settings (was always-on; light midday
+        // blew out the Workouts header). Gate + LiquidScreenSky quiet wash handle the rest.
+        topBackground = if (showDayCycleBackground) { { LiquidScreenSky() } } else null,
     ) {
         // Start (or stop) a workout right here, not only on Live — mirrors the Live control (#115).
         item {
@@ -655,7 +654,7 @@ private fun EffortHero(
     groups: List<SportGroup>,
 ) {
     val effortScale = UnitPrefs.effortScale(LocalContext.current)
-    val strains = rows.mapNotNull { it.strain }
+    val strains = rows.mapNotNull { it.strain?.takeIf { s -> s > 0.0 } }
     val hasEffort = strains.isNotEmpty()
     val avgStrain = if (strains.isEmpty()) 0.0 else strains.sum() / strains.size
     // Fill fraction on the stored 0–100 Effort axis — scale-independent, so the vessel fills the same on
@@ -1265,7 +1264,7 @@ private fun SessionRow(
         Cell(durationLabel(row.durationS), Modifier.weight(1f))
         // Fable 200 #55 — Effort contribution (display scale) beside duration.
         Cell(
-            row.strain?.let { s ->
+            row.strain?.takeIf { it > 0 }?.let { s ->
                 val shown = UnitFormatter.effortValue(s, effortScale)
                 if (effortScale == EffortScale.WHOOP) {
                     String.format(java.util.Locale.US, "+%.1f", shown)
@@ -1274,7 +1273,7 @@ private fun SessionRow(
                 }
             } ?: "–",
             Modifier.weight(1.1f),
-            color = if (row.strain != null) Palette.effortColor else null,
+            color = if ((row.strain ?: 0.0) > 0) Palette.effortColor else null,
         )
         Cell(
             row.avgHr?.let { "$it bpm" } ?: "–",

@@ -125,25 +125,3 @@ ANY_MODEL_CONTINUE.md
 README.GILBERT.md
 NOTICE.GILBERT.md
 AGENTS.md
-
-# Extra public-export ignores
-*.apk
-*.aab
-android/.gradle*/
-android/.gradle-*/
-tmp/
-docs/agent/
-
-# Public export hygiene
-.gradle*/
-.gradle-*/
-.impeccable/
-tmp/
-tmp_*
-_tmp*
-*_fold_audit*.db
-HANDOFF_*.md
-REVIEW_PINS.*
-*.db
-android/.gradle*/
-android/.cxx/

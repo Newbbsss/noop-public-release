@@ -6,15 +6,16 @@ import com.noop.data.StepSample
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * Tests DaytimeStress.analyze — 15-min buckets, calm anchor, step/sedentary gates.
+ * Tests DaytimeStress.analyze — 5-min buckets, calm anchor, step/sedentary gates, sleep band.
  */
 class DaytimeStressTest {
 
-    /** Fill one local 15-min bucket starting at [hour]:[quarter*15] with `n` 1 Hz samples. */
+    /** Fill one local 5-min bucket starting at [hour]:[slot*5] with `n` samples spread across the bucket. */
     private fun bucketHr(
         hour: Int,
         quarter: Int,
@@ -22,10 +23,14 @@ class DaytimeStressTest {
         n: Int = DaytimeStress.minHourHrSamples,
     ): List<HrSample> {
         val base = hour.toLong() * 3_600L + quarter.toLong() * DaytimeStress.bucketSeconds
-        return (0 until n).map { HrSample(deviceId = "t", ts = base + it, bpm = bpm) }
+        val span = (DaytimeStress.bucketSeconds - 1).coerceAtLeast(1L)
+        return (0 until n).map { i ->
+            val offset = if (n <= 1) 0L else (i.toLong() * span) / (n - 1)
+            HrSample(deviceId = "t", ts = base + offset, bpm = bpm)
+        }
     }
 
-    /** Fill a whole clock hour (4×15-min) at constant bpm. */
+    /** Fill a whole clock hour (12×5-min) at constant bpm. */
     private fun hourHr(hour: Int, bpm: Int, nPerBucket: Int = DaytimeStress.minHourHrSamples): List<HrSample> =
         (0 until DaytimeStress.bucketsPerHour).flatMap { q -> bucketHr(hour, q, bpm, nPerBucket) }
 
@@ -66,9 +71,14 @@ class DaytimeStressTest {
     @Test
     fun activitySpikeInsideBucket_doesNotUseMeanHrAsQuiet() {
         val base = 10L * 3_600L
-        val calm = (0 until 50).map { HrSample(deviceId = "t", ts = base + it, bpm = 62) }
-        val spike = (50 until DaytimeStress.minHourHrSamples).map {
-            HrSample(deviceId = "t", ts = base + it, bpm = 110)
+        val n = DaytimeStress.minHourHrSamples
+        val span = DaytimeStress.bucketSeconds - 1
+        val calmN = (n * 2) / 3
+        val calm = (0 until calmN).map { i ->
+            HrSample(deviceId = "t", ts = base + (i.toLong() * span) / (n - 1), bpm = 62)
+        }
+        val spike = (calmN until n).map { i ->
+            HrSample(deviceId = "t", ts = base + (i.toLong() * span) / (n - 1), bpm = 110)
         }
         val otherHours = listOf(6, 7, 8, 9, 11, 12, 13, 14, 15).flatMap { h -> hourHr(h, bpm = 64) }
         val result = DaytimeStress.analyze(calm + spike + otherHours, emptyList())
@@ -111,11 +121,11 @@ class DaytimeStressTest {
     }
 
     @Test
-    fun fifteenMinuteBuckets_produceMultiplePointsPerClockHour() {
+    fun fiveMinuteBuckets_produceMultiplePointsPerClockHour() {
         val hrs = hourHr(10, 64)
         val r = DaytimeStress.analyze(hrs + hourHr(11, 64) + hourHr(12, 64), emptyList())
         val at10 = r.scored.count { it.hour == 10 }
-        assertTrue("expected multiple 15-min points in hour 10, got $at10", at10 >= 2)
+        assertTrue("expected multiple 5-min points in hour 10, got $at10", at10 >= 4)
     }
 
     @Test
@@ -142,12 +152,12 @@ class DaytimeStressTest {
     }
 
     @Test
-    fun highZoneMinutes_exactFifteenMinBuckets_noHourRoundUp() {
-        // 9 HIGH buckets → 135 min = 2h 15m (WHOOP-style minutes; never round to 3h).
+    fun highZoneMinutes_exactFiveMinBuckets_noHourRoundUp() {
+        // 9 HIGH buckets → 45 min = 0h 45m (WHOOP-style minutes; never round to 1h).
         val quiet = (6..9).flatMap { h -> hourHr(h, 62) }
-        val spikeHr = hourHr(14, 118) // four 15-min buckets elevated
-        val moreSpike = hourHr(15, 120) // +4
-        val tail = bucketHr(16, 0, 125) + bucketHr(16, 1, 122) // +2 → 10 total high-ish
+        val spikeHr = hourHr(14, 118) // twelve 5-min buckets elevated
+        val moreSpike = hourHr(15, 120) // +12
+        val tail = bucketHr(16, 0, 125) + bucketHr(16, 1, 122) // +2 → high-ish
         val r = DaytimeStress.analyze(quiet + spikeHr + moreSpike + tail, emptyList())
         val highBuckets = r.scored.count { (it.level ?: 0.0) >= DaytimeStress.highBandFloor }
         assertEquals(
@@ -160,8 +170,8 @@ class DaytimeStressTest {
         assertEquals("2h 8m", DaytimeStress.Result.formatZoneCompact(128))
         if (highBuckets > 0) {
             assertTrue(
-                "high zone must be exact bucket×15, not rounded hours; min=${r.highZoneMinutes} buckets=$highBuckets",
-                r.highZoneMinutes == highBuckets * 15,
+                "high zone must be exact bucket×${DaytimeStress.bucketMinutes}, not rounded hours; min=${r.highZoneMinutes} buckets=$highBuckets",
+                r.highZoneMinutes == highBuckets * DaytimeStress.bucketMinutes,
             )
         }
     }
@@ -175,12 +185,15 @@ class DaytimeStressTest {
     }
 
     @Test
-    fun sparseSampleFloor_scoresWithFiftySamples() {
+    fun sparseSampleFloor_scoresWithSparseGate() {
         val sparse = bucketHr(10, 0, 64, n = DaytimeStress.minHourHrSamplesSparse) +
             bucketHr(10, 1, 65, n = DaytimeStress.minHourHrSamplesSparse) +
             hourHr(11, 64) + hourHr(12, 64)
         val r = DaytimeStress.analyze(sparse, emptyList())
-        assertTrue("sparse 50-sample buckets should score; got ${r.scored.size}", r.scored.isNotEmpty())
+        assertTrue(
+            "sparse ${DaytimeStress.minHourHrSamplesSparse}-sample buckets should score; got ${r.scored.size}",
+            r.scored.isNotEmpty(),
+        )
     }
 
     @Test
@@ -327,10 +340,62 @@ class DaytimeStressTest {
             it.hour >= DaytimeStress.wakingStartHour && it.hour < DaytimeStress.wakingEndHour
         }?.level
         assertNotNull(wakingTip)
-        // Mirror nowTip night path: prefer last tip, then soft-cap (WHOOP 0.9–1.3 band).
+        // Mirror nowTip night path: prefer last tip, then soft-cap (WHOOP overnight awake ≤1.55).
         val last = r.scored.lastOrNull()?.level ?: wakingTip!!
         val nightTip = minOf(last, DaytimeStress.nightTipCeiling)
         assertTrue(nightTip <= DaytimeStress.nightTipCeiling + 1e-9)
         assertTrue(nightTip < DaytimeStress.highBandFloor)
+    }
+
+    @Test
+    fun sleepTipCeiling_tighterThanOvernightAwakeCap() {
+        assertTrue(DaytimeStress.sleepTipCeiling < DaytimeStress.nightTipCeiling)
+        // Sleep-band Now must stay LOW-ish; overnight awake may read MEDIUM (~1.5).
+        assertTrue(DaytimeStress.sleepTipCeiling < 1.0)
+        assertTrue(DaytimeStress.nightTipCeiling >= 1.5)
+    }
+
+    @Test
+    fun fiveMinuteBuckets_areDenserThanLegacyQuarterHour() {
+        assertEquals(300L, DaytimeStress.bucketSeconds)
+        assertEquals(12, DaytimeStress.bucketsPerHour)
+        assertEquals(5, DaytimeStress.bucketMinutes)
+    }
+
+    @Test
+    fun expandContiguousBuckets_fillsNullGapsOnTimeline() {
+        val a = DaytimeStress.HourPoint(10, 10L * 3600, 0.5, 60.0, null)
+        // Skip one 5-min slot between a and b.
+        val b = DaytimeStress.HourPoint(10, 10L * 3600 + 2 * DaytimeStress.bucketSeconds, 0.6, 61.0, null)
+        val dense = DaytimeStress.expandContiguousBuckets(listOf(a, b), tzOffsetSeconds = 0L)
+        assertEquals(3, dense.size)
+        assertNull(dense[1].level)
+        assertEquals(a.startTs + DaytimeStress.bucketSeconds, dense[1].startTs)
+    }
+
+    @Test
+    fun sleepWindow_setsAsleepFlagAndLastNightMean() {
+        val morningSleep = (6..10).flatMap { h -> hourHr(h, 52) }
+        val afternoon = (14..16).flatMap { h -> hourHr(h, 72) }
+        val window = listOf(6L * 3600L to 11L * 3600L)
+        val r = DaytimeStress.analyze(morningSleep + afternoon, emptyList(), sleepWindows = window)
+        assertTrue(r.scored.any { it.asleep })
+        assertNotNull(r.lastNightMean)
+        assertTrue(r.lastNightMean!! < 1.5)
+        // Tip after wake should not force inSleepBandNow.
+        val last = r.scored.lastOrNull()
+        assertNotNull(last)
+        if (last!!.hour >= 14) {
+            assertFalse(r.inSleepBandNow)
+        }
+    }
+
+    @Test
+    fun asleepFlag_trueInsideSleepWindowEvenWithoutBandState() {
+        val hrs = hourHr(8, 55)
+        val window = listOf(8L * 3600L to 9L * 3600L)
+        val r = DaytimeStress.analyze(hrs, emptyList(), sleepWindows = window)
+        assertTrue(r.scored.isNotEmpty())
+        assertTrue("expected asleep on sleep-window buckets", r.scored.all { it.asleep })
     }
 }

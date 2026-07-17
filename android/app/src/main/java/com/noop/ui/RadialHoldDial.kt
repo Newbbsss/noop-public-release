@@ -231,10 +231,15 @@ fun RadialHoldDialField(
         }
 
         // Tiny centre void so the + coin stays the gold hero underneath.
+        val voidCore = if (Palette.isLight) {
+            Palette.surfaceBase.copy(alpha = 0.38f)
+        } else {
+            Color.Black.copy(alpha = 0.38f)
+        }
         drawCircle(
             brush = Brush.radialGradient(
                 colors = listOf(
-                    Color.Black.copy(alpha = 0.38f),
+                    voidCore,
                     Color.Transparent,
                 ),
                 center = c,

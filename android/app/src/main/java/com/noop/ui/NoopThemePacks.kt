@@ -228,7 +228,7 @@ object ThemePacks {
         ),
         light = LightTokens.copy(
             surfaceBase = Color(0xFFD2D0CE),
-            surfaceRaised = Color(0xFFF8F7F5),
+            surfaceRaised = Color(0xFFECEAE6),
             accent = Color(0xFF9A5520),
             gold = Color(0xFF9A5520),
             restColor = Color(0xFF2A6A78),
@@ -257,7 +257,7 @@ object ThemePacks {
         ),
         light = LightTokens.copy(
             surfaceBase = Color(0xFFD0D4DA),
-            surfaceRaised = Color(0xFFF8FAFC),
+            surfaceRaised = Color(0xFFE8ECF0),
             accent = Color(0xFF2A5580),
             gold = Color(0xFF2A5580),
         ),
@@ -277,7 +277,7 @@ object ThemePacks {
         ),
         light = LightTokens.copy(
             surfaceBase = Color(0xFFD6CEC2),
-            surfaceRaised = Color(0xFFFAF6F0),
+            surfaceRaised = Color(0xFFECE6DE),
             accent = Color(0xFF8A6040),
             textPrimary = Color(0xFF1A1612),
             gold = Color(0xFF8A6040),
@@ -332,8 +332,8 @@ object ThemePacks {
         ),
         light = LightTokens.copy(
             surfaceBase = Color(0xFFDED4D8),
-            surfaceRaised = Color(0xFFFFFBFC),
-            surfaceInset = Color(0xFFF5E8EE),
+            surfaceRaised = Color(0xFFF0E8EC),
+            surfaceInset = Color(0xFFD8CCD2),
             accent = Color(0xFFC45A80),
             accentHover = Color(0xFFD07090),
             accentMuted = Color(0xFFE8B0C4),

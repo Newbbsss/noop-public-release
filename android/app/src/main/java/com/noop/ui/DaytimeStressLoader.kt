@@ -19,6 +19,10 @@ import java.time.LocalDate
  * install the overnight RHR/HRV row for *today* is often still null (mid-day / post-midnight), and
  * the only banked tip lives under `my-whoop-noop` / `daytime_stress` — so the screen fell through
  * to "Pair your strap" despite wear history + HR. Classic `stress` wins on a day both keys cover.
+ *
+ * Wear-location / dual-algo sibling: keep this loader as the shared Today↔Stress tip pipe. Prefer
+ * extending [DaytimeStress] / prefs here over forking reads in StressScreen so Key Metrics Stay
+ * aligned. Overnight HRV for Stress baselines still comes from DailyMetric.avgHrv (type-40 bank).
  */
 suspend fun loadStressStoredSeries(vm: AppViewModel): Map<String, Double> {
     val ids = (
@@ -99,16 +103,13 @@ suspend fun loadDaytimeStressShared(
             bankingHrSamples = hr.size,
         )
     }
-    val rr = vm.repo.rrIntervals(vm.activeStrapId, from, nowSeconds, limit = 200_000)
-        .ifEmpty { vm.repo.rrIntervals("my-whoop", from, nowSeconds, limit = 200_000) }
+    val rr = vm.repo.rrIntervalsUnion(vm.activeStrapId, from, nowSeconds, limit = 200_000)
     val gravity = runCatching {
-        vm.repo.gravitySamples(vm.activeStrapId, from, nowSeconds, limit = 200_000)
-            .ifEmpty { vm.repo.gravitySamples("my-whoop", from, nowSeconds, limit = 200_000) }
+        vm.repo.gravitySamplesUnion(vm.activeStrapId, from, nowSeconds, limit = 200_000)
     }.getOrDefault(emptyList())
     val motion = if (gravity.isNotEmpty()) WorkoutDetector.activitySeries(gravity) else emptyList()
     val steps = runCatching {
-        vm.repo.stepSamples(vm.activeStrapId, from, nowSeconds, limit = 200_000)
-            .ifEmpty { vm.repo.stepSamples("my-whoop", from, nowSeconds, limit = 200_000) }
+        vm.repo.stepSamplesUnion(vm.activeStrapId, from, nowSeconds, limit = 200_000)
     }.getOrDefault(emptyList())
     val sedentary = if (gravity.size >= 2) {
         SedentaryDetector.detectSedentaryBouts(gravity, minMinutes = 20)
@@ -139,24 +140,49 @@ suspend fun loadDaytimeStressShared(
             .forEach { workoutWindows.add(it.startSec to it.endSec) }
     }
 
+    // Overnight lookback: sessions that started yesterday evening still shape today's moon band
+    // (Gilbert ~06–13 sleep; clock-midnight alone misses the window).
+    val sleepLookbackFrom = from - 18 * 3_600L
     val sleepState = runCatching {
-        vm.repo.sleepStateSamples(vm.activeStrapId, from, nowSeconds, limit = 200_000)
-            .ifEmpty { vm.repo.sleepStateSamples("my-whoop", from, nowSeconds, limit = 200_000) }
+        (
+            vm.repo.sleepStateSamples(vm.activeStrapId, sleepLookbackFrom, nowSeconds, limit = 200_000) +
+                vm.repo.sleepStateSamples("my-whoop", sleepLookbackFrom, nowSeconds, limit = 200_000)
+            )
             .map { it.ts to it.state }
+            .distinct()
     }.getOrDefault(emptyList())
 
     // Main-night sleep window(s) for night-floor shaping — late sleep past 06:00 must not
     // pollute the waking calm reference (WHOOP Stress Monitor moon band).
+    // Union merged + computed + Health Connect so a HC-only night still paints asleep buckets.
     val sleepWindows = runCatching {
-        vm.repo.sleepSessions(vm.activeStrapId, from, nowSeconds, limit = 64)
-            .ifEmpty { vm.repo.sleepSessions("my-whoop", from, nowSeconds, limit = 64) }
+        (
+            vm.repo.sleepSessionsMerged(vm.activeStrapId, sleepLookbackFrom, nowSeconds, limit = 64) +
+                vm.repo.computedSleepSessionsUnion(vm.activeStrapId, sleepLookbackFrom, nowSeconds, limit = 64) +
+                vm.repo.sleepSessions(
+                    WhoopRepository.HEALTH_CONNECT_SOURCE,
+                    sleepLookbackFrom,
+                    nowSeconds,
+                    limit = 64,
+                )
+            )
             .map { it.effectiveStartTs to it.endTs }
+            .distinct()
     }.getOrDefault(emptyList())
 
     val todayRow = runCatching {
-        vm.repo.dailyMetrics(vm.activeStrapId, todayKey, todayKey)
-            .ifEmpty { vm.repo.dailyMetrics("my-whoop", todayKey, todayKey) }
-            .firstOrNull()
+        // Prefer computed overnight vitals (my-whoop-noop) then imported — Fold 2026-07-16 banked
+        // skin/resp/HRV under `-noop` while active strap UUID daily row was empty.
+        val ids = (
+            WhoopRepository.computedSourceIdsFor(vm.activeStrapId) +
+                WhoopRepository.importedSourceIdsFor(vm.activeStrapId)
+            ).distinct()
+        ids.firstNotNullOfOrNull { id ->
+            vm.repo.dailyMetrics(id, todayKey, todayKey).firstOrNull()
+                ?.takeIf { it.skinTempDevC != null || it.respRateBpm != null || it.avgHrv != null || it.restingHr != null }
+        } ?: ids.firstNotNullOfOrNull { id ->
+            vm.repo.dailyMetrics(id, todayKey, todayKey).firstOrNull()
+        }
     }.getOrNull()
     val skinElevated = (todayRow?.skinTempDevC?.let { kotlin.math.abs(it) } ?: 0.0) >=
         DaytimeStress.skinElevatedAbsC
@@ -181,7 +207,14 @@ suspend fun loadDaytimeStressShared(
     )
 
     // Persist Now tip for Trends / history (Fable #42) — never invents; only when scored.
-    val tip = result.nowTip(wakeStart, wakeEnd)
+    // Prefer engine [inSleepBandNow]; fall back to window/state probe for older Result shells.
+    val tipWallNow = nowSeconds
+    val inSleepBand = result.inSleepBandNow ||
+        sleepWindows.any { (a, b) -> tipWallNow in a until b } ||
+        sleepState.any { (ts, state) ->
+            state == DaytimeStress.sleepStateAsleep && kotlin.math.abs(ts - tipWallNow) <= DaytimeStress.bucketSeconds
+        }
+    val tip = result.nowTip(wakeStart, wakeEnd, inSleepBand = inSleepBand)
     if (tip != null) {
         runCatching {
             vm.repo.upsertMetricSeries(
@@ -196,23 +229,28 @@ suspend fun loadDaytimeStressShared(
             )
         }
     }
-    // Widget Now tip (Fable #43) — patch prefs so Glance producers keep HR/scores.
+    // Widget Now tip (Fable #43 / SHIP #82) — patch prefs + Glance so night-ceiling drops clear the footer.
     context?.let { ctx ->
-        runCatching { com.noop.widget.WidgetSnapshotStore.patchStressTip(ctx, tip) }
+        try {
+            com.noop.widget.WidgetSnapshotStore.patchStressTip(ctx, tip)
+        } catch (_: Throwable) {
+            // never let Glance hiccups kill daytime stress
+        }
     }
-    // EMPTY scored but past the day gate: bank toward first tip using the current 15-min bucket (#167).
-    return if (result.scored.isEmpty() && result.bankingHrSamples <= 0) {
+    // EMPTY scored but past the day gate: bank toward first tip using the current 5-min bucket (#167).
+    val withBand = if (result.inSleepBandNow == inSleepBand) result else result.copy(inSleepBandNow = inSleepBand)
+    return if (withBand.scored.isEmpty() && withBand.bankingHrSamples <= 0) {
         val bucketSec = DaytimeStress.bucketSeconds
         val currentBucket = (localNow / bucketSec) * bucketSec
         val inBucket = hr.count { s ->
             val localTs = s.ts + tzOffsetSeconds
             (localTs / bucketSec) * bucketSec == currentBucket
         }
-        result.copy(
+        withBand.copy(
             bankingHrSamples = inBucket.coerceIn(0, DaytimeStress.minHourHrSamples),
         )
     } else {
-        result
+        withBand
     }
 }
 
@@ -223,15 +261,21 @@ suspend fun loadDaytimeStressShared(
  * At night (outside [wakingStart], [wakingEnd]), prefer the most recent scored bucket overall
  * so the night-floor path is visible — otherwise a stale evening HIGH tip sticks past midnight
  * (2026-07-14 pack: NOOP 2.7 @ 01:23 vs WHOOP 0.9–1.3 @ 01:05–01:20).
+ *
+ * [inSleepBand]: when the latest tip sits inside a detected sleep window / band asleep, apply
+ * [DaytimeStress.sleepTipCeiling] (~0.95) instead of the looser overnight-awake ceiling (1.55).
+ * Gilbert sleeps ~06–13; clock-night tips at 12:45 AM are often still awake (WHOOP 1.5).
  */
 fun DaytimeStress.Result.nowTip(
     wakingStart: Int = DaytimeStress.wakingStartHour,
     wakingEnd: Int = DaytimeStress.wakingEndHour,
     currentHour: Int? = null,
+    inSleepBand: Boolean? = null,
 ): Double? {
     val hour = currentHour
         ?: java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
     val inWaking = hour >= wakingStart && hour < wakingEnd
+    val band = inSleepBand ?: inSleepBandNow
     val raw = if (inWaking) {
         scored.lastOrNull { it.hour >= wakingStart && it.hour < wakingEnd }?.level
             ?: scored.lastOrNull()?.level
@@ -239,14 +283,17 @@ fun DaytimeStress.Result.nowTip(
         scored.lastOrNull()?.level
             ?: scored.lastOrNull { it.hour >= wakingStart && it.hour < wakingEnd }?.level
     } ?: return null
-    // Night soft ceiling — WHOOP tips near 0.9–1.3 after midnight; never leave a stale evening HIGH.
+    if (band) {
+        return minOf(raw, DaytimeStress.sleepTipCeiling)
+    }
+    // Outside clock waking: cap stale evening HIGH but allow WHOOP-like MEDIUM overnight (≤1.55).
     if (!inWaking) {
         return minOf(raw, DaytimeStress.nightTipCeiling)
     }
     return raw
 }
 
-/** Share of scored 15-min buckets in the calm band (&lt; 1.0). Null when nothing scored. */
+/** Share of scored 5-min buckets in the calm band (&lt; 1.0). Null when nothing scored. */
 fun DaytimeStress.Result.calmBucketPct(): Int? {
     if (scored.isEmpty()) return null
     val calm = scored.count { (it.level ?: 0.0) < 1.0 }

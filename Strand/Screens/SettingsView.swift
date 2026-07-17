@@ -197,6 +197,7 @@ struct SettingsView: View {
                 ) {
                     recoveryCard
                     testCentreCard
+                    sixAxisMotionCard
                     experimentalCard
                     backupCard
                 }
@@ -1032,6 +1033,17 @@ struct SettingsView: View {
             }
             .buttonStyle(LiquidPressStyle())
             .accessibilityLabel("Bug report")
+        }
+    }
+
+    /// Band-only 6-axis motion tester (Android SixAxisMotionDotTester twin). Honesty: never phone IMU.
+    private var sixAxisMotionCard: some View {
+        SettingsSection(
+            icon: "gyroscope",
+            title: "6-axis motion",
+            blurb: "Band IMU only — live type-51 when it streams, else historical 1244-B offload labeled not-live. Phone sensors are never used."
+        ) {
+            SixAxisMotionDotTester(ble: model.ble)
         }
     }
 

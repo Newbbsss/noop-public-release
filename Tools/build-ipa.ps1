@@ -19,8 +19,8 @@ if ($Version) {
 }
 Write-Host ""
 Write-Host "Or GitHub Actions (fork):"
-Write-Host "  gh workflow run ios-ipa.yml -f version=8.6.151-fable -f release_tag=v8.6.151-fable --repo Newbbsss/noop-public-release"
-Write-Host "  (or: gh workflow run fork-release.yml -f bump=none -f version=8.6.151-fable â€” rebuilds all platforms)"
+Write-Host "  gh workflow run ios-ipa.yml -f version=8.6.164-fable -f release_tag=v8.6.164-fable --repo Newbbsss/noop-public-release"
+Write-Host "  (or: gh workflow run fork-release.yml -f bump=none -f version=8.6.164-fable â€” rebuilds all platforms)"
 Write-Host ""
 Write-Host "Expected artifact:"
 Write-Host "  dist/NOOP-vVER-ios.ipa"

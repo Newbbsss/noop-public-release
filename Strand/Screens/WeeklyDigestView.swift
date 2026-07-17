@@ -342,7 +342,9 @@ struct WeeklyDigestContent: View {
         // denominator ("4.6 / 21", "21.6 / 100") so VoiceOver never speaks a different number than the
         // visible gauge. Mirrors Android meanText(s, effortScale) byte-for-byte.
         if s.metric == .effort {
-            return "\(UnitFormatter.effortDisplay(s.thisWeek.mean, scale: effortScale)) / \(UnitFormatter.effortScaleMax(effortScale))"
+            let mean = UnitFormatter.effortDisplayOrEmpty(s.thisWeek.mean, scale: effortScale)
+            if mean == "—" { return "—" }
+            return "\(mean) / \(UnitFormatter.effortScaleMax(effortScale))"
         }
         let v = Int(s.thisWeek.mean.rounded())
         return s.metric.unit.isEmpty ? "\(v)" : "\(v) \(s.metric.unit)"

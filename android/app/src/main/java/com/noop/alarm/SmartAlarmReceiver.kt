@@ -12,7 +12,7 @@ import android.media.RingtoneManager
 import android.os.Build
 import androidx.core.app.NotificationCompat
 import com.noop.R
-import com.noop.ui.appLaunchIntent
+import com.noop.alarm.AlarmRingActivity
 
 /**
  * Fires when the guaranteed wake alarm goes off (scheduled by [SmartAlarmScheduler] via AlarmManager).
@@ -66,11 +66,15 @@ class SmartAlarmReceiver : BroadcastReceiver() {
             val mgr = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
             mgr.notify(NOTIF_ID, buildNotification(context, smart))
         }
+        // Full-screen ring + optional math dismiss (even when notifications are muted).
+        runCatching {
+            context.startActivity(AlarmRingActivity.intent(context, smart))
+        }
     }
 
     private fun buildNotification(context: Context, smart: Boolean): Notification {
         val fullScreen = PendingIntent.getActivity(
-            context, 0, appLaunchIntent(context),
+            context, 0, AlarmRingActivity.intent(context, smart),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
         val title = "Good morning"
@@ -125,6 +129,6 @@ class SmartAlarmReceiver : BroadcastReceiver() {
 
     companion object {
         const val CHANNEL_ID = "noop_smart_alarm_v2"
-        private const val NOTIF_ID = 4307
+        const val NOTIF_ID = 4307
     }
 }

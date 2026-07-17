@@ -49,7 +49,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
@@ -75,9 +77,12 @@ import kotlinx.coroutines.flow.map
  * This is the ONE alarm surface (#766). It hosts the phone-based Wake Window above, the strap's own
  * standalone firmware wake-alarm (moved here from Automations), and the cross-platform WIND-DOWN nudge,
  * so every wake/alarm control lives together instead of being split across two screens.
+ *
+ * @param embedded when true (Sleep → Alarm pill), omit the outer LazyScreenScaffold chrome so the
+ *   same settings-style body sits inside Sleep's pager without a second title stack.
  */
 @Composable
-fun SmartAlarmScreen(vm: AppViewModel) {
+fun SmartAlarmScreen(vm: AppViewModel, embedded: Boolean = false) {
     val context = LocalContext.current
     val enabled by vm.phoneAlarmEnabled.collectAsStateWithLifecycle()
     val targetMinutes by vm.phoneAlarmTargetMinutes.collectAsStateWithLifecycle()
@@ -128,20 +133,13 @@ fun SmartAlarmScreen(vm: AppViewModel) {
 
     val liveSubtitle = alarmWakeLiveSubtitle(enabled, canSchedule)
 
-    // PERF (#707): lazy scaffold — each of the four cards is one `item { }` (all unconditional). Order +
-    // spacing unchanged (LazyColumn reproduces the eager `spacedBy(20.dp)`); only on-screen cards compose +
-    // are accessibility-walked.
-    LazyScreenScaffold(
-        // ALARM_PAGE #55 — title distinct from Sleep|Alarm tab when pushed from Sleep.
-        title = LifeChapterLacquer.ALARM_WAKE_SETTINGS_TITLE,
-        subtitle = liveSubtitle,
-    ) {
-        // Region chapters (ALARM_STYLE #28) — Glance → Plan → Arm → Extras → Evening.
-        item(key = "alarm_chapter_glance") {
+    @Composable
+    fun AlarmSections() {
+        Column(
+            modifier = Modifier.fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(20.dp),
+        ) {
             Overline(LifeChapterLacquer.ALARM_GLANCE_OVERLINE, color = DomainTheme.Rest.color)
-        }
-        // #108 — taxonomy once at entry.
-        item(key = "alarm_taxonomy") {
             Text(
                 alarmTaxonomyGlossary(),
                 style = NoopType.footnote,
@@ -150,28 +148,19 @@ fun SmartAlarmScreen(vm: AppViewModel) {
                     .fillMaxWidth()
                     .semantics { contentDescription = alarmTaxonomyGlossary() },
             )
-        }
-        // SHIP #107 — timezone / travel callout (DST + zone ID).
-        item(key = "alarm_timezone") {
             val zone = remember { java.util.TimeZone.getDefault() }
             Text(
                 "Phone zone ${zone.getDisplayName(false, java.util.TimeZone.SHORT)} · wake times follow this phone clock after travel or DST.",
                 style = NoopType.caption,
                 color = Palette.textTertiary,
             )
-        }
-        // SHIP #112 — soft window vs strap buzz when phone offline.
-        if (!strapLinked && buzzWhoop4) {
-            item(key = "alarm_buzz_offline") {
+            if (!strapLinked && buzzWhoop4) {
                 Text(
-                    "Strap buzz can fire without the phone · Soft wake window on this phone needs the link.",
+                    "Strap buzz arms on next connect · Soft wake window on this phone needs the link for early cue.",
                     style = NoopType.caption,
                     color = Palette.metricAmber.copy(alpha = 0.95f),
                 )
             }
-        }
-        // The guaranteed-wake card always shows so the safety promise is the first thing read.
-        item {
             WindowCard(
                 enabled = enabled,
                 canExact = canSchedule,
@@ -197,13 +186,10 @@ fun SmartAlarmScreen(vm: AppViewModel) {
                     requestExactAlarmAccess(context)
                     canSchedule = vm.canScheduleExactAlarms()
                 },
+                onTargetChange = { vm.setPhoneAlarmTargetMinutes(it) },
             )
-        }
-        // ALARM_PAGE #51 — how-it-works sits early as reference, not buried under three cards.
-        item { ExplanationCard() }
-        // Fable 200 #64 — when wake is off, one quiet paragraph on why an alarm helps Sleep recovery.
-        if (!enabled) {
-            item(key = "alarm_why_empty") {
+            ExplanationCard()
+            if (!enabled) {
                 val whyShape = RoundedCornerShape(LifeChapterLacquer.CORNER_DP.dp)
                 Column(
                     Modifier
@@ -239,11 +225,7 @@ fun SmartAlarmScreen(vm: AppViewModel) {
                     )
                 }
             }
-        }
-        // ALARM_PAGE #52 — exact-alarm warning early for first-time armers (before Wake switch).
-        // #67 — Sleep benefit in warn + why-helps near permission CTA.
-        if (!canSchedule) {
-            item(key = "exact_early") {
+            if (!canSchedule) {
                 val warnShape = RoundedCornerShape(LifeChapterLacquer.CORNER_DP.dp)
                 Column(
                     Modifier.fillMaxWidth(),
@@ -282,247 +264,35 @@ fun SmartAlarmScreen(vm: AppViewModel) {
                     )
                 }
             }
-        }
-        item(key = "alarm_chapter_plan") {
             Spacer(Modifier.height(4.dp))
             Overline(LifeChapterLacquer.ALARM_PLAN_OVERLINE, color = DomainTheme.Rest.color)
-        }
-        item {
             PersonalSleepPlanCard(days = days, targetMinutes = targetMinutes)
-        }
-
-        item(key = "alarm_chapter_arm") {
             Spacer(Modifier.height(8.dp))
             Overline(LifeChapterLacquer.ALARM_ARM_OVERLINE, color = DomainTheme.Rest.color)
-        }
-        item {
-        AlarmSettingsCard {
-            // #106 — master Wake toggle lives on WindowCard under the wake clock; Arm chapter keeps plan/details.
-            if (enabled) {
-                Text(
-                    alarmArmedPlanCaption(canSchedule),
-                    style = NoopType.caption,
-                    color = if (canSchedule) DomainTheme.Rest.color else Palette.effortColor,
-                )
-            }
-
-            // #116 — Armed but notifications denied: deadline cannot sound.
-            if (enabled && !notifsOk) {
-                RowDividerLocal()
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable {
-                            requestNotificationSettingsAccess(context)
-                            notifsOk = NotificationManagerCompat.from(context).areNotificationsEnabled()
-                        }
-                        .padding(vertical = 4.dp)
-                        .semantics { contentDescription = alarmOpenNotifSettingsA11y() },
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                ) {
-                    Text(
-                        alarmNotifsOffCaption(),
-                        style = NoopType.footnote,
-                        color = Palette.statusWarning,
-                        modifier = Modifier.weight(1f),
-                    )
-                    Text(LifeChapterLacquer.ALARM_OPEN_LABEL, style = NoopType.footnote, color = Palette.accent)
-                }
-            }
-
-            if (enabled && !canSchedule) {
-                RowDividerLocal()
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable {
-                            pendingArmAfterExact = true
-                            requestExactAlarmAccess(context)
-                            canSchedule = vm.canScheduleExactAlarms()
-                        }
-                        .padding(vertical = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                ) {
-                    Text(
-                        alarmExactProtectCaption(),
-                        style = NoopType.footnote,
-                        color = Palette.statusWarning,
-                        modifier = Modifier
-                            .weight(1f)
-                            .semantics { contentDescription = alarmExactProtectCaption() },
-                    )
-                    Text(LifeChapterLacquer.ALARM_OPEN_LABEL, style = NoopType.footnote, color = Palette.accent)
-                }
-            }
-
-            if (enabled) {
-                RowDividerLocal()
-                // Felt wake window — paired clocks + soft span track + length stepper (not wordy help).
-                WakeWindowControl(
-                    targetMinutes = targetMinutes,
-                    windowMinutes = windowMinutes,
-                    honestlyArmed = canSchedule,
-                    onTargetPicked = { vm.setPhoneAlarmTargetMinutes(it) },
-                    onWindowChange = { vm.setPhoneAlarmWindowMinutes(it) },
-                )
-            }
-
-            // #536: companion strap-buzz, always visible so it's discoverable. Arms the strap's own firmware
-            // alarm at the earliest wake time, so the strap buzzes first and the OS alarm backs it up.
-            // #821: label + copy name the CONNECTED strap generation (strapName), not a hardcoded "WHOOP 4".
-            RowDividerLocal()
-            ToggleRowLocal(
-                label = LifeChapterLacquer.ALARM_BUZZ_STRAP_LABEL,
-                help = alarmBuzzStrapHelp(bonded, strapName),
-                checked = buzzWhoop4,
-                onChange = { vm.setBuzzWhoop4Enabled(it) },
+            AlarmSettingsBody(
+                vm = vm,
+                enabled = enabled,
+                canSchedule = canSchedule,
+                notifsOk = notifsOk,
+                bonded = bonded,
+                strapName = strapName,
+                buzzWhoop4 = buzzWhoop4,
+                targetMinutes = targetMinutes,
+                windowMinutes = windowMinutes,
+                onNotifsRefresh = {
+                    notifsOk = NotificationManagerCompat.from(context).areNotificationsEnabled()
+                },
+                onRequestExact = {
+                    pendingArmAfterExact = true
+                    requestExactAlarmAccess(context)
+                    canSchedule = vm.canScheduleExactAlarms()
+                },
             )
-            // SHIP #104 — phone alarm sound/vibe lives in system notification settings (not buried).
-            Text(
-                "Phone alarm sound & vibe · system notification settings",
-                style = NoopType.footnote,
-                color = Palette.accent,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable { requestNotificationSettingsAccess(context) }
-                    .padding(top = 4.dp)
-                    .semantics { contentDescription = "Open phone alarm sound and vibration settings" },
-            )
-
-            RowDividerLocal()
-            val turnBack by vm.turnBackEnabled.collectAsStateWithLifecycle()
-            val turnBackWatch by vm.turnBackWatchMinutes.collectAsStateWithLifecycle()
-            val turnBackDrop by vm.turnBackDropBpm.collectAsStateWithLifecycle()
-            val turnBackPhone by vm.turnBackPhoneCue.collectAsStateWithLifecycle()
-            ToggleRowLocal(
-                label = LifeChapterLacquer.ALARM_TURN_BACK_LABEL,
-                help = LifeChapterLacquer.ALARM_TURN_BACK_HELP,
-                checked = turnBack,
-                onChange = { vm.setTurnBackEnabled(it) },
-            )
-            if (turnBack) {
-                RowDividerLocal()
-                // ALARM_PAGE #44 — tonight preview of the watch window after the hard deadline.
-                Text(
-                    alarmTurnBackTonightCaption(
-                        turnBackWatch,
-                        hhmm((targetMinutes + windowMinutes) % (24 * 60)),
-                    ),
-                    style = NoopType.footnote,
-                    color = Palette.textSecondary,
-                )
-                RowDividerLocal()
-                Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                        Text(LifeChapterLacquer.ALARM_WATCH_AFTER_WAKE_LABEL, style = NoopType.body, color = Palette.textPrimary)
-                        Text(LifeChapterLacquer.ALARM_WATCH_AFTER_HELP, style = NoopType.footnote, color = Palette.textTertiary)
-                    }
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        StepperButton(
-                            symbol = "−",
-                            onClick = { vm.setTurnBackWatchMinutes((turnBackWatch - 5).coerceAtLeast(15)) },
-                            label = LifeChapterLacquer.ALARM_SHORTER_WATCH_A11Y,
-                        )
-                        Text("$turnBackWatch min", style = NoopType.bodyNumber, color = Palette.textPrimary)
-                        StepperButton(
-                            symbol = "+",
-                            onClick = { vm.setTurnBackWatchMinutes((turnBackWatch + 5).coerceAtMost(90)) },
-                            label = LifeChapterLacquer.ALARM_LONGER_WATCH_A11Y,
-                        )
-                    }
-                }
-                RowDividerLocal()
-                Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                        Text(LifeChapterLacquer.ALARM_HR_DROP_LABEL, style = NoopType.body, color = Palette.textPrimary)
-                        Text(alarmHrDropHelp(turnBackDrop), style = NoopType.footnote, color = Palette.textTertiary)
-                    }
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        StepperButton(symbol = "−", onClick = { vm.setTurnBackDropBpm(turnBackDrop - 1) }, label = LifeChapterLacquer.ALARM_LESS_SENSITIVE_A11Y)
-                        Text("$turnBackDrop", style = NoopType.bodyNumber, color = Palette.textPrimary)
-                        StepperButton(symbol = "+", onClick = { vm.setTurnBackDropBpm(turnBackDrop + 1) }, label = LifeChapterLacquer.ALARM_MORE_SENSITIVE_A11Y)
-                    }
-                }
-                RowDividerLocal()
-                ToggleRowLocal(
-                    label = LifeChapterLacquer.ALARM_PHONE_CUE_LABEL,
-                    help = LifeChapterLacquer.ALARM_PHONE_CUE_HELP,
-                    checked = turnBackPhone,
-                    onChange = { vm.setTurnBackPhoneCue(it) },
-                )
-            }
-
-            RowDividerLocal()
-            val wakeRested by vm.wakeWhenRested.collectAsStateWithLifecycle()
-            val restedCharge by vm.restedChargeThreshold.collectAsStateWithLifecycle()
-            val restedSleepPct by vm.restedSleepNeedPercent.collectAsStateWithLifecycle()
-            ToggleRowLocal(
-                label = LifeChapterLacquer.ALARM_WAKE_RESTED_LABEL,
-                help = LifeChapterLacquer.ALARM_WAKE_RESTED_HELP,
-                checked = wakeRested,
-                onChange = { vm.setWakeWhenRested(it) },
-            )
-            if (wakeRested) {
-                Text(
-                    alarmWakeRestedPlain(restedCharge, restedSleepPct),
-                    style = NoopType.footnote,
-                    color = Palette.textSecondary,
-                    modifier = Modifier.semantics {
-                        contentDescription = alarmWakeRestedPlain(restedCharge, restedSleepPct)
-                    },
-                )
-                RowDividerLocal()
-                Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                        Text(LifeChapterLacquer.ALARM_CHARGE_THRESHOLD_LABEL, style = NoopType.body, color = Palette.textPrimary)
-                        // ALARM_PAGE #45 — explain Charge green language.
-                        Text(
-                            alarmChargeThresholdHelp(restedCharge),
-                            style = NoopType.footnote,
-                            color = Palette.textTertiary,
-                        )
-                        Text(
-                            alarmChargeVesselCue(),
-                            style = NoopType.caption,
-                            color = Palette.chargeColor,
-                        )
-                    }
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        StepperButton(symbol = "−", onClick = { vm.setRestedChargeThreshold(restedCharge - 1) }, label = LifeChapterLacquer.ALARM_LOWER_THRESHOLD_A11Y)
-                        Text("$restedCharge", style = NoopType.bodyNumber, color = Palette.textPrimary)
-                        StepperButton(symbol = "+", onClick = { vm.setRestedChargeThreshold(restedCharge + 1) }, label = LifeChapterLacquer.ALARM_HIGHER_THRESHOLD_A11Y)
-                    }
-                }
-                RowDividerLocal()
-                Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                        Text(LifeChapterLacquer.ALARM_SLEEP_NEED_MET_LABEL, style = NoopType.body, color = Palette.textPrimary)
-                        Text(alarmSleepNeedMetHelp(restedSleepPct), style = NoopType.footnote, color = Palette.textTertiary)
-                    }
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        StepperButton(symbol = "−", onClick = { vm.setRestedSleepNeedPercent(restedSleepPct - 5) }, label = LifeChapterLacquer.ALARM_LOWER_PERCENT_A11Y)
-                        Text("$restedSleepPct%", style = NoopType.bodyNumber, color = Palette.textPrimary)
-                        StepperButton(symbol = "+", onClick = { vm.setRestedSleepNeedPercent(restedSleepPct + 5) }, label = LifeChapterLacquer.ALARM_HIGHER_PERCENT_A11Y)
-                    }
-                }
-            }
-        }
-        }
-
-        item(key = "alarm_chapter_custom") {
             Spacer(Modifier.height(8.dp))
             Overline(LifeChapterLacquer.ALARM_CUSTOM_OVERLINE, color = DomainTheme.Rest.color)
-        }
-        item { CustomAlarmsCard(vm) }
-        item(key = "alarm_chapter_extras") {
+            CustomAlarmsCard(vm)
             Spacer(Modifier.height(8.dp))
             Overline(LifeChapterLacquer.ALARM_EXTRAS_OVERLINE, color = DomainTheme.Rest.color)
-        }
-
-        // ALARM_PAGE #43 — two strap buzz models must not read as one.
-        item(key = "alarm_buzz_models") {
             val dualShape = RoundedCornerShape(LifeChapterLacquer.CORNER_DP.dp)
             Text(
                 alarmDualBuzzCaption(),
@@ -536,12 +306,8 @@ fun SmartAlarmScreen(vm: AppViewModel) {
                     .padding(horizontal = 12.dp, vertical = LifeChapterLacquer.PAD_V_DP.dp)
                     .semantics { contentDescription = alarmDualBuzzCaption() },
             )
-        }
-        item { StrapAlarmCard(vm, strapState) }
-
-        // OEM exact / battery rider (docs/ALARM_OEM_QUIRKS.md) — discoverable when Armed.
-        if (enabled) {
-            item(key = "alarm_oem_tip") {
+            StrapAlarmCard(vm, strapState)
+            if (enabled) {
                 val tipShape = RoundedCornerShape(LifeChapterLacquer.CORNER_DP.dp)
                 Column(
                     Modifier
@@ -566,13 +332,275 @@ fun SmartAlarmScreen(vm: AppViewModel) {
                     )
                 }
             }
-        }
-
-        // The cross-platform wind-down nudge lives here too.
-        item(key = "alarm_chapter_evening") {
             Overline(LifeChapterLacquer.ALARM_EVENING_OVERLINE, color = DomainTheme.Rest.color)
+            WindDownCard(vm)
         }
-        item { WindDownCard(vm) }
+    }
+
+    if (embedded) {
+        AlarmSections()
+    } else {
+        LazyScreenScaffold(
+            title = LifeChapterLacquer.ALARM_HOME_TITLE,
+            subtitle = liveSubtitle,
+        ) {
+            item(key = "alarm_unified") { AlarmSections() }
+        }
+    }
+}
+
+/** Arm-chapter toggles (strap buzz, turn-back, wake rested, math dismiss) in Alarm settings style. */
+@Composable
+private fun AlarmSettingsBody(
+    vm: AppViewModel,
+    enabled: Boolean,
+    canSchedule: Boolean,
+    notifsOk: Boolean,
+    bonded: Boolean,
+    strapName: String,
+    buzzWhoop4: Boolean,
+    targetMinutes: Int,
+    windowMinutes: Int,
+    onNotifsRefresh: () -> Unit,
+    onRequestExact: () -> Unit,
+) {
+    val context = LocalContext.current
+    AlarmSettingsCard {
+        if (enabled) {
+            Text(
+                alarmArmedPlanCaption(canSchedule),
+                style = NoopType.caption,
+                color = if (canSchedule) DomainTheme.Rest.color else Palette.effortColor,
+            )
+        }
+        if (enabled && !notifsOk) {
+            RowDividerLocal()
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable {
+                        requestNotificationSettingsAccess(context)
+                        onNotifsRefresh()
+                    }
+                    .padding(vertical = 4.dp)
+                    .semantics { contentDescription = alarmOpenNotifSettingsA11y() },
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Text(
+                    alarmNotifsOffCaption(),
+                    style = NoopType.footnote,
+                    color = Palette.statusWarning,
+                    modifier = Modifier.weight(1f),
+                )
+                Text(LifeChapterLacquer.ALARM_OPEN_LABEL, style = NoopType.footnote, color = Palette.accent)
+            }
+        }
+        if (enabled && !canSchedule) {
+            RowDividerLocal()
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable(onClick = onRequestExact)
+                    .padding(vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Text(
+                    alarmExactProtectCaption(),
+                    style = NoopType.footnote,
+                    color = Palette.statusWarning,
+                    modifier = Modifier
+                        .weight(1f)
+                        .semantics { contentDescription = alarmExactProtectCaption() },
+                )
+                Text(LifeChapterLacquer.ALARM_OPEN_LABEL, style = NoopType.footnote, color = Palette.accent)
+            }
+        }
+        if (enabled) {
+            RowDividerLocal()
+            WakeWindowControl(
+                targetMinutes = targetMinutes,
+                windowMinutes = windowMinutes,
+                honestlyArmed = canSchedule,
+                onTargetPicked = { vm.setPhoneAlarmTargetMinutes(it) },
+                onWindowChange = { vm.setPhoneAlarmWindowMinutes(it) },
+            )
+        }
+        RowDividerLocal()
+        ToggleRowLocal(
+            label = LifeChapterLacquer.ALARM_BUZZ_STRAP_LABEL,
+            help = alarmBuzzStrapHelp(bonded, strapName),
+            checked = buzzWhoop4,
+            onChange = { vm.setBuzzWhoop4Enabled(it) },
+        )
+        Text(
+            "Phone alarm sound & vibe · system notification settings",
+            style = NoopType.footnote,
+            color = Palette.accent,
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { requestNotificationSettingsAccess(context) }
+                .padding(top = 4.dp)
+                .semantics { contentDescription = "Open phone alarm sound and vibration settings" },
+        )
+        RowDividerLocal()
+        val mathOn by vm.mathChallengeEnabled.collectAsStateWithLifecycle()
+        val mathDrowsy by vm.mathOnDrowsyHr.collectAsStateWithLifecycle()
+        val drowsyHr by vm.drowsyHrBpm.collectAsStateWithLifecycle()
+        ToggleRowLocal(
+            label = "Math to dismiss",
+            help = "Solve a short sum before the phone alarm clears.",
+            checked = mathOn,
+            onChange = { vm.setMathChallengeEnabled(it) },
+        )
+        RowDividerLocal()
+        ToggleRowLocal(
+            label = "Math when drowsy",
+            help = "At the hard deadline, require math + louder cue if live HR is below the drowsy threshold.",
+            checked = mathDrowsy,
+            onChange = { vm.setMathOnDrowsyHr(it) },
+        )
+        if (mathDrowsy) {
+            RowDividerLocal()
+            Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text("Drowsy HR", style = NoopType.body, color = Palette.textPrimary)
+                    Text(
+                        "Below $drowsyHr bpm at final alarm → math + loud.",
+                        style = NoopType.footnote,
+                        color = Palette.textTertiary,
+                    )
+                }
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    StepperButton(
+                        symbol = "−",
+                        onClick = { vm.setDrowsyHrBpm(drowsyHr - 1) },
+                        label = "Lower drowsy HR",
+                    )
+                    Text("$drowsyHr", style = NoopType.bodyNumber, color = Palette.textPrimary)
+                    StepperButton(
+                        symbol = "+",
+                        onClick = { vm.setDrowsyHrBpm(drowsyHr + 1) },
+                        label = "Higher drowsy HR",
+                    )
+                }
+            }
+        }
+        RowDividerLocal()
+        val turnBack by vm.turnBackEnabled.collectAsStateWithLifecycle()
+        val turnBackWatch by vm.turnBackWatchMinutes.collectAsStateWithLifecycle()
+        val turnBackDrop by vm.turnBackDropBpm.collectAsStateWithLifecycle()
+        val turnBackPhone by vm.turnBackPhoneCue.collectAsStateWithLifecycle()
+        ToggleRowLocal(
+            label = LifeChapterLacquer.ALARM_TURN_BACK_LABEL,
+            help = LifeChapterLacquer.ALARM_TURN_BACK_HELP,
+            checked = turnBack,
+            onChange = { vm.setTurnBackEnabled(it) },
+        )
+        if (turnBack) {
+            RowDividerLocal()
+            Text(
+                alarmTurnBackTonightCaption(
+                    turnBackWatch,
+                    hhmm((targetMinutes + windowMinutes) % (24 * 60)),
+                ),
+                style = NoopType.footnote,
+                color = Palette.textSecondary,
+            )
+            RowDividerLocal()
+            Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text(LifeChapterLacquer.ALARM_WATCH_AFTER_WAKE_LABEL, style = NoopType.body, color = Palette.textPrimary)
+                    Text(LifeChapterLacquer.ALARM_WATCH_AFTER_HELP, style = NoopType.footnote, color = Palette.textTertiary)
+                }
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    StepperButton(
+                        symbol = "−",
+                        onClick = { vm.setTurnBackWatchMinutes((turnBackWatch - 5).coerceAtLeast(15)) },
+                        label = LifeChapterLacquer.ALARM_SHORTER_WATCH_A11Y,
+                    )
+                    Text("$turnBackWatch min", style = NoopType.bodyNumber, color = Palette.textPrimary)
+                    StepperButton(
+                        symbol = "+",
+                        onClick = { vm.setTurnBackWatchMinutes((turnBackWatch + 5).coerceAtMost(90)) },
+                        label = LifeChapterLacquer.ALARM_LONGER_WATCH_A11Y,
+                    )
+                }
+            }
+            RowDividerLocal()
+            Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text(LifeChapterLacquer.ALARM_HR_DROP_LABEL, style = NoopType.body, color = Palette.textPrimary)
+                    Text(alarmHrDropHelp(turnBackDrop), style = NoopType.footnote, color = Palette.textTertiary)
+                }
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    StepperButton(symbol = "−", onClick = { vm.setTurnBackDropBpm(turnBackDrop - 1) }, label = LifeChapterLacquer.ALARM_LESS_SENSITIVE_A11Y)
+                    Text("$turnBackDrop", style = NoopType.bodyNumber, color = Palette.textPrimary)
+                    StepperButton(symbol = "+", onClick = { vm.setTurnBackDropBpm(turnBackDrop + 1) }, label = LifeChapterLacquer.ALARM_MORE_SENSITIVE_A11Y)
+                }
+            }
+            RowDividerLocal()
+            ToggleRowLocal(
+                label = LifeChapterLacquer.ALARM_PHONE_CUE_LABEL,
+                help = LifeChapterLacquer.ALARM_PHONE_CUE_HELP,
+                checked = turnBackPhone,
+                onChange = { vm.setTurnBackPhoneCue(it) },
+            )
+        }
+        RowDividerLocal()
+        val wakeRested by vm.wakeWhenRested.collectAsStateWithLifecycle()
+        val restedCharge by vm.restedChargeThreshold.collectAsStateWithLifecycle()
+        val restedSleepPct by vm.restedSleepNeedPercent.collectAsStateWithLifecycle()
+        ToggleRowLocal(
+            label = LifeChapterLacquer.ALARM_WAKE_RESTED_LABEL,
+            help = LifeChapterLacquer.ALARM_WAKE_RESTED_HELP,
+            checked = wakeRested,
+            onChange = { vm.setWakeWhenRested(it) },
+        )
+        if (wakeRested) {
+            Text(
+                alarmWakeRestedPlain(restedCharge, restedSleepPct),
+                style = NoopType.footnote,
+                color = Palette.textSecondary,
+                modifier = Modifier.semantics {
+                    contentDescription = alarmWakeRestedPlain(restedCharge, restedSleepPct)
+                },
+            )
+            RowDividerLocal()
+            Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text(LifeChapterLacquer.ALARM_CHARGE_THRESHOLD_LABEL, style = NoopType.body, color = Palette.textPrimary)
+                    Text(
+                        alarmChargeThresholdHelp(restedCharge),
+                        style = NoopType.footnote,
+                        color = Palette.textTertiary,
+                    )
+                    Text(
+                        alarmChargeVesselCue(),
+                        style = NoopType.caption,
+                        color = Palette.chargeColor,
+                    )
+                }
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    StepperButton(symbol = "−", onClick = { vm.setRestedChargeThreshold(restedCharge - 1) }, label = LifeChapterLacquer.ALARM_LOWER_THRESHOLD_A11Y)
+                    Text("$restedCharge", style = NoopType.bodyNumber, color = Palette.textPrimary)
+                    StepperButton(symbol = "+", onClick = { vm.setRestedChargeThreshold(restedCharge + 1) }, label = LifeChapterLacquer.ALARM_HIGHER_THRESHOLD_A11Y)
+                }
+            }
+            RowDividerLocal()
+            Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text(LifeChapterLacquer.ALARM_SLEEP_NEED_MET_LABEL, style = NoopType.body, color = Palette.textPrimary)
+                    Text(alarmSleepNeedMetHelp(restedSleepPct), style = NoopType.footnote, color = Palette.textTertiary)
+                }
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    StepperButton(symbol = "−", onClick = { vm.setRestedSleepNeedPercent(restedSleepPct - 5) }, label = LifeChapterLacquer.ALARM_LOWER_PERCENT_A11Y)
+                    Text("$restedSleepPct%", style = NoopType.bodyNumber, color = Palette.textPrimary)
+                    StepperButton(symbol = "+", onClick = { vm.setRestedSleepNeedPercent(restedSleepPct + 5) }, label = LifeChapterLacquer.ALARM_HIGHER_PERCENT_A11Y)
+                }
+            }
+        }
     }
 }
 
@@ -907,7 +935,11 @@ private fun WindowCard(
     days: List<com.noop.data.DailyMetric>,
     onEnabledChange: (Boolean) -> Unit,
     onRequestExactAccess: () -> Unit,
+    onTargetChange: (Int) -> Unit = {},
 ) {
+    val haptic = LocalHapticFeedback.current
+    var showBedPicker by remember { mutableStateOf(false) }
+    var showWakePicker by remember { mutableStateOf(false) }
     val deadline = (targetMinutes + windowMinutes) % (24 * 60)
     // Fable #388 — do not promise "guaranteed" when exact-alarm access is off.
     val honestlyArmed = enabled && canExact
@@ -1044,6 +1076,13 @@ private fun WindowCard(
                         hhmm(suggestedBed),
                         style = NoopType.number(36f, weight = FontWeight.Bold),
                         color = alarmBedChromeColor(),
+                        modifier = Modifier
+                            .heightIn(min = 48.dp)
+                            .clickable {
+                                showBedPicker = true
+                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            }
+                            .semantics { contentDescription = "Bedtime" },
                     )
                     Text(
                         formatAimSleepDuration(needMin),
@@ -1081,6 +1120,13 @@ private fun WindowCard(
                         } else {
                             Palette.textPrimary
                         },
+                        modifier = Modifier
+                            .heightIn(min = 48.dp)
+                            .clickable {
+                                showWakePicker = true
+                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            }
+                            .semantics { contentDescription = alarmWakeUpTimeA11y() },
                     )
                     Text(
                         "by ${hhmm(deadline)} · ${windowMinutes}m",
@@ -1148,6 +1194,31 @@ private fun WindowCard(
                     color = Palette.textTertiary,
                 )
             }
+        }
+        if (showBedPicker) {
+            NoopTimePickerDialog(
+                title = "Bedtime",
+                initialMinutes = suggestedBed,
+                onDismiss = { showBedPicker = false },
+                onConfirm = { picked ->
+                    // Keep sleep-need span; move wake = bed + need.
+                    onTargetChange((picked + needMin) % (24 * 60))
+                    showBedPicker = false
+                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                },
+            )
+        }
+        if (showWakePicker) {
+            NoopTimePickerDialog(
+                title = "Wake up time",
+                initialMinutes = targetMinutes,
+                onDismiss = { showWakePicker = false },
+                onConfirm = { picked ->
+                    onTargetChange(picked)
+                    showWakePicker = false
+                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                },
+            )
         }
     }
 }

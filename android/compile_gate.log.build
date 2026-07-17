@@ -21,13 +21,7 @@ Configuration on demand is an incubating feature.
 > Task :app:processFullReleaseResources
 > Task :app:kspFullReleaseKotlin
 > Task :app:compileFullReleaseKotlin
-w: file:///N:/noop-v8.4.0-src/android/app/src/main/java/com/noop/ui/AppRoot.kt:1296:5 Parameter 'onStrengthTrainer' is never used
-w: file:///N:/noop-v8.4.0-src/android/app/src/main/java/com/noop/ui/AppRoot.kt:1301:9 Variable 'barShape' is never used
-w: file:///N:/noop-v8.4.0-src/android/app/src/main/java/com/noop/ui/SceneHeroBackground.kt:302:21 Condition 'scrimBrush != null' is always 'true'
-w: file:///N:/noop-v8.4.0-src/android/app/src/main/java/com/noop/ble/WhoopBleClient.kt:1480:42 Parameter 'batch' is never used
-w: file:///N:/noop-v8.4.0-src/android/app/src/main/java/com/noop/ble/WhoopBleClient.kt:3528:38 Parameter 'g' is never used
-w: file:///N:/noop-v8.4.0-src/android/app/src/main/java/com/noop/ble/WhoopBleClient.kt:5354:32 Parameter 'g' is never used
-w: file:///N:/noop-v8.4.0-src/android/app/src/main/java/com/noop/ui/SettingsScreen.kt:354:5 Parameter 'onOpenQuickStart' is never used
+w: file:///N:/noop-v8.4.0-src/android/app/src/main/java/com/noop/ui/SettingsScreen.kt:363:5 Parameter 'onOpenQuickStart' is never used
 w: file:///N:/noop-v8.4.0-src/android/app/src/main/java/com/noop/ui/TestCentreScreen.kt:462:24 Parameter 'vm' is never used
 
 > Task :app:javaPreCompileFullRelease UP-TO-DATE
@@ -69,6 +63,6 @@ w: file:///N:/noop-v8.4.0-src/android/app/src/main/java/com/noop/ui/TestCentreSc
 > Task :app:createFullReleaseApkListingFileRedirect
 > Task :app:assembleFullRelease
 
-BUILD SUCCESSFUL in 4m 29s
+BUILD SUCCESSFUL in 4m 25s
 49 actionable tasks: 21 executed, 28 up-to-date
 EXITCODE=0 

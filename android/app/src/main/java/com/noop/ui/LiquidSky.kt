@@ -140,15 +140,25 @@ private fun liquidLiveHour(): Double {
 // seconds clock (drives twinkle + breath); `animate` gates the two time-varying layers so the static
 // sky draws the SAME picture minus the breath/twinkle (matching the iOS LiquidSkyStatic).
 
-/** Pull bright day-cycle stops toward slate on light so midday sky cannot blow out paper UI. */
+/** Pull bright day-cycle stops toward slate + paper on light so midday sky cannot blow out UI. */
 private fun paperSkyTone(c: Color, light: Boolean): Color {
     if (!light) return c
-    // ~28% toward a cool mid slate — keeps atmosphere, kills the white-hot wash on paper.
-    val slate = Color(0xFF5A6674)
+    // Stronger mute than the first pass (28%): midday still glared on Settings/Workouts/Today.
+    // Cool slate kills the white-hot blue; paper mid kills luminance so ink headers stay calm.
+    val slate = Color(0xFF4A5560)
+    val paper = Palette.surfaceBase
+    val towardSlate = 0.42f
+    val towardPaper = 0.26f
+    val muted = Color(
+        red = c.red + (slate.red - c.red) * towardSlate,
+        green = c.green + (slate.green - c.green) * towardSlate,
+        blue = c.blue + (slate.blue - c.blue) * towardSlate,
+        alpha = 1f,
+    )
     return Color(
-        red = c.red + (slate.red - c.red) * 0.28f,
-        green = c.green + (slate.green - c.green) * 0.28f,
-        blue = c.blue + (slate.blue - c.blue) * 0.28f,
+        red = muted.red + (paper.red - muted.red) * towardPaper,
+        green = muted.green + (paper.green - muted.green) * towardPaper,
+        blue = muted.blue + (paper.blue - muted.blue) * towardPaper,
         alpha = 1f,
     )
 }
@@ -184,11 +194,11 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.renderLiquidSky(
     )
 
     // Slow breath of light low in the sky (animated sky only). White wash rising over the lower 55%.
-    // Light: whisper only — full white breath + warm day wash made paper unusable.
+    // Light: near-silent — any white breath still reads as glare on mid paper.
     if (animate) {
         val breathe = 0.5 + 0.5 * sin(now * 0.22)
         val peak = if (light) {
-            (0.018 + breathe * 0.012).toFloat()
+            (0.008 + breathe * 0.006).toFloat()
         } else {
             (0.05 + breathe * 0.03).toFloat()
         }
@@ -212,7 +222,7 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.renderLiquidSky(
     // behind every chart-heavy tab would carry a warm band the iOS static never draws.
     if (animate && s.warm > 0.01) {
         val warm = Color(red = 1f, green = 200f / 255f, blue = 120f / 255f, alpha = 1f)
-        val warmPeak = if (light) (s.warm * 0.035).toFloat() else (s.warm * 0.10).toFloat()
+        val warmPeak = if (light) (s.warm * 0.016).toFloat() else (s.warm * 0.10).toFloat()
         drawRect(
             brush = Brush.verticalGradient(
                 colors = listOf(
@@ -251,9 +261,9 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.renderLiquidSky(
     // Settle into the page: a long fade to the theme's surfaceBase over the lower half so the sky
     // dissolves seamlessly into the body — no hard cut. Light: start earlier + full settle so midday
     // sky cannot wash the scroll body.
-    val settleStart = if (light) 0.28f else 0.45f
+    val settleStart = if (light) 0.18f else 0.45f
     val settleAlpha = if (light) {
-        settleStrength.coerceIn(0.88f, 1f)
+        settleStrength.coerceIn(0.94f, 1f)
     } else {
         settleStrength.coerceIn(0f, 1f)
     }
@@ -269,6 +279,20 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.renderLiquidSky(
         topLeft = Offset(0f, h * settleStart),
         size = Size(w, h * (1f - settleStart)),
     )
+    // Light: quiet paper veil over the whole sky band so headers/cards never sit on raw midday glare.
+    if (light) {
+        drawRect(
+            brush = Brush.verticalGradient(
+                colorStops = arrayOf(
+                    0.0f to settle.copy(alpha = 0.34f),
+                    0.42f to settle.copy(alpha = 0.18f),
+                    1.0f to settle.copy(alpha = 0.06f),
+                ),
+                startY = 0f,
+                endY = h,
+            ),
+        )
+    }
 }
 
 /** The canvas colour the sky dissolves into — the active theme's surfaceBase (dark #121518 / light

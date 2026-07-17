@@ -214,6 +214,39 @@ class WhoopCsvExporterTest {
     }
 
     @Test
+    fun stressSeriesCsvRoundTripsDays() {
+        val csv = WhoopCsvExporter.stressSeriesCsv(
+            listOf(
+                MetricSeriesRow("my-whoop-noop", "2026-07-11", "stress", 0.8),
+                MetricSeriesRow("my-whoop", "2026-07-11", "stress", 1.2),
+                MetricSeriesRow("my-whoop", "2026-07-12", "hrv", 44.0),
+                MetricSeriesRow("my-whoop", "2026-07-12", "stress", 2.1),
+            ),
+        )
+        assertTrue(csv.startsWith("Day,Stress"))
+        assertTrue(csv.contains("2026-07-11,1.2,"))
+        assertTrue(csv.contains("2026-07-12,2.1,"))
+        assertTrue(!csv.contains("hrv"))
+        val parsed = WhoopCsvImporter.parseStressSeries(CsvTable.fromData(csv.toByteArray()), "my-whoop")
+        assertEquals(2, parsed.size)
+        assertEquals(1.2, parsed.first { it.day == "2026-07-11" }.value, 1e-9)
+        assertEquals(2.1, parsed.first { it.day == "2026-07-12" }.value, 1e-9)
+    }
+
+    @Test
+    fun stressFromMetricSeriesJsonFiltersStressKey() {
+        val json = WhoopCsvExporter.metricSeriesJson(
+            listOf(
+                MetricSeriesRow("my-whoop", "2026-07-10", "stress", 0.9),
+                MetricSeriesRow("my-whoop", "2026-07-10", "recovery", 62.0),
+            ),
+        )
+        val parsed = WhoopCsvImporter.parseStressFromMetricSeriesJson(json.toByteArray(), "my-whoop")
+        assertEquals(1, parsed.size)
+        assertEquals(0.9, parsed[0].value, 1e-9)
+    }
+
+    @Test
     fun zipBytesReadBackByName() {
         val zip = WhoopCsvExporter.zipBytes(
             linkedMapOf(

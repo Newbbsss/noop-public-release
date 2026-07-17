@@ -69,7 +69,7 @@ import kotlin.math.roundToInt
 @Composable
 fun AutomationsScreen(
     viewModel: AppViewModel,
-    onOpenWakeSettings: () -> Unit = {},
+    onOpenAlarm: () -> Unit = {},
 ) {
     val live by viewModel.live.collectAsStateWithLifecycle()
 
@@ -281,8 +281,8 @@ fun AutomationsScreen(
 
         // Wear & presence / auto-lock-on-wrist-off is macOS-only (no lockScreen on Android).
 
-        // #766 / ALARM_PAGE #83 — wake controls live under Sleep → Alarm → Wake settings (not here).
-        item(key = "wake_settings_door") {
+        // #766 — wake controls live under Sleep → Alarm (one home; no Wake settings hop).
+        item(key = "sleep_alarm_door") {
             val shape = RoundedCornerShape(14.dp)
             Row(
                 Modifier
@@ -290,7 +290,7 @@ fun AutomationsScreen(
                     .clip(shape)
                     .background(Palette.surfaceInset.copy(alpha = LifeChapterLacquer.SURFACE_ALPHA))
                     .border(1.dp, Palette.restColor.copy(alpha = LifeChapterLacquer.BORDER_ALPHA), shape)
-                    .clickable(onClick = onOpenWakeSettings)
+                    .clickable(onClick = onOpenAlarm)
                     .padding(horizontal = 14.dp, vertical = LifeChapterLacquer.PAD_V_DP.dp)
                     .heightIn(min = 48.dp),
                 verticalAlignment = Alignment.CenterVertically,
@@ -298,14 +298,14 @@ fun AutomationsScreen(
             ) {
                 Icon(Icons.Filled.Bedtime, contentDescription = null, tint = Palette.restColor, modifier = Modifier.size(20.dp))
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    Text(LifeChapterLacquer.ALARM_WAKE_SETTINGS_TITLE, style = NoopType.subhead, color = Palette.textPrimary)
+                    Text(LifeChapterLacquer.ALARM_HOME_TITLE, style = NoopType.subhead, color = Palette.textPrimary)
                     Text(
                         "Phone window · strap buzz · custom · wind-down — Sleep → Alarm",
                         style = NoopType.footnote,
                         color = Palette.textSecondary,
                     )
                 }
-                Text("Open", style = NoopType.caption, color = Palette.restColor)
+                Text(LifeChapterLacquer.ALARM_OPEN_LABEL, style = NoopType.caption, color = Palette.restColor)
             }
         }
 

@@ -49,6 +49,9 @@ object WhoopCsvImporter {
     private const val SLEEPS_NAME = "sleeps.csv"
     private const val WORKOUTS_NAME = "workouts.csv"
     private const val JOURNAL_NAME = "journal_entries.csv"
+    /** SHIP #197 — NOOP portable Stress tip series (not a WHOOP official file). */
+    private const val STRESS_SERIES_NAME = "stress_series.csv"
+    private const val METRIC_SERIES_JSON = "noop_metric_series.json"
 
     /** Per-CSV uncompressed ceiling (zip-bomb guard). Mirrors Swift maxEntryBytes = 256 MB. */
     private const val MAX_ENTRY_BYTES = 256L shl 20
@@ -98,13 +101,25 @@ object WhoopCsvImporter {
         val sleepDaily = sleepParse?.daily ?: emptyList()
         val workouts = csvData[WORKOUTS_NAME]?.let { parseWorkouts(CsvTable.fromData(it), deviceId) } ?: emptyList()
         val journal = csvData[JOURNAL_NAME]?.let { parseJournal(CsvTable.fromData(it), deviceId) } ?: emptyList()
+        val stressSeries = csvData[STRESS_SERIES_NAME]?.let { parseStressSeries(CsvTable.fromData(it), deviceId) }
+            ?: emptyList()
+        val jsonStress = csvData[METRIC_SERIES_JSON]?.let { parseStressFromMetricSeriesJson(it, deviceId) }
+            ?: emptyList()
+        // Prefer explicit stress_series.csv; fill gaps from sidecar JSON.
+        val stressByDay = LinkedHashMap<String, MetricSeriesRow>()
+        for (r in jsonStress + stressSeries) {
+            stressByDay[r.day] = r
+        }
+        val stressRows = stressByDay.values.toList()
 
         // Merge cycle-derived and sleep-derived daily rows on (deviceId, day): cycle fields
         // (recovery / strain / RHR / HRV / SpO2 / skin-temp / resp) win where present, sleep
         // fields fill the architecture columns. One DailyMetric per day, matching the PK.
         val daily = mergeDaily(cycles, sleepDaily)
 
-        if (daily.isEmpty() && sleepSessions.isEmpty() && workouts.isEmpty() && journal.isEmpty()) {
+        if (daily.isEmpty() && sleepSessions.isEmpty() && workouts.isEmpty() &&
+            journal.isEmpty() && stressRows.isEmpty()
+        ) {
             return ImportSummary.failure(SOURCE_LABEL, "Export contained no usable WHOOP rows.")
         }
 
@@ -114,6 +129,7 @@ object WhoopCsvImporter {
         if (workouts.isNotEmpty()) repo.upsertWorkouts(workouts)
         if (journal.isNotEmpty()) repo.upsertJournal(journal)
         if (cycleSeries.isNotEmpty()) repo.upsertMetricSeries(cycleSeries)
+        if (stressRows.isNotEmpty()) repo.upsertMetricSeries(stressRows)
 
         // Mirror export into deviceId "whoop-app" with **native** WHOOP app scales for compare UI:
         // Recovery 0–100, Day Strain **0–21** (NOT rescaled). This is the official app's numbers from
@@ -137,6 +153,10 @@ object WhoopCsvImporter {
         if (workouts.isNotEmpty()) counts["workout"] = workouts.size
         if (journal.isNotEmpty()) counts["journal"] = journal.size
         if (cycleSeries.isNotEmpty()) counts["metricSeries"] = cycleSeries.size
+        if (stressRows.isNotEmpty()) {
+            counts["stressSeries"] = stressRows.size
+            counts["metricSeries"] = (counts["metricSeries"] ?: 0) + stressRows.size
+        }
 
         // Date span across everything we wrote.
         val days = ArrayList<String>()
@@ -173,7 +193,7 @@ object WhoopCsvImporter {
      * `.csv`. Mirrors Swift `loadCSVData` filename routing.
      */
     private fun loadCsvData(context: Context, uri: Uri): Map<String, ByteArray> {
-        val wanted = setOf(CYCLES_NAME, SLEEPS_NAME, WORKOUTS_NAME, JOURNAL_NAME)
+        val wanted = setOf(CYCLES_NAME, SLEEPS_NAME, WORKOUTS_NAME, JOURNAL_NAME, STRESS_SERIES_NAME)
         val result = LinkedHashMap<String, ByteArray>()
 
         // First attempt: treat as a zip. WHOOP exports are zips; this also covers a .zip Uri
@@ -192,16 +212,14 @@ object WhoopCsvImporter {
                     while (entry != null) {
                         if (!entry.isDirectory) {
                             val base = baseName(entry.name).lowercase()
-                            // Only inspect CSVs (skip the export's GPX/ECG/other files).
-                            if (base.endsWith(".csv")) {
+                            // Only inspect CSVs + NOOP stress/metric sidecars (#197).
+                            if (base.endsWith(".csv") || base == METRIC_SERIES_JSON) {
                                 val declared = entry.size // -1 when unknown
                                 if (declared <= MAX_ENTRY_BYTES) {
                                     val bytes = zis.readEntryCapped(MAX_ENTRY_BYTES)
                                     if (bytes != null && bytes.isNotEmpty()) {
-                                        // Route by English name, then a localized filename alias
-                                        // (e.g. German Schlaf.csv), then by header content. This is
-                                        // what lets non-English WHOOP exports import (issue #3).
                                         val canonical = when {
+                                            base == METRIC_SERIES_JSON -> METRIC_SERIES_JSON
                                             base in wanted -> base
                                             else -> localizedAlias(base) ?: sniffCsvKind(bytes)
                                         }
@@ -250,6 +268,7 @@ object WhoopCsvImporter {
             "nap" in h && ("sleep_onset" in h || "wake_onset" in h) -> SLEEPS_NAME
             "cycle_start_time" in h || "recovery_score_pct" in h || "day_strain" in h -> CYCLES_NAME
             "sleep_onset" in h || "asleep_duration_min" in h -> SLEEPS_NAME
+            ("stress_0_3" in h || "stress" in h) && "day" in h -> STRESS_SERIES_NAME
             else -> null
         }
     }
@@ -589,6 +608,52 @@ object WhoopCsvImporter {
             )
         }
         return out
+    }
+
+    // MARK: - stress_series.csv / noop_metric_series.json → MetricSeriesRow (SHIP #197)
+
+    internal fun parseStressSeries(table: CsvTable, deviceId: String): List<MetricSeriesRow> {
+        val out = ArrayList<MetricSeriesRow>(table.rows.size)
+        for (row in table.rows) {
+            val day = row.cell("day")?.take(10) ?: continue
+            if (!day.matches(Regex("""\d{4}-\d{2}-\d{2}"""))) continue
+            val tip = row.double("stress_0_3", "stress", "stress_tip", "value") ?: continue
+            if (tip.isNaN() || tip < 0.0 || tip > 3.0 + 1e-6) continue
+            out.add(
+                MetricSeriesRow(
+                    deviceId = deviceId,
+                    day = day,
+                    key = "stress",
+                    value = tip.coerceIn(0.0, 3.0),
+                ),
+            )
+        }
+        return out
+    }
+
+    internal fun parseStressFromMetricSeriesJson(bytes: ByteArray, deviceId: String): List<MetricSeriesRow> {
+        return runCatching {
+            val arr = JSONArray(String(bytes, Charsets.UTF_8))
+            val out = ArrayList<MetricSeriesRow>()
+            for (i in 0 until arr.length()) {
+                val o = arr.optJSONObject(i) ?: continue
+                val key = o.optString("key", "")
+                if (!key.equals("stress", ignoreCase = true)) continue
+                val day = o.optString("day", "").take(10)
+                if (!day.matches(Regex("""\d{4}-\d{2}-\d{2}"""))) continue
+                val tip = o.optDouble("value", Double.NaN)
+                if (tip.isNaN() || tip < 0.0 || tip > 3.0 + 1e-6) continue
+                out.add(
+                    MetricSeriesRow(
+                        deviceId = deviceId,
+                        day = day,
+                        key = "stress",
+                        value = tip.coerceIn(0.0, 3.0),
+                    ),
+                )
+            }
+            out
+        }.getOrDefault(emptyList())
     }
 
     // MARK: - Merge helpers

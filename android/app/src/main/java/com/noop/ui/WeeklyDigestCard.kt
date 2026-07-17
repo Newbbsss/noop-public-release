@@ -81,7 +81,7 @@ fun buildWeeklyDigest(
     val hrv = HashMap<String, Double>()
     for (d in days) {
         d.recovery?.let { charge[d.day] = it }
-        d.strain?.let { effort[d.day] = it }
+        d.strain?.takeIf { it > 0.0 }?.let { effort[d.day] = it }
         // Rest = the sleep-performance composite recomputed on the persisted day.
         RestScorer.restFromDaily(d)?.let { rest[d.day] = it }
         d.restingHr?.let { rhr[d.day] = it.toDouble() }
@@ -297,6 +297,7 @@ internal fun meanText(s: WeeklyMetricSummary, effortScale: EffortScale): String 
     // #463: Effort is STORED 0-100; render it on the user's chosen display scale WITH the denominator
     // ("4.6 / 21", "21.6 / 100") so the card can't read as a different number than the Trends chart.
     if (s.metric == WeeklyMetric.EFFORT) {
+        if (s.thisWeek.mean <= 0.0) return "—"
         return "${UnitFormatter.effortDisplay(s.thisWeek.mean, effortScale)} / " +
             UnitFormatter.effortScaleMax(effortScale)
     }

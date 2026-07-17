@@ -173,6 +173,18 @@ fun ReviewPinOverlay(currentRoute: String?) {
     var draftNote by remember { mutableStateOf("") }
     var editingId by remember { mutableStateOf<String?>(null) }
     var toast by remember { mutableStateOf<String?>(null) }
+    // SHIP #365 — hide pin chrome so screenshots / Fold review don't leave agent FABs on screen.
+    var chromeHidden by remember {
+        mutableStateOf(
+            context.getSharedPreferences("noop_review_pins", Context.MODE_PRIVATE)
+                .getBoolean("chrome_hidden", false),
+        )
+    }
+    fun setChromeHidden(hidden: Boolean) {
+        chromeHidden = hidden
+        context.getSharedPreferences("noop_review_pins", Context.MODE_PRIVATE)
+            .edit().putBoolean("chrome_hidden", hidden).apply()
+    }
 
     LaunchedEffect(Unit) {
         pins.clear()
@@ -221,36 +233,38 @@ fun ReviewPinOverlay(currentRoute: String?) {
             }
         }
 
-        // Existing pins (always visible in debug).
-        pins.forEachIndexed { index, pin ->
-            val x = (pin.xFrac * wPx).roundToInt()
-            val y = (pin.yFrac * hPx).roundToInt()
-            Box(
-                modifier = Modifier
-                    .offset { IntOffset(x - with(density) { 16.dp.roundToPx() }, y - with(density) { 16.dp.roundToPx() }) }
-                    .size(32.dp)
-                    .clip(CircleShape)
-                    .background(Palette.accent)
-                    .border(1.5.dp, Palette.surfaceBase, CircleShape)
-                    .clickable {
-                        editingId = pin.id
-                        draftFrac = pin.xFrac to pin.yFrac
-                        draftNote = pin.note
-                        mode = PinMode.Idle
-                    }
-                    .semantics { contentDescription = "Review pin ${index + 1}" },
-                contentAlignment = Alignment.Center,
-            ) {
-                Text(
-                    "${index + 1}",
-                    style = NoopType.captionNumber,
-                    color = Palette.surfaceBase,
-                    fontWeight = FontWeight.Bold,
-                )
+        // Existing pins — hidden with chrome so screenshots stay clean (#365).
+        if (!chromeHidden) {
+            pins.forEachIndexed { index, pin ->
+                val x = (pin.xFrac * wPx).roundToInt()
+                val y = (pin.yFrac * hPx).roundToInt()
+                Box(
+                    modifier = Modifier
+                        .offset { IntOffset(x - with(density) { 16.dp.roundToPx() }, y - with(density) { 16.dp.roundToPx() }) }
+                        .size(32.dp)
+                        .clip(CircleShape)
+                        .background(Palette.accent)
+                        .border(1.5.dp, Palette.surfaceBase, CircleShape)
+                        .clickable {
+                            editingId = pin.id
+                            draftFrac = pin.xFrac to pin.yFrac
+                            draftNote = pin.note
+                            mode = PinMode.Idle
+                        }
+                        .semantics { contentDescription = "Review pin ${index + 1}" },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        "${index + 1}",
+                        style = NoopType.captionNumber,
+                        color = Palette.surfaceBase,
+                        fontWeight = FontWeight.Bold,
+                    )
+                }
             }
         }
 
-        // Controls: pin FAB + list
+        // Controls: pin FAB + list (or a quiet restore when chrome is hidden).
         Column(
             modifier = Modifier
                 .align(Alignment.BottomEnd)
@@ -259,6 +273,19 @@ fun ReviewPinOverlay(currentRoute: String?) {
             verticalArrangement = Arrangement.spacedBy(10.dp),
             horizontalAlignment = Alignment.End,
         ) {
+            if (chromeHidden) {
+                TextButton(
+                    onClick = {
+                        setChromeHidden(false)
+                        toast = "Review pins shown"
+                    },
+                    modifier = Modifier.semantics {
+                        contentDescription = "Show review pin tools"
+                    },
+                ) {
+                    Text("Pins", style = NoopType.caption, color = Palette.textTertiary)
+                }
+            } else {
             if (pins.isNotEmpty()) {
                 SmallFloatingActionButton(
                     onClick = { mode = if (mode == PinMode.List) PinMode.Idle else PinMode.List },
@@ -286,6 +313,16 @@ fun ReviewPinOverlay(currentRoute: String?) {
                     if (mode == PinMode.Placing) Icons.Filled.Close else Icons.Filled.EditNote,
                     contentDescription = null,
                 )
+            }
+            TextButton(
+                onClick = {
+                    mode = PinMode.Idle
+                    setChromeHidden(true)
+                    toast = "Pins hidden for screenshots"
+                },
+            ) {
+                Text("Hide", style = NoopType.caption, color = Palette.textTertiary)
+            }
             }
         }
 

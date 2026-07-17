@@ -213,6 +213,10 @@ fun CoupledScreen(
                 days = days,
                 displayDay = todayRow,
                 carriedDay = carriedRecoveryDay,
+                vitalsDay = remember(days, todayRow) {
+                    val key = todayRow?.day ?: java.time.LocalDate.now().toString()
+                    lastVitalsRow(days, key)
+                },
                 showReadiness = true,
                 onClose = { showChargeBreakdown = false },
                 onHowCalculated = {
@@ -559,13 +563,12 @@ internal fun strainBandWord(fraction: Double): String = when {
 
 /**
  * The night's need (minutes): the imported per-day figure when the export carried one, else the shared
- * >= 7.5h personal-mean floor (matches SleepScreen needMin / SleepView.sleepNeedMin).
+ * personal-mean floor / RestScorer default (matches SleepScreen needMin / RestScorer.personalNeedHours).
  */
 private fun sleepNeedForDay(day: DailyMetric?, days: List<DailyMetric>, importedNeed: Map<String, Double>): Double {
     day?.day?.let { key -> importedNeed[key]?.takeIf { it > 0 }?.let { return it } }
     val banked = days.mapNotNull { it.totalSleepMin }.filter { it > 0 }
-    val mean = if (banked.isEmpty()) null else banked.sum() / banked.size
-    return maxOf(450.0, mean ?: 450.0) // 450 min = 7.5h
+    return RestScorer.personalNeedHours(banked).first * 60.0
 }
 
 /** Last night's bed -> wake span, only when the freshest session touches last night, not a days-old import. */

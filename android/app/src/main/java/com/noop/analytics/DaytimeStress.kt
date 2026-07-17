@@ -12,10 +12,11 @@ import kotlin.math.sqrt
  * motion + step activity-class + sedentary-bout calm gates.
  *
  * CONTINUED 2026-07-12 WHOOP Stress Monitor match:
- *   • 15-minute buckets (was 1h) — closer to WHOOP’s continuous curve without inventing beats.
+ *   • 5-minute buckets (was 15m ← 1h) — denser WHOOP-like curve without inventing beats.
  *   • Quiet HR p10/p25; calm logistic raw=0 → ~0.5 LOW.
  *   • Gravity L2 + step walk/run → stiller BPM subset; sedentary / still → calm bias.
  *   • Night scored near floor; waking-only calm reference (#357).
+ *   • [HourPoint.asleep] marks sleep-window / band-asleep for Stress UI moon band.
  *
  * APPROXIMATE / non-clinical — not WHOOP’s proprietary Stress Monitor.
  */
@@ -23,24 +24,27 @@ object DaytimeStress {
 
     // MARK: - Tunables
 
-    /** 15-minute buckets — WHOOP chart is continuous; 1h was too coarse for tip/peak shape. */
-    const val bucketSeconds: Long = 900L
-    /** ~4 buckets per clock hour (for UI hour counts). */
-    const val bucketsPerHour: Int = 4
+    /** 5-minute buckets — WHOOP chart is near-continuous; 15m still looked stair-stepped. */
+    const val bucketSeconds: Long = 300L
+    /** ~12 buckets per clock hour (for UI hour counts / zone minutes). */
+    const val bucketsPerHour: Int = 12
 
-    /** Min HR samples per 15-min bucket (~75s at 1 Hz; scales from prior 300/hour). */
-    const val minHourHrSamples: Int = 75
+    /** Min HR samples per 5-min bucket (~25s at 1 Hz; scales from prior 75/15-min). */
+    const val minHourHrSamples: Int = 25
     /** Adaptive floor when the day has few scored windows (Fable Stress #32). */
-    const val minHourHrSamplesSparse: Int = 50
-    const val minHourHrSpanSeconds: Long = 60L
+    const val minHourHrSamplesSparse: Int = 18
+    const val minHourHrSpanSeconds: Long = 20L
     /** If fewer than this many buckets meet the dense gate, retry sparse gate once. */
-    const val sparseDayBucketCap: Int = 8
+    const val sparseDayBucketCap: Int = 16
     const val minPlausibleBpm: Int = 30
     const val maxPlausibleBpm: Int = 220
     const val highBandFloor: Double = 2.0
-    /** ~3 waking hours of consecutive HIGH 15-min buckets. */
+    /** ~3 waking hours of consecutive HIGH 5-min buckets. */
     const val sustainedHours: Int = 3
     val sustainedBuckets: Int get() = sustainedHours * bucketsPerHour
+
+    /** Wall minutes covered by one scored bucket (UI captions). */
+    val bucketMinutes: Int get() = (bucketSeconds / 60L).toInt()
 
     const val wakingStartHour: Int = 6
     const val wakingEndHour: Int = 22
@@ -76,10 +80,17 @@ object DaytimeStress {
     const val overnightAnchorSlackBpm: Double = 5.0
     const val overnightCalmBias: Double = 0.55
     /**
-     * Soft tip ceiling outside waking hours (NOW hero). WHOOP sleep tips often land ~0.7–0.9;
-     * SHIP #83/#209 — was 1.35 (too hot vs WHOOP). Cap at 1.0 (still ≥ AlgoParityGuard floor).
+     * Soft tip ceiling outside clock waking hours (NOW hero). Caps stale evening HIGH so a 2.7
+     * desk spike doesn't stick past midnight — but must still allow WHOOP-like overnight
+     * *awake* tips (Fold 2026-07-17 SS: WHOOP 1.5 @ 12:45 AM / 1.4 @ 5:20 AM while Gilbert's
+     * sleep window is ~06–13). Cap was 1.0 (SHIP #83) and under-read those tips by ~0.5.
      */
-    const val nightTipCeiling: Double = 1.0
+    const val nightTipCeiling: Double = 1.55
+    /**
+     * Tighter ceiling when the tip bucket is inside a detected sleep window / band asleep.
+     * WHOOP sleep-band tips sit ~0.2–0.9; keep Now from reading MEDIUM while the moon band is on.
+     */
+    const val sleepTipCeiling: Double = 0.95
     /** Soft blend of prior days' resting/calm HR into today's calm reference (Fable #11). */
     const val priorCalmBlendMax: Int = 14
     /** Baevsky SI soft damp / bump thresholds (Fable #16) — day-level lens, not per-bucket. */
@@ -124,6 +135,8 @@ object DaytimeStress {
         val rmssd: Double?,
         /** Gravity/step walk-run busy — UI glyph + scrub caption (Fable #35/#49). */
         val motionBusy: Boolean = false,
+        /** Band sleep_state asleep and/or inside a detected sleep session window. */
+        val asleep: Boolean = false,
     ) {
         val hasData: Boolean get() = level != null
     }
@@ -141,6 +154,11 @@ object DaytimeStress {
          * ([minHourHrSamples]). UI-only honesty — never invents a stress number.
          */
         val bankingHrSamples: Int = 0,
+        /**
+         * Latest tip sits in a sleep window / band-asleep sample — drives sleepTipCeiling
+         * and the Stress UI asleep cue without every caller recomputing windows.
+         */
+        val inSleepBandNow: Boolean = false,
     ) {
         val scored: List<HourPoint> get() = hours.filter { it.level != null }
 
@@ -148,11 +166,11 @@ object DaytimeStress {
         val calibrationNightsRemaining: Int
             get() = (calibrationNightsTarget - priorCalmDayCount).coerceAtLeast(0)
 
-        /** Scored coverage in clock-hours (15-min buckets ÷ 4). */
+        /** Scored coverage in clock-hours (5-min buckets ÷ 12). */
         val scoredHoursApprox: Double
             get() = scored.size.toDouble() / bucketsPerHour
 
-        /** Exact high-zone minutes: scored buckets with level ≥ [highBandFloor] × 15. */
+        /** Exact high-zone minutes: scored buckets with level ≥ [highBandFloor] × bucket minutes. */
         val highZoneMinutes: Int
             get() = minutesForBuckets(scored.count { (it.level ?: 0.0) >= highBandFloor })
 
@@ -167,11 +185,21 @@ object DaytimeStress {
                 },
             )
 
+        /**
+         * Mean stress across asleep / sleep-window buckets (last night on the day timeline).
+         * Null when no scored sleep-band points — never invents a floor.
+         */
+        val lastNightMean: Double?
+            get() {
+                val xs = scored.filter { it.asleep }.mapNotNull { it.level }
+                return if (xs.isEmpty()) null else xs.sum() / xs.size
+            }
+
         companion object {
             val EMPTY = Result(emptyList(), sustainedHigh = false, sustainedRun = 0,
                 dayMean = null, peak = null, priorCalmDayCount = 0)
 
-            /** Bucket count → wall-clock minutes (15-min steps; no round-up inflation). */
+            /** Bucket count → wall-clock minutes (5-min steps; no round-up inflation). */
             fun minutesForBuckets(buckets: Int): Int =
                 if (buckets <= 0) 0 else (buckets * (bucketSeconds / 60L)).toInt()
 
@@ -374,10 +402,11 @@ object DaytimeStress {
         for (a in aggs) {
             val hourOfDay = localHourOfDay(a.bucket)
             val wallStart = a.bucket - tzOffsetSeconds
+            val wallMidScore = wallStart + bucketSeconds / 2
+            val asleepFlag = a.bandAsleep || inSleepWindow(wallMidScore)
             val level: Double? = if (a.meanHr != null) {
                 var raw = rawScore(a.meanHr, refHr, sdHr, a.rmssd, refRmssd, sdRmssd)
-                val wallMidScore = (a.bucket - tzOffsetSeconds) + bucketSeconds / 2
-                if (!waking(a.bucket) || a.bandAsleep || inSleepWindow(wallMidScore)) {
+                if (!waking(a.bucket) || asleepFlag) {
                     raw -= if (inSleepWindow(wallMidScore)) sleepWindowCalmBias else nightCalmBias
                 }
                 if (a.motionBusy) raw -= motionBusyDamp
@@ -399,24 +428,35 @@ object DaytimeStress {
                 if (waking(a.bucket) && respElevated) raw += respElevatedBias
                 squash(raw)
             } else null
-            points.add(HourPoint(hourOfDay, wallStart, level, a.meanHr, a.rmssd, a.motionBusy))
+            points.add(
+                HourPoint(
+                    hourOfDay, wallStart, level, a.meanHr, a.rmssd,
+                    motionBusy = a.motionBusy,
+                    asleep = asleepFlag,
+                ),
+            )
+        }
+
+        // Fill missing 5-min slots between first→last so the chart is a dense time axis
+        // (honest null gaps — never invents stress levels). Moon-band fillers use sleep
+        // windows OR band sleep_state so the indigo wash stays continuous across sparse HR.
+        val dense = expandContiguousBuckets(points, tzOffsetSeconds) { wallMid ->
+            val localBucket = floorDiv(wallMid + tzOffsetSeconds, bucketSeconds) * bucketSeconds
+            inSleepWindow(wallMid) || bandAsleep(localBucket)
         }
 
         // Sustained-high ignores workout-overlapping buckets (breathe nudge ≠ mid-workout).
-        val wakingScored = points.mapNotNull { p ->
+        val wakingScored = dense.mapNotNull { p ->
             val lvl = p.level
             if (lvl == null || p.hour < wakingStart || p.hour >= wakingEnd) return@mapNotNull null
             val wallMid = p.startTs + bucketSeconds / 2
             if (inWorkout(wallMid)) return@mapNotNull null
-            val localBucket = p.startTs + tzOffsetSeconds
-            val bucket = floorDiv(localBucket, bucketSeconds) * bucketSeconds
-            if (bandAsleep(bucket)) return@mapNotNull null
-            if (inSleepWindow(wallMid)) return@mapNotNull null
+            if (p.asleep) return@mapNotNull null
             p to lvl
         }
-        if (wakingScored.isEmpty() && points.none { it.level != null }) {
-            return if (points.isEmpty()) Result.EMPTY
-            else Result(points, sustainedHigh = false, sustainedRun = 0, dayMean = null, peak = null,
+        if (wakingScored.isEmpty() && dense.none { it.level != null }) {
+            return if (dense.isEmpty()) Result.EMPTY
+            else Result(dense, sustainedHigh = false, sustainedRun = 0, dayMean = null, peak = null,
                 priorCalmDayCount = priorDays)
         }
 
@@ -426,16 +466,62 @@ object DaytimeStress {
         }
         val sustained = run >= sustainedBuckets
         val dayMean = mean(
-            points.filter { it.level != null && it.hour >= wakingStart && it.hour < wakingEnd }
+            dense.filter { it.level != null && it.hour >= wakingStart && it.hour < wakingEnd && !it.asleep }
                 .mapNotNull { it.level }
-                .ifEmpty { points.mapNotNull { it.level } },
+                .ifEmpty { dense.mapNotNull { it.level } },
         )
-        val peak = points.mapNotNull { p ->
-            p.level?.takeIf { p.hour >= wakingStart && p.hour < wakingEnd }?.let { p to it }
+        val peak = dense.mapNotNull { p ->
+            p.level?.takeIf { p.hour >= wakingStart && p.hour < wakingEnd && !p.asleep }?.let { p to it }
         }.maxByOrNull { it.second }?.first
-            ?: points.mapNotNull { p -> p.level?.let { p to it } }.maxByOrNull { it.second }?.first
+            ?: dense.mapNotNull { p -> p.level?.let { p to it } }.maxByOrNull { it.second }?.first
 
-        return Result(points, sustained, run, dayMean, peak, priorCalmDayCount = priorDays)
+        val lastScored = dense.lastOrNull { it.level != null }
+        val inSleepNow = lastScored?.asleep == true
+
+        return Result(
+            dense, sustained, run, dayMean, peak,
+            priorCalmDayCount = priorDays,
+            inSleepBandNow = inSleepNow,
+        )
+    }
+
+    /**
+     * Insert null [HourPoint]s for every missing [bucketSeconds] between the first and last
+     * observed bucket so Stress charts space points on a real timeline (WHOOP-dense axis).
+     * [asleepAtWallMid] marks sleep-window fillers so the moon band stays continuous.
+     */
+    internal fun expandContiguousBuckets(
+        points: List<HourPoint>,
+        tzOffsetSeconds: Long,
+        asleepAtWallMid: (Long) -> Boolean = { false },
+    ): List<HourPoint> {
+        if (points.size < 2) return points
+        val byWall = points.associateBy { it.startTs }
+        val first = points.minOf { it.startTs }
+        val last = points.maxOf { it.startTs }
+        val out = ArrayList<HourPoint>(((last - first) / bucketSeconds).toInt() + 1)
+        var wall = first
+        while (wall <= last) {
+            val existing = byWall[wall]
+            if (existing != null) {
+                out.add(existing)
+            } else {
+                val local = wall + tzOffsetSeconds
+                val wallMid = wall + bucketSeconds / 2
+                out.add(
+                    HourPoint(
+                        hour = localHourOfDay(floorDiv(local, bucketSeconds) * bucketSeconds),
+                        startTs = wall,
+                        level = null,
+                        meanHr = null,
+                        rmssd = null,
+                        asleep = asleepAtWallMid(wallMid),
+                    ),
+                )
+            }
+            wall += bucketSeconds
+        }
+        return out
     }
 
     // MARK: - Helpers

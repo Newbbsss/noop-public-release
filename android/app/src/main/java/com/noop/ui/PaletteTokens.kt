@@ -143,7 +143,7 @@ val LightTokens = PaletteTokens(
     effortColor = Color(0xFF2A6FB0), effortDeep = Color(0xFF1C4F80), effortBright = Color(0xFF4A90E2), effortGlow = Color(0xFF2A6FB0),
     restColor = Color(0xFF3A80D6), restDeep = Color(0xFF234F9E), restBright = Color(0xFF5790DA), restGlow = Color(0xFF3A80D6),
     stressColor = Color(0xFFB07A18), stressDeep = Color(0xFF3A80D6), stressBright = Color(0xFFC84E1E), stressGlow = Color(0xFFB07A18),
-    scenicCenter = Color(0xFFDBD9D4), scenicEdge = Color(0xFFD0CEC9), scenicStar = Color(0xFF9A968E),
+    scenicCenter = Color(0xFFF2F0EC), scenicEdge = Color(0xFFECEAE6), scenicStar = Color(0xFF9A968E),
     cardFillTop = Color(0xFFECEAE6), cardFillBottom = Color(0xFFDEDCD7),
     gold = Color(0xFF9A6B12), goldLight = Color(0xFFC8902F), goldDeep = Color(0xFF6E4A0C),
     goldDeepText = Color(0xFF3A2708), signalYellow = Color(0xFFC8902F),

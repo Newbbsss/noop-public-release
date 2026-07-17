@@ -1,5 +1,9 @@
 package com.noop.ui
 
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+
 /**
  * Process-lifetime UI flags (not persisted). Cleared on process death.
  */
@@ -25,4 +29,11 @@ object SessionUiFlags {
      */
     @Volatile
     var autoLaunchWhoopImport: Boolean = false
+
+    /**
+     * One-shot: Today Quick Alarm / Automations / More search should land on Sleep → Alarm
+     * (not a separate Wake settings push). Consumed by [SleepScreen] while composed —
+     * [mutableStateOf] so a flag set while already resumed on Sleep still recomposes.
+     */
+    var openSleepAlarmTab by mutableStateOf(false)
 }

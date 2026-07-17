@@ -518,7 +518,27 @@ class ChargeEffortRestScoringTest {
     }
 
     @Test
-    fun confidence_forRestFromDaily_stagedHealthyIsSolid() {
+    fun confidence_forRestFromDaily_stagedHealthyOneNightIsBuilding() {
+        // SHIP #75 — first staged night must not read SOLID/STANDARD.
+        assertEquals(
+            ScoreConfidence.BUILDING,
+            ScoreConfidence.forRestFromDaily(
+                DailyMetric(
+                    deviceId = "x",
+                    day = "2026-07-12",
+                    totalSleepMin = 480.0,
+                    efficiency = 0.92,
+                    deepMin = 80.0,
+                    remMin = 90.0,
+                ),
+                hasSession = true,
+                scoredRestNights = 1,
+            ),
+        )
+    }
+
+    @Test
+    fun confidence_forRestFromDaily_stagedHealthyThreeNightsIsSolid() {
         assertEquals(
             ScoreConfidence.SOLID,
             ScoreConfidence.forRestFromDaily(
@@ -531,6 +551,7 @@ class ChargeEffortRestScoringTest {
                     remMin = 90.0,
                 ),
                 hasSession = true,
+                scoredRestNights = 3,
             ),
         )
     }

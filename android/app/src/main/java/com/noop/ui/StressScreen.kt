@@ -168,6 +168,7 @@ fun StressScreen(vm: AppViewModel, onBreathe: () -> Unit = {}) {
     val model = remember(days, storedForModel) { StressModel.build(days, storedForModel) }
     val hasHistory = days.isNotEmpty() || stored.isNotEmpty() ||
         !(daytime?.scored.isNullOrEmpty())
+    var stressPage by remember { mutableStateOf(StressInnerPage.Today) }
 
     LazyScreenScaffold(
         title = "Stress",
@@ -176,6 +177,17 @@ fun StressScreen(vm: AppViewModel, onBreathe: () -> Unit = {}) {
         subtitle = "Autonomic load from today’s beats and resting HRV",
         topBackground = if (showDayCycleBackground) { { LiquidScreenSky() } } else null,
     ) {
+        item(key = "stress_page_pills") {
+            Row(modifier = Modifier.fillMaxWidth()) {
+                Spacer(Modifier.weight(1f))
+                SegmentedPillControl(
+                    items = StressInnerPage.entries,
+                    selection = stressPage,
+                    label = { it.label },
+                    onSelect = { stressPage = it },
+                )
+            }
+        }
         when {
             model != null -> StressContent(
                 model,
@@ -183,6 +195,8 @@ fun StressScreen(vm: AppViewModel, onBreathe: () -> Unit = {}) {
                 stressIndex,
                 freqHrv,
                 onBreathe,
+                page = stressPage,
+                stored = stored,
                 lastLiveRefreshAt = lastLiveRefreshAt,
                 liveConnected = live.connected,
                 displayedNow = displayedNow,
@@ -198,6 +212,12 @@ fun StressScreen(vm: AppViewModel, onBreathe: () -> Unit = {}) {
             }
         }
     }
+}
+
+/** Stress tab inner pages — Today (live tip) vs History (last night + trend + method). */
+private enum class StressInnerPage(val label: String) {
+    Today("Today"),
+    History("History"),
 }
 
 /**
@@ -229,8 +249,7 @@ private suspend fun loadDaytimeStress(vm: AppViewModel, context: android.content
     val tzOffsetSeconds = java.util.TimeZone.getDefault().getOffset(nowSeconds * 1_000L) / 1_000L
     val localNow = nowSeconds + tzOffsetSeconds
     val from = (localNow - Math.floorMod(localNow, 86_400L)) - tzOffsetSeconds
-    val rr = vm.repo.rrIntervals(vm.activeStrapId, from, nowSeconds, limit = 200_000)
-        .ifEmpty { vm.repo.rrIntervals("my-whoop", from, nowSeconds, limit = 200_000) }
+    val rr = vm.repo.rrIntervalsUnion(vm.activeStrapId, from, nowSeconds, limit = 200_000)
     val si = StressIndex.components(rr)
     val freq = HrvFreqDomain.freqDomain(rr)
     return DaytimeReadout(daytime, si, freq)
@@ -248,76 +267,95 @@ private fun androidx.compose.foundation.lazy.LazyListScope.StressContent(
     stressIndex: StressIndex.Components?,
     freqHrv: HrvFreqDomain.Bands?,
     onBreathe: () -> Unit,
+    page: StressInnerPage,
+    stored: Map<String, Double>,
     lastLiveRefreshAt: Long? = null,
     liveConnected: Boolean = false,
     displayedNow: Double? = null,
     tipFrozenCharging: Boolean = false,
 ) {
-    // Hero prefers debounced Now tip when available; else waking-aware tip.
+    // Hero prefers debounced Now tip when available; else waking-aware tip (defaults to inSleepBandNow).
     val nowLevel = displayedNow ?: daytime?.nowTip()
     val calmBucketPct = daytime?.calmBucketPct()
-    item(key = "stress_plain_def") {
-        Text(
-            LifeChapterLacquer.STRESS_PLAIN_DEFINITION,
-            style = NoopType.subhead,
-            color = Palette.textSecondary,
-            modifier = Modifier.staggeredAppear(0),
-        )
-    }
-    item(key = "stress_hero") {
-        StressHeroCard(
-            model = model,
-            nowLevel = nowLevel,
-            lastLiveRefreshAt = lastLiveRefreshAt,
-            liveConnected = liveConnected,
-            tipFrozenCharging = tipFrozenCharging,
-            modifier = Modifier.staggeredAppear(0),
-        )
-    }
+    val inSleepBand = daytime?.inSleepBandNow == true
+    val lastNightMean = daytime?.lastNightMean
+    val yesterdayKey = java.time.LocalDate.now().minusDays(1).toString()
+    val yesterdayStored = stored[yesterdayKey]
 
-    if (hasAdvancedReadouts(stressIndex, freqHrv)) {
-        item(key = "stress_advanced") {
-            StressAdvancedCard(stressIndex, freqHrv, modifier = Modifier.staggeredAppear(1))
+    when (page) {
+        StressInnerPage.Today -> {
+            item(key = "stress_plain_def") {
+                Text(
+                    LifeChapterLacquer.STRESS_PLAIN_DEFINITION,
+                    style = NoopType.subhead,
+                    color = Palette.textSecondary,
+                    modifier = Modifier.staggeredAppear(0),
+                )
+            }
+            item(key = "stress_hero") {
+                StressHeroCard(
+                    model = model,
+                    nowLevel = nowLevel,
+                    inSleepBand = inSleepBand,
+                    lastLiveRefreshAt = lastLiveRefreshAt,
+                    liveConnected = liveConnected,
+                    tipFrozenCharging = tipFrozenCharging,
+                    modifier = Modifier.staggeredAppear(0),
+                )
+            }
+
+            if (hasAdvancedReadouts(stressIndex, freqHrv)) {
+                item(key = "stress_advanced") {
+                    StressAdvancedCard(stressIndex, freqHrv, modifier = Modifier.staggeredAppear(1))
+                }
+            }
+
+            item(key = "stress_markers") {
+                Column(
+                    modifier = Modifier.staggeredAppear(1),
+                    verticalArrangement = Arrangement.spacedBy(Metrics.gap),
+                ) {
+                    SectionHeader("Drivers", overline = "Today", trailing = "vs 30-day baseline")
+                    StressTiles(
+                        model,
+                        nowLevel = nowLevel,
+                        calmBucketPct = calmBucketPct,
+                        calmBucketCount = daytime?.scored?.size,
+                    )
+                }
+            }
+
+            // #167 + #207: daytime EMPTY + live → banking progress; disconnected Wear CTA stays in StressEmpty.
+            if (liveConnected && (daytime == null || daytime.scored.isEmpty())) {
+                item(key = "stress_banking") {
+                    StressBankingProgressNote(
+                        samples = daytime?.bankingHrSamples ?: 0,
+                        modifier = Modifier.staggeredAppear(2),
+                    )
+                }
+            }
+
+            if (daytime != null && daytime.scored.isNotEmpty()) {
+                item(key = "stress_daytime") {
+                    StressDaytimeSection(daytime, onBreathe, modifier = Modifier.staggeredAppear(2))
+                }
+            }
         }
-    }
-
-    item(key = "stress_markers") {
-        Column(
-            modifier = Modifier.staggeredAppear(1),
-            verticalArrangement = Arrangement.spacedBy(Metrics.gap),
-        ) {
-            SectionHeader("Drivers", overline = "Today", trailing = "vs 30-day baseline")
-            StressTiles(
-                model,
-                nowLevel = nowLevel,
-                calmBucketPct = calmBucketPct,
-                calmBucketCount = daytime?.scored?.size,
-            )
+        StressInnerPage.History -> {
+            item(key = "stress_last_night") {
+                StressLastNightCard(
+                    yesterdayStored = yesterdayStored,
+                    overnightMean = lastNightMean,
+                    modifier = Modifier.staggeredAppear(0),
+                )
+            }
+            item(key = "stress_trend") {
+                StressTrendSection(model, modifier = Modifier.staggeredAppear(1))
+            }
+            item(key = "stress_method") {
+                StressMethodologyCard(model, modifier = Modifier.staggeredAppear(2))
+            }
         }
-    }
-
-    // #167 + #207: daytime EMPTY + live → banking progress; disconnected Wear CTA stays in StressEmpty.
-    if (liveConnected && (daytime == null || daytime.scored.isEmpty())) {
-        item(key = "stress_banking") {
-            StressBankingProgressNote(
-                samples = daytime?.bankingHrSamples ?: 0,
-                modifier = Modifier.staggeredAppear(2),
-            )
-        }
-    }
-
-    if (daytime != null && daytime.scored.isNotEmpty()) {
-        item(key = "stress_daytime") {
-            StressDaytimeSection(daytime, onBreathe, modifier = Modifier.staggeredAppear(2))
-        }
-    }
-
-    item(key = "stress_trend") {
-        StressTrendSection(model, modifier = Modifier.staggeredAppear(3))
-    }
-
-    item(key = "stress_method") {
-        StressMethodologyCard(model, modifier = Modifier.staggeredAppear(4))
     }
 }
 
@@ -342,6 +380,7 @@ private val LIQUID_HERO_RADIUS = LiquidHeroRadius
 private fun StressHeroCard(
     model: StressModel,
     nowLevel: Double? = null,
+    inSleepBand: Boolean = false,
     lastLiveRefreshAt: Long? = null,
     liveConnected: Boolean = false,
     tipFrozenCharging: Boolean = false,
@@ -384,7 +423,12 @@ private fun StressHeroCard(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Overline(
-                    if (nowLevel != null) "This hour" else "Today’s load",
+                    when {
+                        nowLevel != null && inSleepBand -> "This hour · asleep band"
+                        nowLevel != null -> "This hour"
+                        model.scoreDayKey == java.time.LocalDate.now().toString() -> "Today’s load"
+                        else -> "Latest · ${model.scoreDayKey}"
+                    },
                     modifier = Modifier.weight(1f),
                 )
                 // One band cue only (drop duplicate MEDIUM beside the big word).
@@ -431,19 +475,24 @@ private fun StressHeroCard(
                         color = bandColor,
                     )
                     Text(
-                        if (nowLevel != null) {
-                            val hour = java.util.Calendar.getInstance()
-                                .get(java.util.Calendar.HOUR_OF_DAY)
-                            if (hour < DaytimeStress.wakingStartHour || hour >= DaytimeStress.wakingEndHour) {
-                                "This hour · night floor tip"
-                            } else {
-                                "This hour · banked quiet beats"
+                        when {
+                            nowLevel != null && inSleepBand ->
+                                "This hour · asleep band"
+                            nowLevel != null -> {
+                                val hour = java.util.Calendar.getInstance()
+                                    .get(java.util.Calendar.HOUR_OF_DAY)
+                                if (hour < DaytimeStress.wakingStartHour ||
+                                    hour >= DaytimeStress.wakingEndHour
+                                ) {
+                                    "This hour · night floor tip"
+                                } else {
+                                    "This hour · banked quiet beats"
+                                }
                             }
-                        } else {
-                            "RHR + HRV vs your 30-day baseline"
+                            else -> "RHR + HRV vs your 30-day baseline"
                         },
                         style = NoopType.footnote,
-                        color = Palette.textTertiary,
+                        color = if (inSleepBand) Palette.restColor else Palette.textTertiary,
                     )
                     // #199: when showing This hour, always clarify Today’s load (not only when Δ≥0.15).
                     if (nowLevel != null) {
@@ -457,10 +506,11 @@ private fun StressHeroCard(
             }
 
             Text(
-                if (nowLevel != null) {
-                    explanationForNow(displayBand)
-                } else {
-                    model.explanation
+                when {
+                    nowLevel != null && inSleepBand ->
+                        "You’re in a recorded sleep window — stress stays near the night floor."
+                    nowLevel != null -> explanationForNow(displayBand)
+                    else -> model.explanation
                 },
                 style = NoopType.subhead,
                 color = Palette.textSecondary,
@@ -600,7 +650,11 @@ private fun StressDaytimeSection(
     modifier: Modifier = Modifier,
 ) {
     Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(Metrics.gap)) {
-        SectionHeader("Today's Timeline", overline = "Intraday", trailing = timelineTrailing(day))
+        SectionHeader(
+            "Today's Timeline",
+            overline = "Intraday · 5-min steps",
+            trailing = timelineTrailing(day),
+        )
 
         NoopCard(tint = Palette.stressColor) {
             Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
@@ -626,7 +680,7 @@ private fun StressDaytimeSection(
 
                 // Fable Stress #37 — tip-bucket drivers (quiet HR / RMSSD / motion), display only.
                 val tip = day.scored.lastOrNull {
-                    it.hour >= DaytimeStress.wakingStartHour && it.hour < DaytimeStress.wakingEndHour
+                    it.hour >= DaytimeStress.wakingStartHour && it.hour < DaytimeStress.wakingEndHour && !it.asleep
                 } ?: day.scored.lastOrNull()
                 if (tip != null) {
                     Row(
@@ -648,9 +702,17 @@ private fun StressDaytimeSection(
                             )
                         }
                         Text(
-                            if (tip.motionBusy) "Motion busy" else "Still",
+                            when {
+                                tip.asleep -> "Asleep"
+                                tip.motionBusy -> "Motion busy"
+                                else -> "Still"
+                            },
                             style = NoopType.footnote,
-                            color = if (tip.motionBusy) Palette.statusWarning else Palette.textTertiary,
+                            color = when {
+                                tip.asleep -> Palette.restColor
+                                tip.motionBusy -> Palette.statusWarning
+                                else -> Palette.textTertiary
+                            },
                         )
                     }
                 }
@@ -673,11 +735,12 @@ private fun StressDaytimeSection(
                 val tempUnit = UnitPrefs.temperature(LocalContext.current)
                 val skinUnit = UnitFormatter.temperatureUnit(tempUnit)
                 Text(
-                    "The line traces autonomic load in ~15-minute steps (closer to WHOOP’s continuous " +
-                        "curve), scored against your own calm waking hours today on the same 0–3 scale. " +
-                        "Walk/run and gravity motion damp false highs (busy peaks get a small glyph — scrub to read · busy). " +
+                    "The line traces autonomic load in ~${DaytimeStress.bucketMinutes}-minute steps " +
+                        "(dense WHOOP-like timeline from banked beats — no invented points). " +
+                        "Sleep windows wash in Rest teal. Walk/run and gravity motion damp false highs " +
+                        "(busy peaks get a small glyph — scrub to read · busy). " +
                         "Skin temp ($skinUnit) / resp bumps can lift a tip when elevated vs your baseline; they do not invent clinical vitals. " +
-                        "Sedentary stretches pull toward calm. Buckets without enough data are skipped.",
+                        "Sedentary stretches pull toward calm. Buckets without enough data stay as honest gaps.",
                     style = NoopType.footnote,
                     color = Palette.textTertiary,
                 )
@@ -734,7 +797,9 @@ private fun DaytimeStressLine(hours: List<DaytimeStress.HourPoint>) {
     val textTertiary = Palette.textTertiary
     val textPrimary = Palette.textPrimary
     val stressColor = Palette.stressColor
-    val nightWash = Palette.surfaceInset.copy(alpha = 0.55f)
+    // Clock-night wash stays subtle; asleep windows get Rest indigo at ~0.22.
+    val nightWash = Palette.surfaceInset.copy(alpha = 0.35f)
+    val sleepWash = Palette.restColor.copy(alpha = 0.22f)
     val yAxisPx = with(LocalDensity.current) { stressYAxisWidth.toPx() }
 
     // PERF (#scroll-jank — drawing-bound): this chart is scrubbable, so a finger drag re-records the
@@ -769,7 +834,7 @@ private fun DaytimeStressLine(hours: List<DaytimeStress.HourPoint>) {
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .height(100.dp)
+            .height(128.dp)
             .clip(RoundedCornerShape(Metrics.cornerSm))
             .semantics { contentDescription = daytimeLineDescription(hours) }
             .then(
@@ -846,15 +911,15 @@ private fun DaytimeStressLine(hours: List<DaytimeStress.HourPoint>) {
 
                     onDrawBehind {
                         if (w <= 0f || h <= 0f) return@onDrawBehind
-                        // Sleep / night wash behind non-waking buckets (WHOOP moon-band cue).
+                        // Sleep / night wash: prefer asleep (Rest indigo); clock-night only when !asleep.
                         val half = stepX / 2f
                         hours.forEachIndexed { idx, pt ->
-                            val night = pt.hour < DaytimeStress.wakingStartHour ||
+                            val clockNight = pt.hour < DaytimeStress.wakingStartHour ||
                                 pt.hour >= DaytimeStress.wakingEndHour
-                            if (!night) return@forEachIndexed
+                            if (!pt.asleep && !clockNight) return@forEachIndexed
                             val cx = chartLeft + idx * stepX
                             drawRect(
-                                color = nightWash,
+                                color = if (pt.asleep) sleepWash else nightWash,
                                 topLeft = Offset((cx - half).coerceAtLeast(chartLeft), topPad),
                                 size = Size(
                                     (half * 2f).coerceAtMost(w - chartLeft),
@@ -870,7 +935,7 @@ private fun DaytimeStressLine(hours: List<DaytimeStress.HourPoint>) {
                         }
                         // Gradient line + fill — contiguous runs (null levels break the line).
                         runs.forEach { r ->
-                            if (r.fill != null) drawPath(r.fill, brush = gradient, alpha = StrandAlpha.chartFillSoft + 0.10f)
+                            if (r.fill != null) drawPath(r.fill, brush = gradient, alpha = StrandAlpha.chartFillSoftResolved() + 0.10f)
                             if (r.line != null) drawPath(r.line, brush = gradient, style = Stroke(width = strokeW, cap = StrokeCap.Round, join = StrokeJoin.Round))
                             if (r.dot != null && r.dotColor != null) drawCircle(color = r.dotColor, radius = dotR, center = r.dot)
                         }
@@ -927,10 +992,11 @@ private fun DaytimeStressLine(hours: List<DaytimeStress.HourPoint>) {
                 drawCircle(color = stressColor, radius = 5.dp.toPx(), center = Offset(scrubX, dotY))
                 drawCircle(color = Palette.tipCore, radius = 2.5.dp.toPx(), center = Offset(scrubX, dotY))
 
-                // Tooltip pill: "9 am · 1.4 · 15m" — Fable #433: stairs vs WHOOP continuous.
+                // Tooltip pill: "9 am · 1.4 · 5m" — Fable #433: stairs vs WHOOP continuous.
                 val tenths = (lvl * 10).roundToInt().coerceIn(0, 30)
-                val busyBit = if (pt.motionBusy) " · busy" else ""
-                val label = "${hourLabel(pt.hour)} · ${tenths / 10}.${tenths % 10} · 15m$busyBit"
+                val asleepBit = if (pt.asleep) " · asleep" else ""
+                val busyBit = if (pt.motionBusy && !pt.asleep) " · busy" else ""
+                val label = "${hourLabel(pt.hour)} · ${tenths / 10}.${tenths % 10} · ${DaytimeStress.bucketMinutes}m$asleepBit$busyBit"
                 val textW = tooltipPaint.measureText(label)
                 val pillPad = 12f
                 val pillW = textW + pillPad * 2
@@ -962,7 +1028,7 @@ private fun daytimeLineDescription(hours: List<DaytimeStress.HourPoint>): String
     val highBit = if (highMin > 0) {
         " High zone ${DaytimeStress.Result.formatZoneDuration(highMin)}."
     } else ""
-    return "Intraday stress, ${scored.size} scored 15-minute windows.$tipBit$highBit"
+    return "Intraday stress, ${scored.size} scored ${DaytimeStress.bucketMinutes}-minute windows.$tipBit$highBit"
 }
 
 // MARK: - Time-in-band — Calm / Moderate / High split of the scored waking hours (liquid tubes)
@@ -1004,7 +1070,7 @@ private fun StressTotalsBar(day: DaytimeStress.Result) {
                 highMin.toDouble() / totalMin,
             )
             Text(
-                "Minutes from scored 15-min windows (not rounded hours).",
+                "Minutes from scored ${DaytimeStress.bucketMinutes}-min windows (not rounded hours).",
                 style = NoopType.footnote,
                 color = Palette.textTertiary,
             )
@@ -1078,7 +1144,7 @@ private fun TimeInBandRow(band: StressTotalsBand, durationLabel: String, share: 
     }
 }
 
-/** "avg 1.4 · 9h" summary — scored coverage in clock-hours (15-min buckets). */
+/** "avg 1.4 · 9h" summary — scored coverage in clock-hours (5-min buckets). */
 private fun timelineTrailing(day: DaytimeStress.Result): String {
     val hrs = day.scoredHoursApprox
     val mean = day.dayMean ?: return String.format(Locale.US, "%.0fh", hrs)
@@ -1188,7 +1254,7 @@ private fun StressTiles(
             value = calmBucketPct?.let { "$it%" } ?: model.calmTimeValue,
             caption = when {
                 calmBucketPct != null && calmBucketCount != null ->
-                    "of scored · ${calmBucketCount}×15m"
+                    "of scored · ${calmBucketCount}×${DaytimeStress.bucketMinutes}m"
                 else -> model.calmTimeCaption
             },
             accent = StressRamp.CALM,
@@ -1244,12 +1310,75 @@ private fun MarkerTile(
 // MARK: - 3 · Trend (range-controlled)
 
 @Composable
-private fun StressTrendSection(model: StressModel, modifier: Modifier = Modifier) {
+private fun StressLastNightCard(
+    yesterdayStored: Double?,
+    overnightMean: Double?,
+    modifier: Modifier = Modifier,
+) {
+    if (yesterdayStored == null && overnightMean == null) {
+        NoopCard(tint = Palette.restColor, modifier = modifier) {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Overline("Last night")
+                Text(
+                    "No stored stress for yesterday yet, and no asleep buckets on today’s timeline.",
+                    style = NoopType.subhead,
+                    color = Palette.textTertiary,
+                )
+            }
+        }
+        return
+    }
+    NoopCard(tint = Palette.restColor, modifier = modifier) {
+        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Overline("Last night")
+            yesterdayStored?.let { y ->
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            String.format(Locale.US, "%.1f", y),
+                            style = NoopType.number(28f),
+                            color = StressRamp.color(y),
+                        )
+                        Text(
+                            "Yesterday’s banked stress",
+                            style = NoopType.footnote,
+                            color = Palette.textTertiary,
+                        )
+                    }
+                    StatePill(
+                        StressBand.forScore(y).title,
+                        tone = StressBand.forScore(y).tone,
+                        showsDot = true,
+                    )
+                }
+            }
+            overnightMean?.let { night ->
+                Text(
+                    "Overnight mean ${String.format(Locale.US, "%.1f", night)} · asleep buckets on today’s timeline",
+                    style = NoopType.subhead,
+                    color = Palette.restColor,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun StressTrendSection(
+    model: StressModel,
+    modifier: Modifier = Modifier,
+) {
     var range by remember { mutableStateOf(StressRange.Month) }
     val points = remember(model, range) { model.windowedTrend(range) }
+    val historyStrip = remember(model, range) {
+        model.windowedTrendPoints(range).takeLast(7)
+    }
 
     Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(Metrics.gap)) {
-        SectionHeader("Stress Trend", overline = "History", trailing = range.label)
+        SectionHeader("Stress history", overline = "Prior days", trailing = range.label)
         if (points.size >= 2) {
             val avg = points.average()
             NoopCard(tint = Palette.stressColor) {
@@ -1259,9 +1388,9 @@ private fun StressTrendSection(model: StressModel, modifier: Modifier = Modifier
                         verticalAlignment = Alignment.Top,
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
-                            Overline("Stress · ${range.label}")
+                            Overline("Daily stress · ${range.label}")
                             Text(
-                                "Daily 0-3 proxy",
+                                "Banked 0–3 tips · oldest → newest",
                                 style = NoopType.footnote,
                                 color = Palette.textTertiary,
                             )
@@ -1271,6 +1400,48 @@ private fun StressTrendSection(model: StressModel, modifier: Modifier = Modifier
                             style = NoopType.captionNumber,
                             color = Palette.textSecondary,
                         )
+                    }
+                    // Compact prior-day strip so history is readable without scrubbing the chart.
+                    if (historyStrip.size >= 2) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            historyStrip.forEach { pt ->
+                                val band = StressBand.forScore(pt.value)
+                                Column(
+                                    modifier = Modifier.weight(1f),
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    verticalArrangement = Arrangement.spacedBy(2.dp),
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .height(28.dp)
+                                            .clip(RoundedCornerShape(6.dp))
+                                            .background(StressRamp.color(pt.value).copy(alpha = 0.28f)),
+                                        contentAlignment = Alignment.Center,
+                                    ) {
+                                        Text(
+                                            String.format(Locale.US, "%.1f", pt.value),
+                                            style = NoopType.captionNumber,
+                                            color = StressRamp.color(pt.value),
+                                        )
+                                    }
+                                    Text(
+                                        pt.day.takeLast(5),
+                                        style = NoopType.footnote,
+                                        color = Palette.textTertiary,
+                                        maxLines = 1,
+                                    )
+                                    Text(
+                                        band.title.take(1),
+                                        style = NoopType.footnote,
+                                        color = Palette.textTertiary,
+                                    )
+                                }
+                            }
+                        }
                     }
                     LineChart(
                         values = points,
@@ -1308,7 +1479,7 @@ private fun StressTrendSection(model: StressModel, modifier: Modifier = Modifier
                     contentAlignment = Alignment.Center,
                 ) {
                     Text(
-                        "Not enough recent days to chart a trend yet. Keep wearing your strap to populate it.",
+                        "Not enough recent days to chart stress history yet. Keep wearing your strap to populate it.",
                         style = NoopType.subhead,
                         color = Palette.textTertiary,
                         textAlign = TextAlign.Center,
@@ -1361,8 +1532,8 @@ private fun StressMethodologyCard(model: StressModel, modifier: Modifier = Modif
             }
             // Fable Stress-46 / Stress-38 — CONTINUED 2026-07-12 WHOOP-match.
             Text(
-                "Intraday uses ~15-minute quiet-HR buckets, step still/walk/run, gravity motion, " +
-                    "and sedentary bouts. Baevsky and LF/HF are lenses only — they do not change " +
+                "Intraday uses ~${DaytimeStress.bucketMinutes}-minute quiet-HR buckets, step still/walk/run, gravity motion, " +
+                    "and sedentary bouts. Sleep windows tint the chart in Rest teal. Baevsky and LF/HF are lenses only — they do not change " +
                     "this 0–3 score. Factors: docs/STRESS_FACTORS_AND_LITERATURE.md.",
                 style = NoopType.footnote,
                 color = Palette.textTertiary,
@@ -1530,16 +1701,21 @@ internal class StressModel private constructor(
     val calmTimeValue: String,
     val calmTimeCaption: String,
     val usingStored: Boolean,     // true when today's value came from the stored series
+    /** Calendar day the [score] was scored against (may lag LocalDate when trailing shells). */
+    val scoreDayKey: String,
 ) {
     data class TrendPoint(val day: String, val value: Double)
 
     /** The full daily proxy trend, sliced to the selected trailing window (count-based,
      *  matching the day budget). Falls back to ALL when the trailing slice has < 2 points. */
-    fun windowedTrend(range: StressRange): List<Double> {
-        val all = fullTrend.map { it.value }
-        val days = range.days ?: return all
-        val slice = fullTrend.takeLast(days).map { it.value }
-        return if (slice.size >= 2) slice else all
+    fun windowedTrend(range: StressRange): List<Double> =
+        windowedTrendPoints(range).map { it.value }
+
+    /** Same window as [windowedTrend] but keeps day keys for the history strip. */
+    fun windowedTrendPoints(range: StressRange): List<TrendPoint> {
+        val days = range.days ?: return fullTrend
+        val slice = fullTrend.takeLast(days)
+        return if (slice.size >= 2) slice else fullTrend
     }
 
     companion object {
@@ -1587,15 +1763,31 @@ internal class StressModel private constructor(
             val meanHRV = mean(hrvBase)
             val sdHRV = std(hrvBase, meanHRV)
 
-            val rhrT = today.restingHr?.toDouble()
-            val hrvT = today.avgHrv
+            // Markers: tip/score day may be an empty mid-day shell with only a daytime tip —
+            // Fold 2026-07-16 / #208: still surface the freshest prior RHR/HRV (never invent).
+            val markerDay = when {
+                today.restingHr != null || today.avgHrv != null -> today
+                else -> scoredDays.asReversed().firstOrNull {
+                    it.restingHr != null || it.avgHrv != null
+                } ?: today
+            }
 
-            val derivedAvailable = (rhrT != null && meanRHR != null) || (hrvT != null && meanHRV != null)
+            val rhrT = markerDay.restingHr?.toDouble()
+            val hrvT = markerDay.avgHrv
+
+            val derivedAvailable =
+                (today.restingHr != null && meanRHR != null) ||
+                    (today.avgHrv != null && meanHRV != null)
             val storedToday = stored[today.day]
             if (storedToday == null && !derivedAvailable) return null
 
             val derivedToday: Double? = if (derivedAvailable) {
-                squash(rawScore(rhrT, meanRHR, sdRHR, hrvT, meanHRV, sdHRV))
+                squash(
+                    rawScore(
+                        today.restingHr?.toDouble(), meanRHR, sdRHR,
+                        today.avgHrv, meanHRV, sdHRV,
+                    ),
+                )
             } else {
                 null
             }
@@ -1641,7 +1833,7 @@ internal class StressModel private constructor(
                 score = s,
                 band = band,
                 explanation = explanation,
-                rhrToday = today.restingHr,
+                rhrToday = markerDay.restingHr,
                 hrvToday = hrvT,
                 rhrDelta = rhrDelta,
                 hrvDelta = hrvDelta,
@@ -1649,6 +1841,7 @@ internal class StressModel private constructor(
                 calmTimeValue = calmValue,
                 calmTimeCaption = calmCaption,
                 usingStored = usingStored,
+                scoreDayKey = today.day,
             )
         }
 

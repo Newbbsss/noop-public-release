@@ -362,8 +362,8 @@ fun LineChart(
                         val fillBrush = if (fill) {
                             Brush.verticalGradient(
                                 colors = listOf(
-                                    color.copy(alpha = StrandAlpha.chartFillStrong),
-                                    color.copy(alpha = StrandAlpha.chartFillSoft),
+                                    color.copy(alpha = StrandAlpha.chartFillStrongResolved()),
+                                    color.copy(alpha = StrandAlpha.chartFillSoftResolved()),
                                     Color.Transparent,
                                 ),
                                 startY = 0f,
@@ -967,8 +967,8 @@ fun TimelineChart(
                 path = fillPath,
                 brush = Brush.verticalGradient(
                     colors = listOf(
-                        color.copy(alpha = StrandAlpha.chartFillStrong),
-                        color.copy(alpha = StrandAlpha.chartFillSoft),
+                        color.copy(alpha = StrandAlpha.chartFillStrongResolved()),
+                        color.copy(alpha = StrandAlpha.chartFillSoftResolved()),
                         Color.Transparent,
                     ),
                     startY = 0f,

@@ -526,8 +526,9 @@ private fun TrainingStatusStrip() {
                 val nLab = o.optInt("n_label_rows", 0)
                 val nFeat = o.optInt("n_feature_days", 0)
                 val nSamples = o.optInt("n_ml_samples_ingested", 0)
-                val valid = o.optBoolean("accuracy_valid", false)
-                val msg = o.optString("message", "")
+                // SHIP #388 — never claim accuracy_valid when labeled N is sparse (<3).
+                val validClaim = o.optBoolean("accuracy_valid", false)
+                val valid = validClaim && nLab >= 3
                 "ML: ${nSamples} samples · ${nFeat} feature days · ${nLab} WHOOP app labels · " +
                     if (valid) "accuracy valid" else "need ≥3 labeled days (underfit)"
             }.getOrNull()

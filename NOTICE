@@ -1,27 +1,30 @@
-﻿NOOP — third-party notices
+NOOP — third-party notices
 ===========================
 
-Public release (this tree)
---------------------------
+Gilbert fork (this tree)
+------------------------
 
-This working tree is Gilbert's scrubbed public release of NOOP (GitHub: Newbbsss/noop-public-release).
-The NOOP application itself is upstream work by Ryan and contributors at https://github.com/ryanbr/noop —
-see ATTRIBUTION.md. Do not attribute upstream NOOP solely to this fork.
+This working tree includes fork-specific packaging and features maintained by Gilbert
+(GitHub: Newbbsss). The NOOP application itself is upstream work by Ryan and contributors
+at https://github.com/ryanbr/noop — see NOTICE.GILBERT.md and ATTRIBUTION.md. Do not
+attribute upstream NOOP solely to this fork.
 
-Public release home: https://github.com/Newbbsss/noop-public-release
-Updates: https://github.com/Newbbsss/noop-public-release/releases
+Private fork home: https://github.com/Newbbsss/noop-gilbert
+AI Build Store catalog (this build): http://192.168.1.102:8090/apps.json
+  (Tailscale: http://100.96.149.116:8090/apps.json)
 
 NOOP's own source code and documentation are licensed under the PolyForm
 Noncommercial License 1.0.0 (see LICENSE). That license covers NOOP's original
 work only. The components and prior work below keep their own terms.
+
 Bundled dependencies
 --------------------
 
-GRDB.swift â€” https://github.com/groue/GRDB.swift
+GRDB.swift — https://github.com/groue/GRDB.swift
   License: MIT
   Used for: SQLite persistence (the on-device store).
 
-ZIPFoundation â€” https://github.com/weichsel/ZIPFoundation
+ZIPFoundation — https://github.com/weichsel/ZIPFoundation
   License: MIT
   Used for: reading WHOOP / Apple Health export archives during import.
 
@@ -37,14 +40,13 @@ NOOP builds on two community reverse-engineering efforts. Neither states a
 license; NOOP does not redistribute their code. NOOP uses only the uncopyrightable
 factual protocol information they document (BLE service/characteristic identifiers,
 frame layouts, CRC parameters, command/event/packet numbers, byte offsets) and
-re-implements those facts as original code â€” it does not copy their source.
+re-implements those facts as original code — it does not copy their source.
 
-  johnmiddleton12/my-whoop â€” https://github.com/johnmiddleton12/my-whoop
+  johnmiddleton12/my-whoop — https://github.com/johnmiddleton12/my-whoop
     WHOOP 4.0 BLE protocol facts.
 
-  b-nnett/goose â€” https://github.com/b-nnett/goose
+  b-nnett/goose — https://github.com/b-nnett/goose
     WHOOP 5.0 / MG ("puffin") BLE protocol facts.
 
 See ATTRIBUTION.md for fuller credit and DISCLAIMER.md for the interoperability and
 fair-use rationale.
-

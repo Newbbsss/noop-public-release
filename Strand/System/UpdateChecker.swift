@@ -1,8 +1,8 @@
-﻿import Foundation
+import Foundation
 import WhoopProtocol
 
 /// User-initiated "Check for updates": one call to the project's PUBLIC releases API (GitHub),
-/// made ONLY when the user taps the button. No background polling and no auto-update â€” it just reads the latest version
+/// made ONLY when the user taps the button. No background polling and no auto-update — it just reads the latest version
 /// number and compares it to the installed one; nothing about the user is sent. (Uses the
 /// network-client entitlement, which is otherwise only for the opt-in, off-by-default AI Coach.)
 @MainActor
@@ -18,10 +18,13 @@ final class UpdateChecker: ObservableObject {
 
     @Published var state: State = .idle
 
-    /// Public release: GitHub Releases on Newbbsss/noop-public-release.
-    /// Upstream ryanbr/noop is a different lineage â€” do not use it for this fork's prompts.
-    private static let githubEndpoint = URL(string: "https://api.github.com/repos/Newbbsss/noop-public-release/releases/latest")!
-    private static let storeCatalogs: [URL] = []
+    /// Gilbert fork: prefer AI Build Store; GitHub Releases on the private fork as backup.
+    /// Upstream ryanbr/noop is a different lineage — do not use it for this fork's prompts.
+    private static let githubEndpoint = URL(string: "https://api.github.com/repos/Newbbsss/noop-gilbert/releases/latest")!
+    private static let storeCatalogs: [URL] = [
+        URL(string: "http://192.168.1.102:8090/apps.json")!,
+        URL(string: "http://100.96.149.116:8090/apps.json")!,
+    ]
 
     /// Upstream AltStore / SideStore source (ryanbr IPA). Gilbert fork has no IPA row yet.
     static let altStoreSourceURL =
@@ -30,16 +33,15 @@ final class UpdateChecker: ObservableObject {
     /// Plain-text invite for friends already on the same Tailscale tailnet.
     static var friendsTailnetShareText: String {
         """
-        NOOP — Friends network invite (private pipe only).
+        NOOP — install from Gilbert's AI Build Store (Tailscale only).
 
-        1. Join the same home Wi-Fi — or a Tailscale tailnet — as your friend.
-        2. Android: install from GitHub Releases:
-           https://github.com/Newbbsss/noop-public-release/releases/latest
+        1. Join the same Tailscale tailnet as Gilbert.
+        2. Android: open http://100.96.149.116:8090/ and install com.noop.whoop.
+           Catalog: http://100.96.149.116:8090/apps.json
         3. iPhone: add this AltStore / SideStore source, then install NOOP:
            \(altStoreSourceURL)
            (AltStore: https://altstore.io — free Apple ID, re-signs every 7 days.)
 
-        App updates come from GitHub — Friends is not the update channel.
         Fully offline once installed. No WHOOP cloud. Not affiliated with WHOOP.
         """
     }
@@ -75,7 +77,7 @@ final class UpdateChecker: ObservableObject {
         }
     }
 
-    /// Best-effort GitHub Releases lookup for the iOS/macOS shell (package id still Android-oriented
+    /// Best-effort AI Build Store lookup for the iOS/macOS shell (package id still Android-oriented
     /// in the catalog; we match `com.noop.whoop` as the shipped lineage until an IPA row exists).
     private static func checkStore(currentVersion: String) async -> State? {
         for catalog in storeCatalogs {
@@ -109,7 +111,7 @@ final class UpdateChecker: ObservableObject {
         var s = body.components(separatedBy: "Downloads").first ?? body
         for marker in ["**", "## ", "# "] { s = s.replacingOccurrences(of: marker, with: "") }
         s = s.trimmingCharacters(in: .whitespacesAndNewlines)
-        if s.count > 700 { s = String(s.prefix(700)).trimmingCharacters(in: .whitespacesAndNewlines) + "â€¦" }
+        if s.count > 700 { s = String(s.prefix(700)).trimmingCharacters(in: .whitespacesAndNewlines) + "…" }
         return s
     }
 }

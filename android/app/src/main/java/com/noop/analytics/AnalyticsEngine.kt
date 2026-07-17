@@ -742,7 +742,11 @@ object RestScorer {
     const val wRestorative: Double = 0.25
     const val wConsistency: Double = 0.10
 
-    /** Default personal sleep need (hours) before any recent-average refinement. */
+    /**
+     * Default / recommended personal sleep need (hours) before recent-average refinement.
+     * Interim adult typical (~7–8h band) until [docs/agent/REST_SLEEP_NEED_RESEARCH.md] lands —
+     * do not ship 9h as universal default; Gilbert can aim 9h via Bedtime|Wake / wind-down need.
+     */
     const val defaultSleepNeedHours: Double = 8.0
 
     /**
@@ -757,7 +761,7 @@ object RestScorer {
      * - No positive nights → [defaultSleepNeedHours] (8 h), nightsUsed = 0.
      * - Else mean asleep hours, floored at [minPersonalNeedHours] (Sleep tab parity).
      *
-     * Spec: "8 h default, refined by recent average". Fable Rest #24.
+     * Spec: "8 h default, refined by recent average". Research may revise default; keep 9h settable.
      */
     fun personalNeedHours(asleepMinutes: Collection<Double>): Pair<Double, Int> {
         val mins = asleepMinutes.filter { it > 0.0 }

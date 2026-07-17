@@ -14,14 +14,28 @@ class StepMotionCounterTest {
                 StepRow(2, 102, 1), // +2 walk → 2.0
                 StepRow(3, 104, 0), // +2 still, rate=2 → soft 0.50 → 1.0
                 StepRow(4, 106, 2), // +2 run, weighted 1.05 → 2.1
-                StepRow(5, 500, 1), // discontinuity, excluded
+                StepRow(5, 500, 1), // +394 in 1s → rate-clip to 4 (not hard-drop)
             ),
         )
 
-        assertEquals(5.1, result.acceptedTicks, 0.001)
-        // discontinuity 396-ish raw; still (+2) is soft-accepted so not in rejected
-        assertEquals(394, result.rejectedTicks)
-        assertEquals(3, result.acceptedPairs)
+        // 2 + 1.0 + 2.1 + 4.0 clipped catch-up
+        assertEquals(9.1, result.acceptedTicks, 0.001)
+        // 394 − 4 clipped remainder counted rejected
+        assertEquals(390, result.rejectedTicks)
+        assertEquals(4, result.acceptedPairs)
+    }
+
+    @Test
+    fun bleGapCatchUp_rateClipsInsteadOfDropping() {
+        // 5 min BLE gap with 600 cumulative ticks (2/s walk) — old MAX_DELTA=256 dropped all 600.
+        val result = StepMotionCounter.accumulate(
+            listOf(
+                StepRow(0, 1000, 1),
+                StepRow(300, 1600, 1),
+            ),
+        )
+        assertEquals(600.0, result.acceptedTicks, 0.001)
+        assertEquals(0, result.rejectedTicks)
     }
 
     @Test

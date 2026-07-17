@@ -93,14 +93,26 @@ object WidgetSnapshotStore {
     }
 
     /**
-     * Patch only the Stress Now tip (Fable #43) without clobbering live HR / scores.
-     * Call from [com.noop.ui.loadDaytimeStressShared] when a tip is scored.
+     * Patch only the Stress Now tip (Fable #43 / SHIP #82) without clobbering live HR / scores.
+     * Call from [com.noop.ui.loadDaytimeStressShared] when a tip is scored **or cleared**.
+     *
+     * Must refresh Glance — prefs-only writes left the footer on a stale tip after night-ceiling
+     * changes until the next HR push (Fold / overnight ceiling drop).
      */
-    fun patchStressTip(context: Context, tip: Double?) {
+    suspend fun patchStressTip(context: Context, tip: Double?) {
         val tenths = tip?.let { (it * 10.0).roundToInt().coerceIn(0, 30) }
-        val cur = load(context)
+        val app = context.applicationContext
+        val cur = load(app)
         if (cur.stressTipTenths == tenths) return
-        save(context, cur.copy(stressTipTenths = tenths, updatedAtMs = System.currentTimeMillis()))
+        val next = cur.copy(stressTipTenths = tenths, updatedAtMs = System.currentTimeMillis())
+        save(app, next)
+        // Tip change is a meaningful key — admit immediately for any concurrent HR push.
+        PushGate.markPushed(next)
+        val ids = runCatching {
+            GlanceAppWidgetManager(app).getGlanceIds(NoopGlanceWidget::class.java)
+        }.getOrDefault(emptyList())
+        if (ids.isEmpty()) return
+        runCatching { NoopGlanceWidget().updateAll(app) }
     }
 }
 

@@ -17,8 +17,8 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.changedToUp
@@ -240,10 +240,8 @@ private enum class Destination(
 
     // Group: System
     Automations("automations", R.string.nav_automations, Icons.Filled.Bolt),
-    // "Alarms" is the ONE alarm surface (#766): the phone-based Wake Window (light-sleep detection with a
-    // guaranteed OS backup), the strap's own firmware wake-alarm, and the wind-down reminder, all in one
-    // place. Previously "Wake Window" (#730), but the strap alarm moved in from Automations so the broader
-    // name fits. Route id stays "smart_alarm" (display string only).
+    // "Alarms" lives on Sleep → Alarm (#766). Route id stays "smart_alarm" for deep-links;
+    // NavHost redirects to Sleep → Alarm (no separate Wake settings surface).
     SmartAlarm("smart_alarm", R.string.nav_alarms, Icons.Filled.Alarm),
     Devices("devices", R.string.nav_devices, Icons.Filled.Sensors),
     DataSources("data_sources", R.string.nav_data_sources, Icons.Filled.Storage),
@@ -393,6 +391,8 @@ fun AppRoot(viewModel: AppViewModel = viewModel()) {
     val snackbarHostState = remember { SnackbarHostState() }
     val snackScope = rememberCoroutineScope()
     var wasConnected by remember { mutableStateOf(live.connected) }
+    // SHIP #276 — BLE flaps must not stack duplicate "Strap paused" snacks after reconnect churn.
+    var lastDropSnackAtMs by remember { mutableStateOf(0L) }
     LaunchedEffect(live.connected, userDisconnected) {
         val dropped = wasConnected && !live.connected && !userDisconnected
         wasConnected = live.connected
@@ -410,6 +410,10 @@ fun AppRoot(viewModel: AppViewModel = viewModel()) {
             }
             prefs.edit().putString(dayKey, today).putInt(countKey, count).apply()
         }
+        val now = System.currentTimeMillis()
+        if (snackbarHostState.currentSnackbarData != null) return@LaunchedEffect
+        if (now - lastDropSnackAtMs < 45_000L) return@LaunchedEffect
+        lastDropSnackAtMs = now
         snackScope.launch {
             val result = snackbarHostState.showSnackbar(
                 message = "Strap paused — tap to reconnect",
@@ -520,24 +524,47 @@ fun AppRoot(viewModel: AppViewModel = viewModel()) {
                         end = inner.calculateEndPadding(layoutDir),
                         bottom = 0.dp,
                     )
-                    // Edge swipe between primary bar tabs when already on a bar root.
+                    // Edge-only swipe between primary bar tabs (SHIP #229 — full-width horizontal
+                    // drag fought LazyColumn / Cycle month scroll; keep ~36dp left/right rails).
                     .pointerInput(currentRoute, barSwipeRoutes) {
                         if (currentRoute !in barSwipeRoutes) return@pointerInput
-                        var total = 0f
-                        detectHorizontalDragGestures(
-                            onDragEnd = {
-                                val idx = barSwipeRoutes.indexOf(currentRoute)
-                                if (idx < 0) return@detectHorizontalDragGestures
-                                when {
-                                    total < -80f && idx < barSwipeRoutes.lastIndex ->
-                                        nav.navigateTopLevel(barSwipeRoutes[idx + 1])
-                                    total > 80f && idx > 0 ->
-                                        nav.navigateTopLevel(barSwipeRoutes[idx - 1])
+                        val edgePx = 36.dp.toPx()
+                        awaitEachGesture {
+                            val down = awaitFirstDown(requireUnconsumed = false)
+                            val x0 = down.position.x
+                            val fromEdge = x0 <= edgePx || x0 >= size.width - edgePx
+                            if (!fromEdge) return@awaitEachGesture
+                            var total = 0f
+                            var totalY = 0f
+                            do {
+                                val event = awaitPointerEvent()
+                                val change = event.changes.firstOrNull() ?: break
+                                if (change.changedToUp()) break
+                                val delta = change.positionChange()
+                                total += delta.x
+                                totalY += delta.y
+                                // Yield to vertical scroll once the gesture is clearly vertical.
+                                if (kotlin.math.abs(totalY) > kotlin.math.abs(total) &&
+                                    kotlin.math.abs(totalY) > 24f
+                                ) {
+                                    return@awaitEachGesture
                                 }
-                                total = 0f
-                            },
-                            onHorizontalDrag = { _, dx -> total += dx },
-                        )
+                                change.consume()
+                            } while (event.changes.any { it.pressed })
+                            if (kotlin.math.abs(total) < 80f ||
+                                kotlin.math.abs(total) < kotlin.math.abs(totalY) * 1.6f
+                            ) {
+                                return@awaitEachGesture
+                            }
+                            val idx = barSwipeRoutes.indexOf(currentRoute)
+                            if (idx < 0) return@awaitEachGesture
+                            when {
+                                total < 0f && idx < barSwipeRoutes.lastIndex ->
+                                    nav.navigateTopLevel(barSwipeRoutes[idx + 1])
+                                total > 0f && idx > 0 ->
+                                    nav.navigateTopLevel(barSwipeRoutes[idx - 1])
+                            }
+                        }
                     },
                 // Bar tabs: short fade-through. Push/pop: whisper shared-axis. Reduce Motion: instant.
                 enterTransition = {
@@ -609,7 +636,7 @@ fun AppRoot(viewModel: AppViewModel = viewModel()) {
                         // The liquid header's strap battery ring taps through to Devices (iOS parity: the
                         // battery ring → router.openDevices()).
                         onOpenDevices = { nav.navigatePush(Destination.Devices.route) },
-                        onOpenAlarm = { nav.navigatePush(Destination.SmartAlarm.route) },
+                        onOpenAlarm = { nav.openSleepAlarmTab() },
                         onOpenSources = { nav.navigatePush(Destination.DataSources.route) },
                         onOpenWorkouts = { nav.navigatePush(Destination.Workouts.route) },
                         onOpenPeriodCalendar = { nav.navigateTopLevel(Destination.PeriodCalendar.route) },
@@ -625,7 +652,7 @@ fun AppRoot(viewModel: AppViewModel = viewModel()) {
                     SleepScreen(
                         vm = viewModel,
                         onOpenJournal = { nav.navigatePush(Destination.Insights.route) },
-                        onOpenAlarm = { nav.navigatePush(Destination.SmartAlarm.route) },
+                        onOpenAlarm = { nav.openSleepAlarmTab() },
                         onOpenSources = { nav.navigatePush(Destination.DataSources.route) },
                         onOpenWhoopImport = {
                             SessionUiFlags.autoLaunchWhoopImport = true
@@ -654,10 +681,18 @@ fun AppRoot(viewModel: AppViewModel = viewModel()) {
                 composable(Destination.Automations.route) {
                     AutomationsScreen(
                         viewModel,
-                        onOpenWakeSettings = { nav.navigatePush(Destination.SmartAlarm.route) },
+                        onOpenAlarm = { nav.openSleepAlarmTab() },
                     )
                 }
-                composable(Destination.SmartAlarm.route) { SmartAlarmScreen(viewModel) }
+                // Legacy smart_alarm deep-link / back-stack → Sleep → Alarm (no Wake settings surface).
+                // Never leave a blank NavHost shell while LaunchedEffect hops — paint Alarm editor
+                // as fallback chrome so deep-links / restored back-stack aren't an empty frame.
+                composable(Destination.SmartAlarm.route) {
+                    androidx.compose.runtime.LaunchedEffect(Unit) {
+                        nav.openSleepAlarmTab()
+                    }
+                    SmartAlarmScreen(vm = viewModel, embedded = true)
+                }
                 composable(Destination.Workouts.route) { WorkoutsScreen(viewModel) }
                 composable(Destination.Intelligence.route) { IntelligenceScreen(viewModel) }
 
@@ -797,7 +832,10 @@ fun AppRoot(viewModel: AppViewModel = viewModel()) {
                 // The "More" page — drill-ins PUSH so system back returns to More, not Home.
                 composable(Destination.More.route) {
                     MoreScreen(
-                        onNavigate = { nav.navigatePush(it) },
+                        onNavigate = { route ->
+                            if (route == Destination.SmartAlarm.route) nav.openSleepAlarmTab()
+                            else nav.navigatePush(route)
+                        },
                         showCycle = cycleNavVisible,
                     )
                 }
@@ -875,13 +913,28 @@ fun AppRoot(viewModel: AppViewModel = viewModel()) {
                     store = updateStore,
                     onClose = { showUpdatesInbox = false },
                     onDeepLink = { key ->
-                        // Map the inbox deep-link key to a route (only known keys route). "trends" is
-                        // the one real poster's target today; unknown keys just close the sheet.
-                        val route = when (key) {
-                            "trends" -> Destination.Trends.route
-                            else -> null
+                        // Map inbox deep-link keys → routes. Alarm aliases open Sleep → Alarm (#337).
+                        when (key.lowercase()) {
+                            "trends" -> {
+                                if (currentRoute != Destination.Trends.route) {
+                                    nav.navigateTopLevel(Destination.Trends.route)
+                                }
+                            }
+                            "sleep" -> {
+                                if (currentRoute != Destination.Sleep.route) {
+                                    nav.navigateTopLevel(Destination.Sleep.route)
+                                }
+                            }
+                            "alarm", "alarms", "smart_alarm", "smart-alarm", "wake" -> {
+                                nav.openSleepAlarmTab()
+                            }
+                            "today" -> {
+                                if (currentRoute != Destination.Today.route) {
+                                    nav.navigateTopLevel(Destination.Today.route)
+                                }
+                            }
+                            else -> Unit
                         }
-                        if (route != null && route != currentRoute) nav.navigateTopLevel(route)
                     },
                     onRestore = { cardId ->
                         // Flip the shared dismissed flag back off so the card reappears, and signal a
@@ -1221,7 +1274,7 @@ private fun moreRowSecondary(dest: Destination): String? = when (dest) {
     Destination.Breathe -> "Guided breath"
     Destination.Intervals -> "Zones and effort blocks"
     Destination.Rhythm -> "Experimental night windows"
-    Destination.SmartAlarm -> "${LifeChapterLacquer.ALARM_WAKE_SETTINGS_TITLE} · phone + strap"
+    Destination.SmartAlarm -> "Sleep → Alarm · phone + strap"
     Destination.Devices -> "Pair and manage straps"
     Destination.DataSources -> "WHOOP · HC · imports"
     Destination.AppleHealth -> "Imported Apple Health export"
@@ -1788,11 +1841,11 @@ internal fun barOverflowCueColor(): Color = Palette.textTertiary
  * Reduce Motion used to keep ~0.98 (still bright for battery users); dim to a quiet static wash.
  */
 internal fun plusIdleAuraLayerAlpha(reducedMotion: Boolean, breath: Float): Float =
-    if (reducedMotion) 0.48f else (0.92f + 0.08f * breath.coerceIn(0f, 1f)).coerceIn(0f, 1f)
+    if (reducedMotion) 0.48f else (0.72f + 0.08f * breath.coerceIn(0f, 1f)).coerceIn(0f, 1f)
 
 /** Multiplier on hot/glow stop alphas when Reduce Motion is on (#394). */
 internal fun plusIdleAuraStopScale(reducedMotion: Boolean): Float =
-    if (reducedMotion) 0.52f else 1f
+    if (reducedMotion) 0.52f else 0.78f
 
 /** PlusButton-owned idle glow alpha when Reduce Motion is on (was ~0.78 — still bright). */
 internal fun plusButtonReducedAuraAlpha(holdBloom: Float): Float =
@@ -2074,7 +2127,14 @@ private fun CenterPlusButton(
                                 Modifier
                             },
                         )
-                        .background(Color(0xFF0B1220).copy(alpha = 0.42f * holdBloom)),
+                        // Light: soft charcoal wash (navy lacquer reads as a dark mode leftover on paper).
+                        .background(
+                            if (Palette.isLight) {
+                                Color(0xFF1A1E24).copy(alpha = 0.32f * holdBloom)
+                            } else {
+                                Color(0xFF0B1220).copy(alpha = 0.42f * holdBloom)
+                            },
+                        ),
                 )
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.BottomCenter) {
                     val coverH = LocalConfiguration.current.screenHeightDp
@@ -2495,6 +2555,12 @@ private fun NavHostController.navigateTopLevel(route: String) {
         launchSingleTop = true
         restoreState = false
     }
+}
+
+/** Today Quick Alarm / Automations / More / legacy smart_alarm → Sleep → Alarm pill. */
+private fun NavHostController.openSleepAlarmTab() {
+    SessionUiFlags.openSleepAlarmTab = true
+    navigateTopLevel(Destination.Sleep.route)
 }
 
 /**

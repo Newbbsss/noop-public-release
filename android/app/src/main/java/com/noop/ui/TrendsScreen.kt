@@ -130,7 +130,7 @@ fun TrendsScreen(
     val recovery = remember(days, range) { resolveMetric(days, range) { it.recovery } }
     val hrv = remember(days, range) { resolveMetric(days, range) { it.avgHrv } }
     val rhr = remember(days, range) { resolveMetric(days, range) { it.restingHr?.toDouble() } }
-    val strain = remember(days, range) { resolveMetric(days, range) { it.strain } }
+    val strain = remember(days, range) { resolveMetric(days, range) { it.strain?.takeIf { s -> s > 0.0 } } }
     // Rest = the sleep_performance COMPOSITE (0–100) , the SAME metric the Today Rest score/tile and the
     // Sleep Rest-detail plot (#614 follow-up), NOT raw efficiency, which is a different number under the
     // same "Rest" label and made the Trends Rest graph disagree with the Today Rest score (#732).

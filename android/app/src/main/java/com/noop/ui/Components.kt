@@ -133,13 +133,16 @@ fun Modifier.frostedCardSurface(
             val corner = androidx.compose.ui.geometry.CornerRadius(radiusPx, radiusPx)
             // Heavy frost: opaque tokens stay readable, but fill is translucent so liquid sky
             // reads through (Gilbert: frosted glass on Alarm/Trends/etc., not solid slabs).
-            // Light: denser frost so day-cycle sky cannot bleach card ink.
-            val glassMul = if (Palette.isLight) 0.94f else 0.48f
-            val glassAlpha = (glassMul * op).coerceIn(0.22f, 0.97f)
+            // Light: near-opaque raised paper — translucent frost read as dim wash on mid canvas.
+            val glassMul = if (Palette.isLight) 0.985f else 0.48f
+            val glassAlpha = (glassMul * op).coerceIn(
+                if (Palette.isLight) 0.88f else 0.22f,
+                if (Palette.isLight) 1f else 0.97f,
+            )
             val base = Palette.surfaceRaised.copy(alpha = glassAlpha)
             // Light: ink hairline (white@0.14 vanishes on paper). Dark: soft white rim.
             val border = if (Palette.isLight) {
-                Palette.hairlineStrong.copy(alpha = (0.82f * op).coerceIn(0.42f, 0.92f))
+                Palette.hairlineStrong.copy(alpha = (0.90f * op).coerceIn(0.55f, 0.96f))
             } else {
                 Color.White.copy(alpha = (0.14f * op).coerceIn(0.06f, 0.22f))
             }
@@ -1059,10 +1062,13 @@ fun ScenicHeroBackground(
             val h = size.height
             if (w <= 0f || h <= 0f) return@Canvas
 
-            // Radial deep blue-black: lit center → near-black edge.
+            // Dark: lit center → near-black edge. Light: lift toward raised paper (never sink
+            // toward surfaceBase — that made Recommended bedtime / Rest heroes look weirdly dim).
+            val scenicA = if (Palette.isLight) Palette.surfaceOverlay else Palette.scenicCenter
+            val scenicB = if (Palette.isLight) Palette.surfaceRaised else Palette.scenicEdge
             drawRect(
                 brush = Brush.radialGradient(
-                    colors = listOf(Palette.scenicCenter, Palette.scenicEdge),
+                    colors = listOf(scenicA, scenicB),
                     center = Offset(w * 0.5f, h * 0.36f),
                     radius = maxOf(w, h) * 0.95f,
                 ),
@@ -1070,9 +1076,10 @@ fun ScenicHeroBackground(
 
             // A soft domain-tinted bloom near the top, if a world is named.
             if (domain != null) {
+                val bloom = if (Palette.isLight) 0.035f else 0.06f
                 drawRect(
                     brush = Brush.radialGradient(
-                        colors = listOf(domain.glow.copy(alpha = 0.06f), Color.Transparent),
+                        colors = listOf(domain.glow.copy(alpha = bloom), Color.Transparent),
                         center = Offset(w * 0.5f, h * 0.30f),
                         radius = maxOf(w, h) * 0.6f,
                     ),
@@ -1100,12 +1107,13 @@ fun ScenicHeroBackground(
 
             // Bottom fade so a hero number / card reads cleanly over the field.
             if (fadesToBase) {
+                val fadeEdge = if (Palette.isLight) Palette.surfaceRaised else Palette.scenicEdge
                 drawRect(
                     brush = Brush.verticalGradient(
                         colors = listOf(
                             Color.Transparent,
-                            Palette.scenicEdge.copy(alpha = 0.72f),
-                            Palette.scenicEdge,
+                            fadeEdge.copy(alpha = if (Palette.isLight) 0.55f else 0.72f),
+                            fadeEdge,
                         ),
                         startY = h * 0.5f,
                         endY = h,
@@ -1226,6 +1234,14 @@ fun ScreenScaffold(
                 topBackground()
             }
             columnContent(Modifier.fillMaxWidth())
+            // Paper/lacquer header veil over day-cycle sky — Settings / destinations titles were
+            // sitting on raw midday wash (Gilbert: Settings top weird in light).
+            GlassDiffusionVeil(
+                modifier = Modifier.align(Alignment.TopCenter),
+                height = if (Palette.isLight) 76.dp else 52.dp,
+                fromTop = true,
+                dayCycleOn = true,
+            )
             if (wrapForBottomBlur) {
                 GlassDiffusionVeil(
                     modifier = Modifier.align(Alignment.BottomCenter),
@@ -1371,7 +1387,14 @@ fun LazyScreenScaffold(
             ) {
                 topBackground()
             }
-            listContent(Modifier.fillMaxWidth())
+            listContent(modifier.fillMaxWidth())
+            // Same header veil as ScreenScaffold — Workouts / Trends / etc. sky tops on light.
+            GlassDiffusionVeil(
+                modifier = Modifier.align(Alignment.TopCenter),
+                height = if (Palette.isLight) 76.dp else 52.dp,
+                fromTop = true,
+                dayCycleOn = true,
+            )
             // Bottom glass on every main-tab scaffold — matches Today's under-bar dissolve.
             if (wrapForBottomBlur) {
                 GlassDiffusionVeil(

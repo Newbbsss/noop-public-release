@@ -25,6 +25,10 @@ class AlgoParityGuardTest {
     fun daytimeStressNightTipCeiling_belowHighBand() {
         assertTrue(DaytimeStress.nightTipCeiling < DaytimeStress.highBandFloor)
         assertTrue(DaytimeStress.nightTipCeiling >= 1.0)
+        // Fold 2026-07-17 WHOOP overnight awake tips 1.4–1.5 need ceiling ≥ 1.5.
+        assertTrue(DaytimeStress.nightTipCeiling >= 1.5)
+        assertTrue(DaytimeStress.sleepTipCeiling < DaytimeStress.nightTipCeiling)
+        assertTrue(DaytimeStress.sleepTipCeiling < 1.0)
     }
 
     @Test

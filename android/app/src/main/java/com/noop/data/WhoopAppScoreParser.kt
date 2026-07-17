@@ -26,20 +26,22 @@ object WhoopAppScoreParser {
         var strain: Double? = null
         var sleep: Double? = null
 
-        // Recovery: "Recovery 67%" / "67% Recovery" / "RECOVERY\n67"
+        // Recovery: "Recovery 67%" / "67% Recovery" / "RECOVERY\n67" / "Recovery is 72%"
         recovery = firstDouble(
             t,
             "(?i)recovery[^0-9%]{0,24}(\\d{1,3}(?:\\.\\d+)?)\\s*%",
             "(?i)(\\d{1,3}(?:\\.\\d+)?)\\s*%[^\\n]{0,16}recovery",
             "(?i)recovery\\s*\\n\\s*(\\d{1,3})",
+            "(?i)recovery\\s+is\\s+(\\d{1,3}(?:\\.\\d+)?)\\s*%?",
         )?.also { hits.add("recovery=$it") }?.coerceIn(0.0, 100.0)
 
-        // Day Strain 0–21: "14.7" near "Strain" / "Day Strain" / "14,7" locale
+        // Day Strain 0–21: "14.7" near "Strain" / "Day Strain" / "Your Day Strain is 11.2" / "14,7" locale
         strain = firstDouble(
             t,
             "(?i)(?:day\\s*)?strain[^0-9]{0,24}(\\d{1,2}(?:[.,]\\d+)?)\\s*(?:/\\s*21)?",
             "(?i)(\\d{1,2}(?:[.,]\\d+)?)\\s*/\\s*21",
             "(?i)(\\d{1,2}(?:[.,]\\d+)?)\\s*strain",
+            "(?i)(?:your\\s+)?(?:day\\s+)?strain\\s+is\\s+(\\d{1,2}(?:[.,]\\d+)?)",
         )?.also { hits.add("strain=$it") }?.let { normalizeStrain(it) }
 
         sleep = firstDouble(

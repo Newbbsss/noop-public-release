@@ -477,6 +477,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     val restedSleepNeedPercent: StateFlow<Int> = _restedSleepNeedPercent.asStateFlow()
     private val _customAlarms = MutableStateFlow(phoneAlarmStore.customAlarms)
     val customAlarms: StateFlow<List<com.noop.alarm.CustomAlarm>> = _customAlarms.asStateFlow()
+    private val _mathChallengeEnabled = MutableStateFlow(phoneAlarmStore.mathChallengeEnabled)
+    val mathChallengeEnabled: StateFlow<Boolean> = _mathChallengeEnabled.asStateFlow()
+    private val _mathOnDrowsyHr = MutableStateFlow(phoneAlarmStore.mathOnDrowsyHr)
+    val mathOnDrowsyHr: StateFlow<Boolean> = _mathOnDrowsyHr.asStateFlow()
+    private val _drowsyHrBpm = MutableStateFlow(phoneAlarmStore.drowsyHrBpm)
+    val drowsyHrBpm: StateFlow<Int> = _drowsyHrBpm.asStateFlow()
 
     // Wind-down nudge (#207) — cross-platform, NON-safety-critical. A gentle evening notification
     // derived from the user's earliest wake time. Inexact daily alarm; no exact-alarm permission.
@@ -604,6 +610,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         // a disabled alarm doesn't disarm on every reconnect.
         viewModelScope.launch {
             var lastBonded = false
+            var lastConnected = false
             ble.state.collect { state ->
                 state.heartRate?.let {
                     ingestHr(it)
@@ -621,6 +628,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 if (state.bonded && !lastBonded) {
                     // #59/#536: re-arm the strap on (re)bond. One reconcile covers BOTH the smart wake-alarm
                     // and the Buzz-WHOOP companion, arming the single slot to the earliest either wants (#5).
+                    // Also flushes any offline-pending SET_ALARM_TIME / DISABLE_ALARM from prefs.
                     reconcileStrapAlarm()
                     // Remember this strap so we can reconnect to it directly on the next launch (#67),
                     // e.g. after an APK update restarts the process. Use detected family — never stamp
@@ -633,8 +641,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     ble.lastDeviceAddress?.let { NoopPrefs.setLastDevice(appContext, it, modelForSave) }
                     // Overnight bank: if HR samples lag, kick history now that the link is up.
                     viewModelScope.launch { ensureStrapSleepBanked() }
+                } else if (state.connected && !lastConnected) {
+                    // Offline arm may have been requested before bond completes — flush pending epoch
+                    // as soon as the link is up (SET_ALARM_TIME is on the 5/MG allow-list).
+                    reconcileStrapAlarm()
                 }
                 lastBonded = state.bonded
+                lastConnected = state.connected
             }
         }
         // Multi-WHOOP identity adoption: feed the connected strap's BLE address into the coordinator so the
@@ -756,7 +769,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                             // Rest = the sleep_performance composite from THIS row's banked stage figures
                             // (pure, honest-null until last night is scored); Effort = the 0–100 strain. (#516)
                             restPct = anchorRow?.let { RestScorer.restFromDaily(it)?.roundToInt() },
-                            effortPct = anchorRow?.strain?.roundToInt(),
+                            // ≤0 strain is calm TRIMP, not a scored load — match Today honesty (8.6.155/156).
+                            effortPct = anchorRow?.strain?.takeIf { it > 0.0 }?.roundToInt(),
                             heartRate = live.heartRate,
                             batteryPct = live.batteryPct?.roundToInt(),
                             connected = live.connected,
@@ -1600,16 +1614,17 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         // A session with no scored strain still gets a summary (duration + HR), but without an Effort line.
         val scale = UnitPrefs.effortScale(appContext)
         val durMin = ((row.durationS ?: (row.endTs - row.startTs).toDouble()) / 60.0).roundToInt()
-        val (title, body) = if (row.strain != null) {
+        val meaningfulStrain = row.strain?.takeIf { it > 0.0 }
+        val (title, body) = if (meaningfulStrain != null) {
             ScheduledReportPolicy.workoutCopy(
                 sportLabel = WorkoutEditing.displaySport(row.sport),
-                effortDisplay = UnitFormatter.effortDisplay(row.strain, scale),
+                effortDisplay = UnitFormatter.effortDisplay(meaningfulStrain, scale),
                 effortMaxLabel = UnitFormatter.effortScaleMax(scale),
                 durationLabel = ScheduledReportPolicy.durationLabel(durMin),
                 avgHr = row.avgHr,
             )
         } else {
-            // No strain: a leaner summary that still tells the user the session landed.
+            // No meaningful strain (null or ≤0 calm TRIMP): lean summary — never "Effort 0.0".
             val pieces = buildList {
                 add(ScheduledReportPolicy.durationLabel(durMin))
                 row.avgHr?.let { add("avg $it bpm") }
@@ -2027,11 +2042,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
-     * Offline WHOOP sleep path: when the strap is bonded and HR samples lag (>3h), kick a history
-     * offload, then rescore so overnight banks under `-noop` without waiting on Health Connect.
-     * Safe no-op when disconnected / already fresh. Called from Sleep browse before HC gap-fill,
-     * on (re)bond, and from morning [maybeOvernightSleepCatchUp]. Never invents a night — only
-     * syncs + scores what the strap already banked.
+     * Offline WHOOP sleep path: when the strap is bonded and HR samples lag (>3h) — or today /
+     * yesterday night is still missing — kick a history offload, then rescore so overnight banks
+     * under `-noop` without waiting on Health Connect. Safe no-op when disconnected / already
+     * fresh. Called from Sleep browse before HC gap-fill, on (re)bond, and from morning
+     * [maybeOvernightSleepCatchUp]. Never invents a night — only syncs + scores what the strap
+     * already banked.
      */
     suspend fun ensureStrapSleepBanked(): Boolean = withContext(Dispatchers.IO) {
         val live = ble.state.value
@@ -2041,15 +2057,16 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 ?: repository.latestHrSampleTs("my-whoop")
         }.getOrNull()
         val stale = latestHr == null || now - latestHr > 3L * 3600L
-        if (live.connected && stale) {
+        val missingNight = !hasBankedRecentNight(now)
+        if (live.connected && (stale || missingNight)) {
             android.util.Log.i(
                 "NoopSleep",
-                "ensureStrapSleepBanked syncNow connected=true latestHr=$latestHr stale=true",
+                "ensureStrapSleepBanked syncNow connected=true latestHr=$latestHr stale=$stale missingNight=$missingNight",
             )
             ble.syncNow()
             // Give the offload a short head start before rescore (chunks arrive async).
             kotlinx.coroutines.delay(1_200)
-        } else if (!live.connected && stale) {
+        } else if (!live.connected && (stale || missingNight)) {
             android.util.Log.i(
                 "NoopSleep",
                 "ensureStrapSleepBanked strap offline — no invent; rescore banked / wait for HC",
@@ -2061,29 +2078,73 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }.getOrNull()
         android.util.Log.i(
             "NoopSleep",
-            "ensureStrapSleepBanked done latestHr=$after connected=${live.connected}",
+            "ensureStrapSleepBanked done latestHr=$after connected=${live.connected} night=${hasBankedRecentNight(now)}",
         )
         after != null
+    }
+
+    /**
+     * True when a main-night sleep session ending in the last ~36h is already banked
+     * (today or yesterday wake). Used so overnight catch-up / strap sync keep retrying for
+     * late sleepers instead of inventing or giving up after a barren morning stamp.
+     */
+    private suspend fun hasBankedRecentNight(nowSeconds: Long = System.currentTimeMillis() / 1000L): Boolean {
+        val from = nowSeconds - 40L * 3600L
+        // Include Health Connect — WHOOP-app nights often land only under HC when the strap
+        // was offline overnight; omitting it left catch-up spinning as "missing night".
+        val ids = (
+            WhoopRepository.importedSourceIdsFor(deviceId) +
+                WhoopRepository.computedSourceIdsFor(deviceId) +
+                listOf(deviceId, "my-whoop", WhoopRepository.HEALTH_CONNECT_SOURCE)
+            ).distinct()
+        for (id in ids) {
+            val sessions = runCatching {
+                repository.sleepSessions(id, from, nowSeconds, limit = 32)
+            }.getOrDefault(emptyList())
+            if (sessions.any { s ->
+                    val dur = s.endTs - s.effectiveStartTs
+                    dur >= 90L * 60L && s.endTs >= nowSeconds - 36L * 3600L
+                }
+            ) {
+                return true
+            }
+            val today = java.time.LocalDate.now().toString()
+            val yesterday = java.time.LocalDate.now().minusDays(1).toString()
+            val rows = runCatching {
+                repository.dailyMetrics(id, yesterday, today)
+            }.getOrDefault(emptyList())
+            if (rows.any { (it.totalSleepMin ?: 0.0) >= 90.0 }) return true
+        }
+        return false
     }
 
     /**
      * Once per local calendar day on foreground: pull overnight sleep via strap (if linked+stale)
      * and/or Health Connect (honest WHOOP-app / phone path when the strap was offline). Never
      * invents vitals — empty banks stay empty.
+     *
+     * Late sleepers (e.g. Gilbert ~06–13): do **not** stamp the catch-up day until a night lands
+     * or the afternoon window closes — otherwise a 06:00 resume marks the day done before wake.
      */
     private fun maybeOvernightSleepCatchUp() {
         val dayKey = java.time.LocalDate.now().toString()
         if (NoopPrefs.overnightSleepCatchupDay(appContext) == dayKey) return
         val hour = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
-        // Morning / early afternoon window — overnight just finished; avoid all-day HC hammering.
-        if (hour !in 5..14) return
-        NoopPrefs.setOvernightSleepCatchupDay(appContext, dayKey)
+        // Once local hour reaches 5+: overnight just finished; shift sleepers opening afternoon still catch up.
+        // Before 5am skip (once-per-day stamp still applies after a night lands / afternoon).
+        if (hour < 5) return
         viewModelScope.launch {
             runCatching { ensureStrapSleepBanked() }
             // HC path when auto-sync is on, OR strap is offline (WHOOP-app night may only be in HC).
             val wantHc = _hcAutoSync.value || !ble.state.value.connected
             if (wantHc) {
                 runCatching { ensureHealthConnectSleepFresh() }
+            }
+            val now = System.currentTimeMillis() / 1000L
+            val banked = runCatching { hasBankedRecentNight(now) }.getOrDefault(false)
+            // Stamp only after a night lands, or after 14:00 so we don't spin forever empty.
+            if (banked || hour >= 14) {
+                NoopPrefs.setOvernightSleepCatchupDay(appContext, dayKey)
             }
         }
     }
@@ -2240,6 +2301,21 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         phoneAlarmStore.windowMinutes = minutes
         _phoneAlarmWindowMinutes.value = phoneAlarmStore.windowMinutes
         if (phoneAlarmStore.enabled) SmartAlarmScheduler.arm(appContext, phoneAlarmStore)
+    }
+
+    fun setMathChallengeEnabled(enabled: Boolean) {
+        phoneAlarmStore.mathChallengeEnabled = enabled
+        _mathChallengeEnabled.value = enabled
+    }
+
+    fun setMathOnDrowsyHr(enabled: Boolean) {
+        phoneAlarmStore.mathOnDrowsyHr = enabled
+        _mathOnDrowsyHr.value = enabled
+    }
+
+    fun setDrowsyHrBpm(bpm: Int) {
+        phoneAlarmStore.drowsyHrBpm = bpm
+        _drowsyHrBpm.value = phoneAlarmStore.drowsyHrBpm
     }
 
     /** Whether the OS will honour an exact alarm right now (API 31+ gates it behind a permission). */

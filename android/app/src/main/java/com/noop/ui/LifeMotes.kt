@@ -172,7 +172,7 @@ object LifeChapterLacquer {
     /** Today Weight tile entry sheet. */
     const val WEIGHT_ENTRY_TITLE = "Weight"
     const val WEIGHT_ENTRY_BODY =
-        "Profile weight for Effort and Fuel. Health Connect readings still win on the tile when present."
+        "Saves to your profile for Effort and Fuel. Your typed weight updates Key Metrics right away; a newer Health day can replace it later."
     const val WEIGHT_ENTRY_HEALTH_PREFIX = "Latest from Health ·"
     const val WEIGHT_ENTRY_SAVE = "Save weight"
     const val WEIGHT_ENTRY_OPEN_HEALTH = "Open Health"
@@ -269,8 +269,10 @@ object LifeChapterLacquer {
     const val ALARM_EVENING_OVERLINE = "Evening"
     /** Strap wake-alarm Morning chapter overline. */
     const val ALARM_MORNING_OVERLINE = "Morning"
-    /** Wake settings scaffold + Automations jump title. */
-    const val ALARM_WAKE_SETTINGS_TITLE = "Wake settings"
+    /** Sleep → Alarm home title (Automations door + legacy scaffold). */
+    const val ALARM_HOME_TITLE = "Alarm"
+    /** @deprecated Wake settings merged into Sleep → Alarm — alias of [ALARM_HOME_TITLE]. */
+    const val ALARM_WAKE_SETTINGS_TITLE = ALARM_HOME_TITLE
     /** Soft-window companion strap buzz toggle. */
     const val ALARM_BUZZ_STRAP_LABEL = "Buzz connected strap"
     /** Firmware strap wake-alarm card title. */
@@ -382,10 +384,10 @@ object LifeChapterLacquer {
     const val HRV_MS_CAPTION = "ms"
     const val HRV_BPM_CAPTION = "bpm"
     const val HRV_USED_CAPTION = "used"
-    /** Sleep Alarm → full Wake settings cue. */
-    const val ALARM_WAKE_OPEN_CUE = "Wake settings · turn-back · custom · wind-down"
-    /** Open Wake settings a11y (Today Quick + Sleep Alarm). */
-    const val ALARM_OPEN_WAKE_A11Y = "Open wake settings"
+    /** Sleep Alarm open cue (legacy glance; unified Alarm embeds full editor). */
+    const val ALARM_WAKE_OPEN_CUE = "Sleep → Alarm · turn-back · custom · wind-down"
+    /** Open Sleep → Alarm a11y (Today Quick Alarm). */
+    const val ALARM_OPEN_WAKE_A11Y = "Open Sleep Alarm"
     /** Soft-window ±15m steppers on Sleep Alarm wake edit. */
     const val ALARM_SHORTEN_15M_LABEL = "−15m"
     const val ALARM_LENGTHEN_15M_LABEL = "+15m"
@@ -481,13 +483,13 @@ object LifeChapterLacquer {
     const val SETTINGS_SUBTITLE = "Your numbers, your strap, and how NOOP works. All on this phone."
     const val SETTINGS_PROFILE_TITLE = "Profile"
     const val SETTINGS_PROFILE_BLURB =
-        "These power your heart-rate zones, calorie estimates and recovery baselines. Keep them accurate."
+        "Your age, size and zones — the same numbers Fitness Age and Charge lean on. Keep them honest; they never leave this phone."
     const val SETTINGS_UNITS_TITLE = "Units & time"
     const val SETTINGS_UNITS_BLURB =
-        "Distances, weights, heights, temperatures, Effort scale, and clock style. Stored data stays SI; this only changes display. Next to Appearance below."
+        "How you like distances, weight, Effort scale and the clock. Stored data stays SI — this only changes what you see. Next to Appearance below."
     const val SETTINGS_STRAP_TITLE = "Strap"
     const val SETTINGS_STRAP_BLURB =
-        "NOOP pairs directly with your WHOOP over Bluetooth: no WHOOP app, no cloud."
+        "Pair your WHOOP here over Bluetooth — no WHOOP app login, no cloud in the middle."
     const val SETTINGS_STRAP_STREAMING = "Streaming"
     const val SETTINGS_STRAP_SYNCING = "Syncing"
     const val SETTINGS_STRAP_READY = "Ready"
@@ -505,7 +507,8 @@ object LifeChapterLacquer {
     const val SETTINGS_STRAP_ALONGSIDE_NOTE =
         "Alongside WHOOP app: open HR, R-R and battery only — no private bond."
     const val SETTINGS_CONNECTIONS_TITLE = "Connections"
-    const val SETTINGS_CONNECTIONS_BLURB = "Strap · Health Connect · notifications"
+    const val SETTINGS_CONNECTIONS_BLURB =
+        "Strap, Health Connect and alerts in one place — the pipes that keep Today honest."
     const val SETTINGS_BACKUP_NEVER_BANNER =
         "No backup yet — export a .noopbak when you have a minute."
     const val SETTINGS_BACKUP_NEVER_CTA = "Export backup"
@@ -514,7 +517,7 @@ object LifeChapterLacquer {
         "Drops auto-retry with backoff. Pause stops retries."
     const val SETTINGS_POWER_TITLE = "Power saving"
     const val SETTINGS_POWER_BLURB =
-        "When your strap battery is low and discharging, NOOP eases the load. Off by default; never while charging. Fitbit is file-import only — this applies to connected WHOOP (and Oura when linked)."
+        "When the strap battery is low and draining, ease the load. Off until you want it; never while charging."
     const val SETTINGS_POWER_WAITING_SOC =
         "Waiting for strap battery · sync stays every 15 min until SoC is known"
     const val SETTINGS_POWER_CHARGING_PAUSED =
@@ -796,7 +799,7 @@ fun hrvNotEnoughBeatsLead(): String = "Not enough clean beats - sit still and tr
 fun hrvInsufficientBeatsBody(nClean: Int, nInput: Int, need: Int): String =
     "${hrvNotEnoughBeatsLead()} $nClean of $nInput beats survived filtering (need $need)."
 
-/** Sleep Alarm / Today — open Wake settings TalkBack. */
+/** Sleep Alarm / Today — open Sleep → Alarm TalkBack. */
 fun alarmOpenWakeSettingsA11y(
     customSummary: String? = null,
     nextCustomLabel: String? = null,

@@ -199,7 +199,7 @@ struct LiveWorkoutView: View {
                  tint: (w?.avgHr ?? 0) > 0 ? StrandPalette.metricRose : StrandPalette.textPrimary)
             stat(String(localized: "PEAK"), (w?.peakHr ?? 0) > 0 ? "\(w!.peakHr)" : "—",
                  tint: (w?.peakHr ?? 0) > 0 ? StrandPalette.metricRose : StrandPalette.textPrimary)
-            stat(String(localized: "EFFORT"), UnitFormatter.effortDisplay(w?.liveStrain ?? 0, scale: effortScale),
+            stat(String(localized: "EFFORT"), UnitFormatter.effortDisplayOrEmpty(w?.liveStrain, scale: effortScale, empty: "—"),
                  tint: StrandPalette.strainColor(w?.liveStrain ?? 0))
         }
     }

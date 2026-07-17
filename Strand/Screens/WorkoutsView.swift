@@ -133,13 +133,16 @@ struct WorkoutsView: View {
                        // The day-of-sky liquid backdrop, matching Today / Health / Sleep / Trends: a fixed,
                        // full-bleed time-of-day sky behind the scroll content (it does not scroll).
                        topBackground: liquidScaffoldSky()) {
-            if allRows.isEmpty {
+                if allRows.isEmpty {
                 VStack(alignment: .leading, spacing: NoopMetrics.space4) {
                     ComingSoon(what: loaded
                         ? "No workouts yet. They come from your WHOOP and Apple Health history. Import in Data Sources to bring them in, or add one you tracked elsewhere."
                         : "Loading your sessions…")
                     if loaded {
                         HStack(spacing: NoopMetrics.rowSpacing) { startLiveWorkoutButton; addWorkoutButton }
+                        StrengthTrainerSection(onLogged: { note in
+                            postLogNote = note
+                        })
                     }
                 }
             } else {
@@ -159,6 +162,13 @@ struct WorkoutsView: View {
                 if let postLogNote { postLogBanner(postLogNote) }
                 effortHero(rows: windowRows, effectiveRange: resolved, groups: groups)
                 summarySection(rows: windowRows, effectiveRange: resolved, groups: groups)
+                StrengthTrainerSection(onLogged: { note in
+                    postLogNote = note
+                    Task {
+                        try? await Task.sleep(nanoseconds: 3_500_000_000)
+                        if postLogNote == note { postLogNote = nil }
+                    }
+                })
                 breakdownSection(groups: groups, rows: windowRows)
                 if let z = zonesSummary {
                     zonesSection(z, totalSessions: windowRows.count)
@@ -1370,8 +1380,7 @@ struct WorkoutsView: View {
     /// (the SAME `UnitFormatter.effortDisplay` every other Effort read-out routes through, so the toggle and
     /// rounding stay consistent), or "–" when the session has no captured strain. Pure + unit-testable.
     static func effortCellLabel(strain: Double?, scale: EffortScale) -> String {
-        guard let strain else { return "–" }
-        return UnitFormatter.effortDisplay(strain, scale: scale)
+        UnitFormatter.effortDisplayOrEmpty(strain, scale: scale, empty: "–")
     }
 
     private func cell(_ text: String, width: CGFloat, color: Color? = nil) -> some View {

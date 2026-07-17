@@ -293,6 +293,29 @@ object WhoopCsvExporter {
         return arr.toString(2)
     }
 
+    /**
+     * SHIP #197 — portable daily Stress tip series (0–3) so a CSV round-trip can re-bank Trends / Stress
+     * history without requiring the .noopbak sidecar. Prefer rows with key `stress`.
+     */
+    internal fun stressSeriesCsv(rows: List<MetricSeriesRow>): String {
+        val sb = StringBuilder()
+        sb.append("Day,Stress (0-3),Source\r\n")
+        val byDay = LinkedHashMap<String, MetricSeriesRow>()
+        for (r in rows.filter { it.key.equals("stress", ignoreCase = true) }
+            .sortedWith(compareBy({ it.day }, { it.deviceId }))) {
+            // Prefer non-noop device rows when both exist for a day.
+            val prev = byDay[r.day]
+            if (prev == null || (prev.deviceId.endsWith("-noop") && !r.deviceId.endsWith("-noop"))) {
+                byDay[r.day] = r
+            }
+        }
+        for ((day, r) in byDay.toSortedMap()) {
+            val source = if (r.deviceId.endsWith("-noop")) "noop (APPROXIMATE)" else "import"
+            sb.append(listOf(day, num(r.value), csvField(source)).joinToString(",")).append("\r\n")
+        }
+        return sb.toString()
+    }
+
     /** Zip the named entries into a single byte array (everything is already in memory). */
     internal fun zipBytes(entries: Map<String, ByteArray>): ByteArray {
         val bos = ByteArrayOutputStream()
@@ -383,12 +406,15 @@ object WhoopCsvExporter {
                 }.toByteArray(),
                 "workouts.csv" to workoutsCsv(workouts, ::workoutSource).toByteArray(),
                 "journal_entries.csv" to journalCsv(journal).toByteArray(),
+                "stress_series.csv" to stressSeriesCsv(sidecarRows).toByteArray(),
                 "noop_metric_series.json" to metricSeriesJson(sidecarRows).toByteArray(),
             ),
         )
         context.contentResolver.openOutputStream(uri)?.use { it.write(zip); it.flush() }
             ?: throw IOException("Could not open the chosen file for writing.")
+        val stressDays = sidecarRows.count { it.key.equals("stress", ignoreCase = true) }
         return "Exported ${daily.size} days, ${sleeps.size} sleeps, ${workouts.size} workouts, " +
-            "${journal.size} journal entries."
+            "${journal.size} journal entries" +
+            if (stressDays > 0) ", $stressDays stress tips." else "."
     }
 }

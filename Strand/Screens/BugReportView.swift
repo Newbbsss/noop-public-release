@@ -1,8 +1,8 @@
-﻿import SwiftUI
+import SwiftUI
 import StrandDesign
 
 /// In-app bug report (Android 8.6.145+ parity): describe what broke, share strap diagnostics,
-/// open GitHub Issues on Newbbsss/noop-public-release with label `user-bug`. No Tailscale.
+/// open GitHub Issues on Newbbsss/noop-gilbert with label `user-bug`. No Tailscale.
 struct BugReportView: View {
     @EnvironmentObject private var live: LiveState
 
@@ -16,7 +16,7 @@ struct BugReportView: View {
     var body: some View {
         ScreenScaffold(
             title: "Bug report",
-            subtitle: "Photos + diagnostics Â· no Tailscale needed"
+            subtitle: "Photos + diagnostics · no Tailscale needed"
         ) {
             VStack(alignment: .leading, spacing: NoopMetrics.sectionGap) {
                 Text("Describe what broke. Share the diagnostics zip, then open GitHub Issues (label user-bug) or email. Nothing uploads silently.")
@@ -41,7 +41,7 @@ struct BugReportView: View {
                 }
 
                 NoopButton(
-                    busy ? "Packingâ€¦" : "Share report (diagnostics)",
+                    busy ? "Packing…" : "Share report (diagnostics)",
                     systemImage: "square.and.arrow.up",
                     kind: .primary
                 ) {
@@ -62,7 +62,7 @@ struct BugReportView: View {
                     }
                 }
 
-                Text("Agents check GitHub issues labeled user-bug on Newbbsss/noop-public-release every few wakes. No Tailscale required.")
+                Text("Agents check GitHub issues labeled user-bug on Newbbsss/noop-gilbert every few wakes. No Tailscale required.")
                     .font(StrandFont.footnote)
                     .foregroundStyle(StrandPalette.textTertiary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -97,7 +97,7 @@ struct BugReportView: View {
 
             \(exp.isEmpty ? "" : "EXPECTED\n\(exp)\n")
             Attach this file (+ screenshots) on a GitHub issue labeled user-bug:
-            https://github.com/Newbbsss/noop-public-release/issues
+            https://github.com/Newbbsss/noop-gilbert/issues
             """
             let strap = live.exportableLogText()
             let dir = FileManager.default.temporaryDirectory
@@ -112,14 +112,14 @@ struct BugReportView: View {
                 }
             } catch {
                 await MainActor.run {
-                    toast = "Couldn't build the report. Try Test Centre â†’ Report."
+                    toast = "Couldn't build the report. Try Test Centre → Report."
                     busy = false
                 }
             }
         }
     }
 
-    /// Gilbert fork issue composer â€” mirrors Android `userBugIssueUrl`.
+    /// Gilbert fork issue composer — mirrors Android `userBugIssueUrl`.
     static func userBugIssueURL(
         whatHappens: String,
         expected: String?,
@@ -150,7 +150,7 @@ struct BugReportView: View {
             $0.addingPercentEncoding(withAllowedCharacters: allowed) ?? $0
         }
         let q = "labels=\(enc("user-bug"))&title=\(enc(title))&body=\(enc(String(body.prefix(3_500))))"
-        return URL(string: "https://github.com/Newbbsss/noop-public-release/issues/new?\(q)")
+        return URL(string: "https://github.com/Newbbsss/noop-gilbert/issues/new?\(q)")
     }
 
     private static var appVersionLabel: String {

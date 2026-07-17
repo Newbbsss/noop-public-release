@@ -272,6 +272,16 @@
             android:name="com.noop.alarm.SmartAlarmReceiver"
             android:exported="false" />
 
+        <!-- Full-screen wake + optional math dismiss for the phone smart alarm. -->
+        <activity
+            android:name="com.noop.alarm.AlarmRingActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:showOnLockScreen="true"
+            android:turnScreenOn="true"
+            android:taskAffinity=""
+            android:theme="@android:style/Theme.DeviceDefault.NoActionBar" />
+
         <receiver
             android:name="com.noop.alarm.CustomAlarmReceiver"
             android:exported="false" />

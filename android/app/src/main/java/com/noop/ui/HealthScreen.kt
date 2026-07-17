@@ -200,7 +200,7 @@ fun HealthScreen(
             // CONTRIBUTORS (README screen #5, recovery detail) — the signals behind recovery as
             // labelled progress bars in the shared stage/zone bar style, mirroring Today's section.
             item { Spacer(Modifier.height(Metrics.selectorTopUp)) }
-            item { HealthContributorsSection(today) }
+            item { HealthContributorsSection(today, days) }
             // Blood pressure — Lab Book / cuff only. Never invent WHOOP MG BP.
             item { Spacer(Modifier.height(Metrics.selectorTopUp)) }
             item { ManualBloodPressureCard(onOpenLabBook = onOpenLabBook) }
@@ -530,20 +530,33 @@ private fun ManualBloodPressureCard(onOpenLabBook: () -> Unit) {
 }
 
 @Composable
-private fun HealthContributorsSection(day: DailyMetric?) {
-    val hrv = day?.avgHrv
-    val rhr = day?.restingHr?.toDouble()
-    val sleepMin = day?.totalSleepMin
-    val resp = day?.respRateBpm
+private fun HealthContributorsSection(day: DailyMetric?, days: List<DailyMetric> = emptyList()) {
+    // Today-first overnight vitals; if today's row has no HRV/RHR/resp yet (common mid-day /
+    // post-rollover), carry the freshest prior night that banked them — recovery-INDEPENDENT
+    // (mirrors Today [lastVitalsRow]). Never invent numbers.
+    val todayKey = day?.day ?: java.time.LocalDate.now().toString()
+    val vitals = lastVitalsRow(days, todayKey)
+    val hrv = overnightHrvMs(day, vitals)
+    val rhr = overnightRestingHr(day, vitals)?.toDouble()
+    val sleepMin = day?.totalSleepMin ?: vitals?.totalSleepMin
+    val resp = overnightRespBpm(day, vitals)
     if (hrv == null && rhr == null && sleepMin == null && resp == null) return
 
     // SOLID once recovery has been scored from these signals; CALIBRATING while the baseline seeds.
-    val solid = day.recovery != null
+    val solid = day?.recovery != null
+    val carryStamp = when {
+        day?.avgHrv != null || day?.restingHr != null -> null
+        vitals != null -> carriedCaption(vitals.day)
+        else -> null
+    }
     Column(verticalArrangement = Arrangement.spacedBy(Metrics.gap)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Box(modifier = Modifier.weight(1f)) {
                 // Charge is the product term after Recovery left Today — Health owns these bars.
-                SectionHeader("Contributors", overline = "Charge")
+                SectionHeader(
+                    "Contributors",
+                    overline = carryStamp?.let { "Charge · $it" } ?: "Charge",
+                )
             }
             StatePill(
                 title = if (solid) "SOLID" else "CALIBRATING",
@@ -1692,8 +1705,8 @@ private fun LiveHrTimeChart(
                 path = fillPath,
                 brush = Brush.verticalGradient(
                     colors = listOf(
-                        color.copy(alpha = StrandAlpha.chartFillStrong),
-                        color.copy(alpha = StrandAlpha.chartFillSoft),
+                        color.copy(alpha = StrandAlpha.chartFillStrongResolved()),
+                        color.copy(alpha = StrandAlpha.chartFillSoftResolved()),
                         Color.Transparent,
                     ),
                     startY = 0f,
@@ -2143,7 +2156,7 @@ private fun TileSparkline(values: List<Double>, color: Color, modifier: Modifier
             path = fillPath,
             brush = Brush.verticalGradient(
                 colors = listOf(
-                    color.copy(alpha = StrandAlpha.chartFillSoft),
+                    color.copy(alpha = StrandAlpha.chartFillSoftResolved()),
                     Color.Transparent,
                 ),
                 startY = 0f,

@@ -1,8 +1,8 @@
-﻿import Foundation
+import Foundation
 import StrandAnalytics
 
 /// Builds the prefilled GitHub new-issue URL for a Test Centre report (spec section 5.2).
-/// Gilbert fork: Newbbsss/noop-public-release (label user-bug + test profile). Upstream ryanbr/noop
+/// Gilbert fork: Newbbsss/noop-gilbert (label user-bug + test profile). Upstream ryanbr/noop
 /// is not the daily-driver issue inbox for this tree.
 enum TestReportLink {
 
@@ -85,7 +85,7 @@ enum TestReportLink {
         if let seed = whatHappensSeed, !seed.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             query.append("what_happens=" + enc(seed))
         }
-        let base = "https://github.com/Newbbsss/noop-public-release/issues/new?"
+        let base = "https://github.com/Newbbsss/noop-gilbert/issues/new?"
         // Add the log block ONLY if the whole URL stays under the GitHub prefill ceiling. If it would
         // breach maxURLLength, drop `log` entirely (never truncate it into a broken <details>); the full
         // trace is in the attached .zip. The seed + id fields alone keep the body non-empty (#812).

@@ -46,6 +46,10 @@ class StressModelTest {
         assertNotNull(model)
         assertEquals(0.15, model!!.score, 1e-6)
         assertEquals(true, model.usingStored)
+        assertEquals("2026-07-13", model.scoreDayKey)
+        // #208: empty tip-day shell still surfaces prior night RHR/HRV on markers.
+        assertEquals(53, model.rhrToday)
+        assertEquals(55.0, model.hrvToday!!, 1e-9)
     }
 
     @Test
@@ -55,5 +59,20 @@ class StressModelTest {
             day("2026-07-12"),
         )
         assertNull(StressModel.build(days, emptyMap()))
+    }
+
+    @Test
+    fun walkBackScoreDay_exposesKeyForLatestCaption() {
+        val days = listOf(
+            day("2026-07-11", restingHr = 52, avgHrv = 56.0),
+            day("2026-07-12", restingHr = 53, avgHrv = 44.0),
+            day("2026-07-13"),
+            day("2026-07-14"),
+        )
+        val model = StressModel.build(days, emptyMap())
+        assertNotNull(model)
+        assertEquals("2026-07-12", model!!.scoreDayKey)
+        assertEquals(53, model.rhrToday)
+        assertEquals(44.0, model.hrvToday!!, 1e-9)
     }
 }

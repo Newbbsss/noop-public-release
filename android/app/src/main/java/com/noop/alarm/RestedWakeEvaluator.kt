@@ -15,7 +15,7 @@ object RestedWakeEvaluator {
 
     /**
      * @param sleepMinutesSoFar estimated minutes asleep tonight (trough-era span or staged sleep)
-     * @param sleepNeedMinutes learned / default need (e.g. 450)
+     * @param sleepNeedMinutes learned / default need (e.g. 480 = 8h)
      * @param chargeScore overnight Charge 0–100 when already scored, else null
      * @param chargeThreshold wake when Charge ≥ this (default green band)
      * @param sleepFraction wake when sleepMinutes ≥ need × fraction

@@ -58,7 +58,7 @@ object ApkInstaller {
                 readTimeout = 120_000
                 instanceFollowRedirects = true
                 setRequestProperty("Accept", "application/octet-stream, */*")
-                setRequestProperty("User-Agent", "NOOP-ApkInstaller")
+                setRequestProperty("User-Agent", "NOOP-Public-ApkInstaller")
             }
             try {
                 if (conn.responseCode !in 200..299) {
@@ -95,9 +95,40 @@ object ApkInstaller {
         }
     }
 
+    /** Package name decoded from an on-disk APK, or null if unreadable. */
+    fun archivePackageName(context: Context, apkFile: File): String? {
+        if (!apkFile.exists()) return null
+        return runCatching {
+            @Suppress("DEPRECATION")
+            context.packageManager.getPackageArchiveInfo(apkFile.absolutePath, 0)?.packageName
+        }.getOrNull()?.takeIf { it.isNotBlank() }
+    }
+
+    /**
+     * SHIP #369 â€” refuse handing the installer a channel-mismatched APK (MAIN vs `.debug`).
+     * Returns null when OK; otherwise a short user-facing reason.
+     */
+    fun packageMismatchReason(installedPackage: String, archivePackage: String?): String? {
+        val archive = archivePackage?.takeIf { it.isNotBlank() } ?: return null
+        if (archive == installedPackage) return null
+        val archiveDebug = archive.endsWith(".debug")
+        val installedDebug = installedPackage.endsWith(".debug")
+        return when {
+            archiveDebug != installedDebug ->
+                "This APK is ${if (archiveDebug) "DEBUG" else "MAIN"} ($archive) but you are on $installedPackage. " +
+                    "Install the matching package icon â€” donâ€™t OTA across channels."
+            else ->
+                "APK package $archive does not match this install ($installedPackage)."
+        }
+    }
+
+    fun packageMismatchReason(context: Context, apkFile: File): String? =
+        packageMismatchReason(context.packageName, archivePackageName(context, apkFile))
+
     /** Launch the system installer for a previously downloaded APK. */
     fun install(context: Context, apkFile: File): Boolean {
         if (!apkFile.exists() || apkFile.length() < 1024L) return false
+        if (packageMismatchReason(context, apkFile) != null) return false
         val uri = FileProvider.getUriForFile(
             context,
             "${context.packageName}.fileprovider",

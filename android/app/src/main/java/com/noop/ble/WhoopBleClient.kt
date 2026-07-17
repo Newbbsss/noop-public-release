@@ -377,6 +377,18 @@ class RealGattOps(private val gatt: BluetoothGatt) : GattOps {
     override fun discoverServicesCompat(): Boolean = gatt.discoverServices()
 }
 
+/**
+ * Multi-bond 5/MG candidate for [WhoopBleClient.pickBondedWhoop5] (file-level so unit tests resolve it).
+ */
+data class BondedWhoopCandidate(
+    val address: String,
+    val name: String,
+    val gattConnectedOrConnecting: Boolean,
+)
+
+/**
+ * WHOOP MG / 5 BLE client — GATT, offload, live HR, alarms.
+ */
 class WhoopBleClient(
     private val context: Context,
     /**
@@ -484,6 +496,9 @@ class WhoopBleClient(
          *  stays un-backed-off. The ordinary involuntary-reconnect paths use the capped-exponential
          *  [ReconnectBackoff] instead (#48). (BLEManager: "rescanning in 3s".) */
         private const val RECONNECT_DELAY_MS = 3_000L
+        /** Desired strap firmware alarm epoch (UTC sec); 0 = none. Flushed on connect when offline arm was requested. */
+        const val PREF_PENDING_STRAP_ALARM_EPOCH = "alarm.pendingStrapEpochSec"
+        const val PREF_PENDING_STRAP_ALARM_DISARM = "alarm.pendingStrapDisarm"
         /** A connection must SURVIVE this long before it's "healthy" enough to clear the involuntary-
          *  reconnect backoff (see the STATE_CONNECTED handler). A band whose ACL is contended by the
          *  official WHOOP app reaches STATE_CONNECTED briefly each cycle; without this dwell the backoff
@@ -840,12 +855,6 @@ class WhoopBleClient(
          * pin → saved last address → currently GATT-connected → MG-named → first remaining.
          * Never grabs an arbitrary first bond when several WHOOPs share the phone.
          */
-        data class BondedWhoopCandidate(
-            val address: String,
-            val name: String,
-            val gattConnectedOrConnecting: Boolean,
-        )
-
         fun pickBondedWhoop5(
             candidates: List<BondedWhoopCandidate>,
             preferredAddress: String?,
@@ -2968,6 +2977,13 @@ class WhoopBleClient(
      * 5/MG `send()` uses the separate REVISION_4 path.
      */
     fun armStrapAlarm(epochSec: Long) {
+        // Persist desired epoch even when the phone is offline — flush on next connect/bond.
+        runCatching {
+            NoopPrefs.of(context).edit()
+                .putLong(PREF_PENDING_STRAP_ALARM_EPOCH, epochSec)
+                .putBoolean(PREF_PENDING_STRAP_ALARM_DISARM, false)
+                .apply()
+        }
         if (connectedFamily == DeviceFamily.WHOOP5) {
             // 5/MG SET_ALARM_TIME is REVISION_4 (the strap arms its own RTC alarm + fires the wake
             // haptic itself). Gilbert confirmed the 5/MG buzz path, so arming is no longer hidden
@@ -2977,16 +2993,16 @@ class WhoopBleClient(
             send(CommandNumber.SET_ALARM_TIME, AlarmPayload.build(epochSec * 1000L), withResponse = true)
             recordAlarmArm(epochSec)
             log(if (_state.value.connected) "Alarm: armed 5/MG rev4 (epoch $epochSec, acked)"
-                else "Alarm: queued 5/MG rev4 (epoch $epochSec) — strap not connected")
+                else "Alarm: pending 5/MG rev4 (epoch $epochSec) — will SET_ALARM_TIME on next connect")
             return
         }
         sendSetClockBothForms()
         send(CommandNumber.SET_ALARM_TIME, whoop4AlarmPayload(epochSec))
         recordAlarmArm(epochSec)
         // #34: only claim "armed" when the strap is connected (the send actually went out); otherwise it's
-        // queued and re-sent on the next connect.
+        // pending and flushed on the next connect via AppViewModel.reconcileStrapAlarm.
         if (_state.value.connected) log("Alarm: armed (epoch $epochSec)")
-        else log("Alarm: queued (epoch $epochSec) — strap not connected; will send on next connect")
+        else log("Alarm: pending (epoch $epochSec) — strap not connected; SET_ALARM_TIME on next sync")
         // Arm READBACK (#401 close-out): ask the strap what it now has armed (GET_ALARM_TIME, cmd 67) so
         // the strap log carries armed + strap-reports + fired as one decidable sequence in any future
         // "didn't buzz" report. WHOOP 4.0 ONLY (this branch): the 5/MG puffin readback semantics are
@@ -3010,6 +3026,16 @@ class WhoopBleClient(
 
     /** Clear the strap's firmware alarm. Port of macOS `BLEManager.disableStrapAlarm`. */
     fun disableStrapAlarm() {
+        runCatching {
+            NoopPrefs.of(context).edit()
+                .putLong(PREF_PENDING_STRAP_ALARM_EPOCH, 0L)
+                .putBoolean(PREF_PENDING_STRAP_ALARM_DISARM, true)
+                .apply()
+        }
+        if (!_state.value.connected) {
+            log("Alarm: disarm pending — strap offline; will DISABLE_ALARM on next connect")
+            return
+        }
         if (connectedFamily == DeviceFamily.WHOOP5) {
             // 5/MG DISABLE_ALARM is REVISION_2 [0x02, 0xFF]. Use an acknowledged write so cancel
             // follows the same reliable command lane as MG alarm arm and automation buzz.

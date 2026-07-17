@@ -13,8 +13,9 @@ import org.junit.Test
  * reads straight off DailyMetric, so the pure logic worth pinning is the two tiles with an imported
  * fallback source:
  *   - [latestWeightKg] picks the most-recent non-null body weight across the two Apple-side sources.
- *   - [weightTile] prefers that weight, else falls back to the SI profile weight with an honest
- *     "from profile" caption, always formatted through the unit toggle.
+ *   - [weightTile] prefers Health when no profile edit stamp (or Health day is newer than the
+ *     edit day); otherwise shows the SI profile weight with an honest "from profile" caption so a
+ *     just-typed Today/Settings weight updates Key Metrics immediately.
  *   - [stepsForDay] resolves the selected day's imported Apple Health / Health Connect step total —
  *     the Steps tile's fallback when the strap (e.g. a WHOOP 4.0) didn't bank an on-device count.
  */
@@ -60,17 +61,25 @@ class TodayMetricTilesTest {
         assertEquals(77.0, latestWeightKg(apple, healthConnect)!!, 1e-9)
     }
 
+    @Test
+    fun latestBodyWeight_includesDay() {
+        val apple = listOf(appleDay("2026-01-04", 80.0))
+        val latest = latestBodyWeight(apple, emptyList())!!
+        assertEquals(80.0, latest.kg, 1e-9)
+        assertEquals("2026-01-04", latest.day)
+    }
+
     // MARK: weightTile
 
     @Test
-    fun weightTile_usesLatestReading_metric() {
+    fun weightTile_usesLatestReading_metric_whenNoProfileEdit() {
         val t = weightTile(latestWeightKg = 74.5, profileWeightKg = 90.0, system = UnitSystem.METRIC)
         assertEquals("74.5 kg", t.value)
         assertEquals("latest", t.caption)
     }
 
     @Test
-    fun weightTile_usesLatestReading_imperial() {
+    fun weightTile_usesLatestReading_imperial_whenNoProfileEdit() {
         val t = weightTile(latestWeightKg = 100.0, profileWeightKg = 90.0, system = UnitSystem.IMPERIAL)
         // 100 kg * 2.20462 = 220.462 lb
         assertEquals("220.5 lb", t.value)
@@ -90,6 +99,60 @@ class TodayMetricTilesTest {
         // 75 kg * 2.20462 = 165.3465 lb
         assertEquals("165.3 lb", t.value)
         assertEquals("from profile", t.caption)
+    }
+
+    @Test
+    fun weightTile_typedProfileWinsOverSameDayHealth() {
+        // P0 Gilbert: HC "latest" must not freeze the Key Metrics digit after a Today save.
+        val t = weightTile(
+            latestWeightKg = 74.5,
+            latestWeightDay = "2026-07-17",
+            profileWeightKg = 90.0,
+            profileWeightEditedAtMs = 1L,
+            profileEditDayKey = "2026-07-17",
+            system = UnitSystem.METRIC,
+        )
+        assertEquals("90.0 kg", t.value)
+        assertEquals("from profile", t.caption)
+    }
+
+    @Test
+    fun weightTile_typedProfileWinsOverOlderHealthDay() {
+        val t = weightTile(
+            latestWeightKg = 74.5,
+            latestWeightDay = "2026-07-10",
+            profileWeightKg = 88.0,
+            profileWeightEditedAtMs = 1L,
+            profileEditDayKey = "2026-07-17",
+            system = UnitSystem.METRIC,
+        )
+        assertEquals("88.0 kg", t.value)
+        assertEquals("from profile", t.caption)
+    }
+
+    @Test
+    fun weightTile_newerHealthDayBeatsOlderProfileEdit() {
+        val t = weightTile(
+            latestWeightKg = 76.0,
+            latestWeightDay = "2026-07-18",
+            profileWeightKg = 90.0,
+            profileWeightEditedAtMs = 1L,
+            profileEditDayKey = "2026-07-17",
+            system = UnitSystem.METRIC,
+        )
+        assertEquals("76.0 kg", t.value)
+        assertEquals("latest", t.caption)
+    }
+
+    @Test
+    fun preferProfileWeight_falseWhenNeverEditedAndHealthPresent() {
+        assertFalse(
+            preferProfileWeight(
+                latestWeightKg = 80.0,
+                latestWeightDay = "2026-07-17",
+                profileWeightEditedAtMs = 0L,
+            ),
+        )
     }
 
     // MARK: stepsForDay — Today Steps-tile fallback to imported Apple Health / Health Connect (#150)
@@ -191,7 +254,7 @@ class TodayMetricTilesTest {
     fun keyMetrics_defaultOmitsHealthOwnedVitals() {
         // Health owns HRV / RHR / Resp / SpO₂ chips — Today defaults without them (editor can re-enable).
         for (m in KeyMetric.healthOwnedOptional) {
-            assertTrue(m !in KeyMetric.defaultOrder, "$m should default OFF on Today")
+            assertTrue("$m should default OFF on Today", m !in KeyMetric.defaultOrder)
         }
         assertTrue(KeyMetric.STEPS in KeyMetric.defaultOrder)
         assertTrue(KeyMetric.CHARGE in KeyMetric.defaultOrder)
@@ -509,6 +572,22 @@ class TodayMetricTilesTest {
     }
 
     @Test
+    fun effectiveEffortStrain_treatsZeroAsNoLoad_notFakeZeroPointZero() {
+        // Fold 2026-07-16 / Gilbert P0: calm resting-only TRIMP → StrainScorer 0.0 must not paint "0.0 load".
+        assertNull(effectiveEffortStrain(live = 0.0, stored = null, storedDayKey = null, selectedDayKey = "2026-07-16"))
+        assertNull(
+            effectiveEffortStrain(live = null, stored = 0.0, storedDayKey = "2026-07-16", selectedDayKey = "2026-07-16"),
+        )
+        assertNull(
+            effectiveEffortStrain(live = 0.0, stored = 0.0, storedDayKey = "2026-07-16", selectedDayKey = "2026-07-16"),
+        )
+        assertEquals(
+            8.0,
+            effectiveEffortStrain(live = 0.0, stored = 8.0, storedDayKey = "2026-07-16", selectedDayKey = "2026-07-16"),
+        )
+    }
+
+    @Test
     fun effortKeyTileFrac_matchesVesselAxis() {
         // 50/100 Effort → half tube on 0–100; same stored value → ~half on 0–21 after scale.
         assertEquals(0.5, effortKeyTileFrac(50.0, EffortScale.HUNDRED), 1e-9)
@@ -520,5 +599,30 @@ class TodayMetricTilesTest {
     fun effortKeyTileCaption_matchesVesselScale() {
         assertEquals("of 100", effortKeyTileCaption(EffortScale.HUNDRED))
         assertEquals("of 21", effortKeyTileCaption(EffortScale.WHOOP))
+    }
+
+    // Fold pull 2026-07-16: Jul 11–13 banked avgHrv while recovery stayed null. Recovery-gated
+    // carry blanks HRV; overnight* helpers + lastVitalsRow keep the banked ms on Today/Health.
+    @Test
+    fun overnightHelpers_andLastVitals_keepFoldBankedHrvWhenRecoveryNull() {
+        val days = listOf(
+            recDay("2026-07-10", null, hrv = 41.6, rhr = 55),
+            recDay("2026-07-11", null, hrv = 56.0, rhr = 52),
+            recDay("2026-07-13", null, hrv = 44.0, rhr = 53),
+            recDay("2026-07-14", null), // today shell, no overnight yet
+        )
+        val scored = lastScoredRecoveryDay(
+            days, selectedDayKey = "2026-07-14",
+            isToday = true, todayScored = false, isCalibrating = false,
+            today = "2026-07-14",
+        )
+        assertNull(scored) // recovery-gated carry would blank HRV tiles
+
+        val vitals = lastVitalsRow(days, todayKey = "2026-07-14")
+        assertEquals("2026-07-13", vitals?.day)
+        assertEquals(44.0, overnightHrvMs(null, vitals))
+        assertEquals(53, overnightRestingHr(null, vitals))
+        assertEquals(56.0, overnightHrvMs(recDay("2026-07-14", null, hrv = 56.0), vitals))
+        assertNull(overnightHrvMs(null, null))
     }
 }

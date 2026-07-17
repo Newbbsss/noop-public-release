@@ -127,7 +127,10 @@ private data class MetricSpec(
     val displayUnit: String get() = if (whoopEffort) "/21" else unit
 
     fun format(v: Double): String {
-        if (!v.isFinite()) return ","
+        if (!v.isFinite()) return "—"
+        // Effort / Sleep honesty — never paint a bare 0.0 shell for empty cardio or zero asleep.
+        if (key == "strain" && v <= 0.0) return "—"
+        if (key == "sleep" && v <= 0.0) return "—"
         // Effort (#268): the stored value is 0–100; convert to 0–21 for display when that scale is picked.
         val shown = if (whoopEffort) UnitFormatter.effortValue(v, EffortScale.WHOOP) else v
         val n = if (decimals == 0) "${shown.roundToInt()}" else String.format(Locale.US, "%.${decimals}f", shown)
@@ -474,7 +477,7 @@ private fun DeepTimelineEntry(onClick: () -> Unit) {
                 modifier = Modifier
                     .size(42.dp)
                     .clip(RoundedCornerShape(11.dp))
-                    .background(Palette.metricRose.copy(alpha = StrandAlpha.chartFillStrong)),
+                    .background(Palette.metricRose.copy(alpha = StrandAlpha.chartFillStrongResolved())),
                 contentAlignment = Alignment.Center,
             ) {
                 Text("∿", style = NoopType.title2, color = Palette.metricRose)
@@ -609,7 +612,7 @@ private fun HeroChartCard(
     range: ExploreRange,
     fellBack: Boolean,
 ) {
-    val heroValue = latest?.let { metric.format(it.value) } ?: ","
+    val heroValue = latest?.let { metric.format(it.value) } ?: "—"
     val asOf = latest?.let { "as of ${it.day}" } ?: "no readings yet"
     // The range bar above already prints the authoritative reading-count caption; the hero only
     // names its window so the count isn't doubled in one card height.
@@ -773,7 +776,7 @@ private fun StatRow(
     val prevStat = statOf(prev.map { it.value })
     val hasDelta = s.n > 0 && prevStat.n > 0
     val delta = if (hasDelta) s.mean - prevStat.mean else Double.NaN
-    val deltaText = if (hasDelta) signed(metric, delta) else ","
+    val deltaText = if (hasDelta) signed(metric, delta) else "—"
     val pctChange = if (hasDelta && prevStat.mean != 0.0) {
         ((s.mean - prevStat.mean) / abs(prevStat.mean)) * 100.0
     } else null
@@ -795,20 +798,20 @@ private fun StatRow(
             StatTile(
                 modifier = Modifier.weight(1f),
                 label = "Average",
-                value = if (s.n > 0) metric.format(s.mean) else ",",
+                value = if (s.n > 0) metric.format(s.mean) else "—",
                 caption = "${s.n} days",
                 accent = metric.accent,
             )
             StatTile(
                 modifier = Modifier.weight(1f),
                 label = "Min",
-                value = if (s.n > 0) metric.format(s.min) else ",",
+                value = if (s.n > 0) metric.format(s.min) else "—",
                 accent = Palette.textPrimary,
             )
             StatTile(
                 modifier = Modifier.weight(1f),
                 label = "Max",
-                value = if (s.n > 0) metric.format(s.max) else ",",
+                value = if (s.n > 0) metric.format(s.max) else "—",
                 accent = Palette.textPrimary,
             )
         }
@@ -820,7 +823,7 @@ private fun StatRow(
             StatTile(
                 modifier = Modifier.weight(1f),
                 label = "Latest",
-                value = latest?.let { metric.format(it.value) } ?: ",",
+                value = latest?.let { metric.format(it.value) } ?: "—",
                 caption = latest?.day,
                 accent = metric.accent,
             )
@@ -865,7 +868,7 @@ private fun rangeCaption(
     effectiveRange: ExploreRange,
     fellBack: Boolean,
 ): String {
-    if (series.isEmpty()) return ","
+    if (series.isEmpty()) return "—"
     val n = windowed.size
     val unit = if (n == 1) "reading" else "readings"
     return if (fellBack) "$n $unit · sparse , widened to ${effectiveRange.windowName}"

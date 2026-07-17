@@ -2,20 +2,20 @@
 #
 # Use this from Windows when Mac xcodebuild is unavailable, after source is on
 # Newbbsss/noop-public-release. Attaches NOOP-ios-unsigned-v*.ipa to an existing release
-# tag (default v8.6.151-fable) without clobbering the MAIN APK via fork-release.
+# tag (default v8.6.164-fable) without clobbering the MAIN APK via fork-release.
 name: iOS IPA (unsigned)
 
 on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Version stamp in IPA filename (e.g. 8.6.151-fable)"
+        description: "Version stamp in IPA filename (e.g. 8.6.164-fable)"
         required: true
-        default: "8.6.151-fable"
+        default: "8.6.164-fable"
       release_tag:
         description: "Existing GitHub release tag to attach the IPA (blank = testing-latest)"
         required: false
-        default: "v8.6.151-fable"
+        default: "v8.6.164-fable"
 
 permissions:
   contents: write

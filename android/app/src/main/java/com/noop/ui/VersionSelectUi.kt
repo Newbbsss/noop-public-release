@@ -95,12 +95,17 @@ fun VersionSelectSection() {
                 )
             ) {
                 is ApkInstaller.DownloadResult.Ready -> {
-                    statusLine = "Opening installerâ€¦"
-                    val ok = ApkInstaller.install(context, dl.file)
-                    statusLine = if (ok) {
-                        "Installer opened for ${rel.version}."
+                    val mismatch = ApkInstaller.packageMismatchReason(context, dl.file)
+                    if (mismatch != null) {
+                        statusLine = mismatch
                     } else {
-                        "Couldn't open installer. Retry, or open the APK from GitHub Releases."
+                        statusLine = "Opening installerâ€¦"
+                        val ok = ApkInstaller.install(context, dl.file)
+                        statusLine = if (ok) {
+                            "Installer opened for ${rel.version}."
+                        } else {
+                            "Couldn't open installer. Retry, or open the APK from GitHub Releases."
+                        }
                     }
                 }
                 is ApkInstaller.DownloadResult.Failed -> {

@@ -98,15 +98,23 @@ fun GlassDiffusionVeil(
     softenBottomEdge: Boolean = false,
 ) {
     val sink = sinkProgress.coerceIn(0f, 1f)
+    val light = Palette.isLight
     // Light: no white mist boost — prior +0.10 / mist 0.20 washed paper under day-cycle.
     val lightBoost = 0f
     // #398 — day-cycle OFF must stay quieter than ON (raising alphas washed the + glow).
-    val aPeak = (((if (dayCycleOn) 0.58f else 0.48f) + lightBoost) * (1f + 0.22f * sink))
-        .coerceAtMost(0.86f)
+    // Light top header: denser paper peak so Settings/scaffold titles aren't sky-blown.
+    val peakBase = when {
+        light && fromTop && dayCycleOn -> 0.72f
+        light && fromTop -> 0.62f
+        dayCycleOn -> 0.58f
+        else -> 0.48f
+    }
+    val aPeak = ((peakBase + lightBoost) * (1f + 0.22f * sink)).coerceAtMost(if (light) 0.92f else 0.86f)
     val aMid = ((if (dayCycleOn) 0.34f else 0.28f) + lightBoost * 0.7f) * (1f + 0.16f * sink)
     val aSoft = ((if (dayCycleOn) 0.14f else 0.10f) + lightBoost * 0.4f) * (1f + 0.12f * sink)
-    val base = Palette.surfaceBase
-    val mistA = if (Palette.isLight) 0.06f else 0.09f
+    // Light top veil uses raised paper (not mid canvas) so the header reads as chrome, not mud.
+    val base = if (light && fromTop) Palette.surfaceRaised else Palette.surfaceBase
+    val mistA = if (light) 0.04f else 0.09f
 
     Canvas(
         modifier = modifier
@@ -154,16 +162,17 @@ fun GlassDiffusionVeil(
             )
         }
         drawRect(brush = Brush.verticalGradient(colorStops = stops))
-        // Fold / wide side punch — skip when softening bottom nav (Samsung cut artifact).
-        if (w >= 420f && !softenBottomEdge) {
+        // Fold / wide side falloff — soft DstOut only (SHIP #370: 0.90 Black punched holes in + glow).
+        // Skip on light paper (no OLED edge bloom to tame) and when softening bottom nav.
+        if (w >= 420f && !softenBottomEdge && !light) {
             val edge = (w * 0.09f).coerceIn(40f, 110f)
             drawRect(
                 brush = Brush.horizontalGradient(
                     colorStops = arrayOf(
-                        0.0f to Color.Black.copy(alpha = 0.90f),
+                        0.0f to Color.Black.copy(alpha = 0.28f),
                         (edge / w) to Color.Transparent,
                         (1f - edge / w) to Color.Transparent,
-                        1.0f to Color.Black.copy(alpha = 0.90f),
+                        1.0f to Color.Black.copy(alpha = 0.28f),
                     ),
                 ),
                 blendMode = BlendMode.DstOut,

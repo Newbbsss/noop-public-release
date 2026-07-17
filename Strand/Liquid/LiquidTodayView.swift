@@ -36,6 +36,8 @@ struct LiquidTodayView: View {
 
     // sheets / expanders
     @State private var guideSection: ScoreSection?
+    /// Lacquer cloud explain overlay (Android TodayCloudExplain finale parity). Nil = closed.
+    @State private var cloudExplainSection: ScoreSection?
     @State private var showCustomise = false
     @State private var showSettings = false
     @State private var synthesisExpanded = false
@@ -258,6 +260,17 @@ struct LiquidTodayView: View {
         .sheet(item: $guideSection) { section in
             NavigationStack { ScoringGuideView(initialSection: section, onClose: { guideSection = nil }) }
         }
+        .overlay {
+            if let section = cloudExplainSection {
+                LiquidTodayCloudExplain(
+                    section: section,
+                    onClose: { withAnimation(.easeOut(duration: 0.28)) { cloudExplainSection = nil } }
+                )
+                .transition(.opacity.combined(with: .scale(scale: 0.92, anchor: .top)))
+                .zIndex(40)
+            }
+        }
+        .animation(.spring(response: 0.38, dampingFraction: 0.86), value: cloudExplainSection?.rawValue)
         .sheet(isPresented: $showCustomise) {
             DashboardCardsEditorSheet(selectionRaw: $dashboardCardsRaw)
         }
@@ -419,11 +432,14 @@ struct LiquidTodayView: View {
     private var heroCard: some View {
         HStack(alignment: .top, spacing: 4) {
             HeroScoreCell(label: String(localized: "Charge"), score: displayDay?.recovery, tint: StrandPalette.chargeColor,
-                          pill: "WHOOP", animated: dataLoaded, onGuide: { guideSection = .charge })
+                          pill: "WHOOP", animated: dataLoaded,
+                          onGuide: { openCloudExplain(.charge) })
             HeroScoreCell(label: String(localized: "Effort"), score: displayDay?.strain, tint: StrandPalette.effortColor,
-                          pill: nil, animated: dataLoaded, onGuide: { guideSection = .effort })
+                          pill: nil, animated: dataLoaded,
+                          onGuide: { openCloudExplain(.effort) })
             HeroScoreCell(label: String(localized: "Rest"), score: restScore, tint: StrandPalette.restColor,
-                          pill: "WHOOP", animated: dataLoaded, onGuide: { guideSection = .rest })
+                          pill: "WHOOP", animated: dataLoaded,
+                          onGuide: { openCloudExplain(.rest) })
         }
         .padding(.vertical, 16)
         .padding(.horizontal, 12)
@@ -435,6 +451,16 @@ struct LiquidTodayView: View {
                 .shadow(color: .black.opacity(0.6), radius: 30, y: 16)
                 .opacity(cardOpacity)
         )
+    }
+
+    /// Android TodayCloudExplain parity — vessel / label opens the scoring explain inside a lacquer overlay
+    /// (Reduce Motion → instant sheet via guideSection).
+    private func openCloudExplain(_ section: ScoreSection) {
+        if reduceMotion {
+            guideSection = section
+        } else {
+            cloudExplainSection = section
+        }
     }
 
     // MARK: - Heart rate
@@ -952,10 +978,8 @@ struct LiquidTodayView: View {
     private var effortScale: EffortScale { UnitPrefs.resolveEffortScale(effortScaleRaw) }
 
     private func effortText(_ s: Double?) -> String {
-        guard let s else { return "–" }
-        // Route through the shared formatter instead of hardcoding *21: a default (0–100) user was shown the
-        // WHOOP-scaled number here while the hero + Workouts table showed 0–100, two numbers for one workout.
-        return UnitFormatter.effortDisplay(s, scale: effortScale)
+        // Honesty twin of Android effortDisplayOrEmpty — calm ≤0 never paints "0.0" / "0".
+        UnitFormatter.effortDisplayOrEmpty(s, scale: effortScale, empty: "–")
     }
 
     private func workoutSub(_ w: WorkoutRow) -> String {
@@ -1093,6 +1117,8 @@ private struct HeroScoreCell: View {
                 .minimumScaleFactor(0.6)
                 .allowsHitTesting(false)   // taps fall through to the vessel → splash
             }
+            // Android cloud explain: vessel tap also opens What-shaped-it (splash still fires).
+            .simultaneousGesture(TapGesture().onEnded { onGuide() })
             Button(action: onGuide) {
                 HStack(spacing: 3) {
                     Text(label.uppercased()).font(StrandFont.overline).tracking(1.6)

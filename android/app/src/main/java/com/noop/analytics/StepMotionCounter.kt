@@ -40,13 +40,19 @@ object StepMotionCounter {
         for (i in 1 until sorted.size) {
             val previous = sorted[i - 1]
             val current = sorted[i]
-            val delta = (current.counter - previous.counter) and 0xFFFF
+            var delta = (current.counter - previous.counter) and 0xFFFF
             val elapsed = (current.ts - previous.ts).coerceAtLeast(1)
-            val rate = delta.toDouble() / elapsed
-            if (delta <= 0 || delta >= MAX_DELTA || rate > MAX_TICKS_PER_SECOND) {
-                rejected += delta
-                continue
+            if (delta <= 0) continue
+            // Cumulative @57 counter: BLE gaps often land as one large delta with a *plausible*
+            // walking rate (e.g. 600 ticks / 300 s = 2/s). Hard-rejecting delta≥256 discarded
+            // those catch-ups and under-counted vs WHOOP (~10–11k/day → NOOP ~5.7k on Fold Jul 14).
+            // Clip to max plausible rate instead of dropping the whole gap.
+            val maxByRate = (MAX_TICKS_PER_SECOND * elapsed).toInt().coerceAtLeast(1)
+            if (delta > maxByRate) {
+                rejected += delta - maxByRate
+                delta = maxByRate
             }
+            val rate = delta.toDouble() / elapsed
             // Shake-learned noise floor: slow counter creep while "still" is discarded in production.
             if (mode == Mode.Production &&
                 noiseFloorTicksPerSec > 0.0 &&
@@ -113,6 +119,6 @@ object StepMotionCounter {
         return (acceptedTicks / k).toInt().coerceIn(0, 60_000)
     }
 
-    private const val MAX_DELTA = 256
+    /** Max plausible @57 tick rate (walk/run); faster bursts are clipped, not dropped. */
     private const val MAX_TICKS_PER_SECOND = 4.0
 }

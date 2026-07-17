@@ -1,5 +1,6 @@
 package com.noop.ui
 
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -34,7 +35,20 @@ class MayShowRestVesselTest {
     }
 
     @Test
-    fun healthConnectBlanked() {
-        assertFalse(mayShowRestVessel(75.0, "health-connect", "Health Connect"))
+    fun healthConnectAsleepShows() {
+        // SHIP #74 — HC asleep fused into Rest must not stay blank like Charge recovery.
+        assertTrue(mayShowRestVessel(75.0, "health-connect", "Health Connect"))
+    }
+
+    @Test
+    fun restSourceCaptionMarksHc() {
+        assertEquals(
+            "HC asleep · Sleep tab",
+            restSourceCaption(80.0, "Health Connect"),
+        )
+        assertEquals(
+            "night readiness · Sleep tab",
+            restSourceCaption(80.0, "On-device"),
+        )
     }
 }

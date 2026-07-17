@@ -2,6 +2,7 @@ package com.noop.ui
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -49,5 +50,20 @@ class SleepStageSegmentsTest {
         assertNull(parsePersistedSegments("not json"))
         assertNull(parsePersistedSegments(null))
         assertNull(parsePersistedSegments(""))
+    }
+
+    @Test
+    fun stageSegmentsNeverInventsRemOrDeep() {
+        // SHIP #79 — light-only bank must not paint REM/Deep bands.
+        val segs = stageSegments(Stages(awake = 20.0, light = 300.0, deep = 0.0, rem = 0.0))
+        assertTrue(segs.none { it.first == "rem" || it.first == "deep" })
+        assertTrue(segs.any { it.first == "light" })
+        val timed = synthesizeTimelineSegments(
+            Stages(awake = 0.0, light = 240.0, deep = 0.0, rem = 0.0),
+            onsetTs = 1_000L,
+            wakeTs = 1_000L + 240L * 60L,
+        )
+        assertTrue(timed.none { it.stage.equals("rem", ignoreCase = true) })
+        assertTrue(timed.none { it.stage.equals("deep", ignoreCase = true) })
     }
 }

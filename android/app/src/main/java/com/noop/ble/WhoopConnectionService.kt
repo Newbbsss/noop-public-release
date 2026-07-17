@@ -266,7 +266,8 @@ class WhoopConnectionService : Service() {
                             // figures (pure, honest-null until last night is scored); Effort = the 0-100
                             // strain. Widget-only carry, so it shows the same day as Today. (#516/#911)
                             restPct = anchorRow?.let { RestScorer.restFromDaily(it)?.roundToInt() },
-                            effortPct = anchorRow?.strain?.roundToInt(),
+                            // ≤0 strain is calm TRIMP, not a scored load — match Today honesty (8.6.155/156).
+                            effortPct = anchorRow?.strain?.takeIf { it > 0.0 }?.roundToInt(),
                             heartRate = state.heartRate,
                             batteryPct = state.batteryPct?.roundToInt(),
                             connected = state.connected,

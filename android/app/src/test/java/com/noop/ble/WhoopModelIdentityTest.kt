@@ -52,9 +52,9 @@ class WhoopModelIdentityTest {
 
     @Test
     fun pickBondedWhoop5_prefersPinThenSavedThenLiveThenMg() {
-        val dead = WhoopBleClient.BondedWhoopCandidate("AA:01", "WHOOP 5AM", false)
-        val liveMg = WhoopBleClient.BondedWhoopCandidate("AA:02", "WHOOP MG", true)
-        val other = WhoopBleClient.BondedWhoopCandidate("AA:03", "WHOOP 5.0", false)
+        val dead = BondedWhoopCandidate("AA:01", "WHOOP 5AM", false)
+        val liveMg = BondedWhoopCandidate("AA:02", "WHOOP MG", true)
+        val other = BondedWhoopCandidate("AA:03", "WHOOP 5.0", false)
         val all = listOf(dead, liveMg, other)
 
         assertEquals(

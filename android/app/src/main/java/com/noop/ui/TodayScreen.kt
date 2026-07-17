@@ -352,6 +352,11 @@ fun TodayScreen(
             initialValue = TodayLiveSnapshot(false, false, null, false, 0, false, null, false, null, false),
         )
     // #289 — Pair CTA session dismiss; refresh on resume after Devices.
+    // Body profile weight also re-reads on resume so Settings edits land on the Weight tile.
+    val context = LocalContext.current
+    val profileStore = remember { ProfileStore.from(context) }
+    var profileWeightKg by remember { mutableStateOf(profileStore.weightKg) }
+    var profileWeightEditedAtMs by remember { mutableStateOf(profileStore.weightEditedAtMs) }
     var devicesOpenedThisSession by remember {
         mutableStateOf(SessionUiFlags.devicesOpenedThisSession)
     }
@@ -360,6 +365,8 @@ fun TodayScreen(
         val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
             if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
                 devicesOpenedThisSession = SessionUiFlags.devicesOpenedThisSession
+                profileWeightKg = profileStore.weightKg
+                profileWeightEditedAtMs = profileStore.weightEditedAtMs
             }
         }
         pairLifecycleOwner.lifecycle.addObserver(observer)
@@ -455,15 +462,12 @@ fun TodayScreen(
     }
     // Display-only unit system + the SI profile weight, read once like every other Settings-backed
     // preference (SharedPreferences isn't reactive, a Settings write triggers recomposition).
-    val context = LocalContext.current
     val unitSystem = UnitPrefs.system(context)
     // Effort display scale (#268), drives the Effort tile's value + caption. Display-only.
     val effortScale = UnitPrefs.effortScale(context)
     // Body profile for the live Effort computation below, age/sex/HR-max-override drive the same
     // StrainScorer call the daily pass uses. Read once like every other Settings-backed value. (#402)
-    val profileStore = remember { ProfileStore.from(context) }
-    // Profile weight for the Weight tile + entry sheet — mutable so a Today save refreshes the tile.
-    var profileWeightKg by remember { mutableStateOf(profileStore.weightKg) }
+    // Profile weight state is declared earlier (ON_RESUME refresh next to Pair CTA).
     var showWeightSheet by remember { mutableStateOf(false) }
 
     // Editable Key-Metrics layout (#251), an ordered list of the enabled tiles, persisted display-only.
@@ -827,26 +831,25 @@ fun TodayScreen(
         )
     }
 
-    // The newest Apple Health / Health Connect body weight, loaded off the main thread. Null until the
-    // load runs or when neither source carries a weight, the Weight tile then falls back to the profile.
+    // The newest Apple Health / Health Connect body weight (+ its day), loaded off the main thread.
+    // Null until the load runs or when neither source carries a weight; the Weight tile then falls
+    // back to the profile (and a just-typed profile wins over a same-day-or-older Health reading).
     var weightKg by remember { mutableStateOf<Double?>(null) }
+    var weightDay by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(days) {
-        weightKg = latestWeightKg(
+        val latest = latestBodyWeight(
             viewModel.repo.appleDaily("apple-health", "0000-01-01", "9999-12-31"),
             viewModel.repo.appleDaily("health-connect", "0000-01-01", "9999-12-31"),
         )
+        weightKg = latest?.kg
+        weightDay = latest?.day
     }
 
-    // Steps for the selected day from imported Apple Health / Health Connect data, the Today Steps
-    // tile's fallback when the strap itself didn't bank an on-device count. A WHOOP 4.0 DOES count
-    // steps (in the official WHOOP app), but NOOP can't yet read them off the strap over Bluetooth, so
-    // on a 4.0 the tile shows your imported steps instead of "No Data". Reloads as the day selector
-    // moves. On-device WHOOP 5/MG steps still take precedence. (#150)
+    // Phone/HC steps for the selected day — Settings calibrate compare + "≠ phone" caption only.
+    // Today Steps digit never prefers phone (Gilbert 2026-07-17: band IMU/@57 only).
     var importedStepsForDay by remember { mutableStateOf<Int?>(null) }
     LaunchedEffect(days, selectedDayKey) {
-        // Today's steps keep moving after the manual one-shot HC import, so the stored row goes
-        // stale within minutes, top it up with ONE live StepsRecord read before the stored-row
-        // read below. Best-effort: any HC hiccup just falls through to whatever is stored. (#150)
+        // Refresh HC today for calibrate-compare captions; never used as the primary digit.
         if (selectedDayOffset == 0) {
             try {
                 HealthConnectImporter.refreshTodaySteps(context, viewModel.repo)
@@ -859,11 +862,8 @@ fun TodayScreen(
         )
     }
 
-    // On-device steps ESTIMATE for the selected day (key "steps_est", computed "-noop" source). The
-    // Steps tile prefers a REAL step count (strap @57 counter / imported Health Connect); only when a
-    // day has NEITHER does it fall back to this estimate, shown with an "est." caption so it's never read
-    // as a measured count. resolvedSeries reads the computed source for the my-whoop key, exactly like
-    // the Explore "steps_est" metric. Null until loaded / no estimate for the day. (#150)
+    // Band motion estimate (key "steps_est") — used when no @57 strap counter for the day.
+    // Prefer order: strap DailyMetric.steps → steps_est. Phone is never the digit. (#150 / 2026-07-17)
     var stepsEstForDay by remember { mutableStateOf<Int?>(null) }
     LaunchedEffect(days, selectedDayKey) {
         val byDay = runCatching {
@@ -2253,18 +2253,24 @@ fun TodayScreen(
                 recoveryCalibration = recoveryCalibration,
                 lastScoredCharge = lastScoredCharge,
                 carriedDay = lastScoredRecoveryDay,
+                // Overnight vitals (HRV/RHR/resp) use recovery-INDEPENDENT carry — never blank when
+                // Charge was nulled but avgHrv survived (#543 follow-up / Gilbert P0 HRV missing).
+                vitalsDay = lastVitalsDay,
                 unitSystem = unitSystem,
                 effortScale = effortScale,
                 // Same live + same-day floor as the Effort vessel — Key Metrics must not lag on stored-only.
                 liveTodayStrain = if (selectedDayOffset == 0) liveTodayStrain else null,
                 selectedDayKey = selectedDayKey,
                 latestWeightKg = weightKg,
+                latestWeightDay = weightDay,
                 profileWeightKg = profileWeightKg,
+                profileWeightEditedAtMs = profileWeightEditedAtMs,
                 importedStepsForDay = importedStepsForDay,
                 estimatedStepsForDay = stepsEstForDay,
                 stepActivityClassForDay = stepActivityClassForDay,
                 stepsEstimateCaption = stepsEstimateCaption(profileStore),
                 restScore = restScoreForDay,
+                restProvenanceLabel = restProvenance,
                 restSpark = restCompositeSpark,
                 stress = stressToday,
                 stressCalibNightsLeft = stressCalibNightsLeft,
@@ -2345,6 +2351,7 @@ fun TodayScreen(
                 days = days,
                 displayDay = displayMetric,
                 carriedDay = lastScoredRecoveryDay,
+                vitalsDay = lastVitalsDay,
                 showReadiness = selectedDayOffset == 0,
                 onHowCalculated = {
                     showChargeBreakdown = false
@@ -2363,7 +2370,7 @@ fun TodayScreen(
                 selectedDayKey = selectedDayKey,
             )
         } else {
-            displayMetric?.strain
+            displayMetric?.strain?.takeIf { it > 0 }
         }
         TodayCloudExplainOverlay(
             visible = showEffortSheet,
@@ -2478,6 +2485,7 @@ fun TodayScreen(
             onSaveKg = { kg ->
                 profileStore.weightKg = kg
                 profileWeightKg = kg
+                profileWeightEditedAtMs = profileStore.weightEditedAtMs
                 showWeightSheet = false
             },
             onOpenHealth = {
@@ -2552,6 +2560,7 @@ private fun TodayQuickAlarmMakerCard(viewModel: AppViewModel, onOpenAlarm: () ->
     val statusColor = alarmArmStatusColor(enabled, canExact)
     val statusShape = RoundedCornerShape(50)
     var showWakePicker by remember { mutableStateOf(false) }
+    var showBedPicker by remember { mutableStateOf(false) }
     // TODAY_STYLE #48 — Quick chrome is finite settle only; never infinite breath (Reduce Motion = instant).
     val armSettle by animateFloatAsState(
         targetValue = if (enabled) 1f else 0.92f,
@@ -2677,7 +2686,13 @@ private fun TodayQuickAlarmMakerCard(viewModel: AppViewModel, onOpenAlarm: () ->
                             weight = FontWeight.Bold,
                         ),
                         color = alarmBedChromeColor(),
-                        modifier = Modifier.semantics { heading() },
+                        modifier = Modifier
+                            .heightIn(min = 40.dp)
+                            .clickable {
+                                showBedPicker = true
+                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            }
+                            .semantics { heading(); contentDescription = "Bedtime" },
                     )
                     Text(
                         formatAimSleepDuration(needMin),
@@ -2782,13 +2797,25 @@ private fun TodayQuickAlarmMakerCard(viewModel: AppViewModel, onOpenAlarm: () ->
                     .semantics { contentDescription = alarmArmToggleA11y(enabled) },
             )
             Text(
-                "Settings",
+                "Alarm home",
                 style = NoopType.footnote,
                 color = Palette.restColor,
                 modifier = Modifier
                     .clickable(onClick = onOpenAlarm)
                     .padding(vertical = 2.dp, horizontal = 4.dp)
                     .semantics { contentDescription = LifeChapterLacquer.ALARM_OPEN_WAKE_A11Y },
+            )
+        }
+        if (showBedPicker) {
+            NoopTimePickerDialog(
+                title = "Bedtime",
+                initialMinutes = suggestedBed,
+                onDismiss = { showBedPicker = false },
+                onConfirm = { picked ->
+                    viewModel.setPhoneAlarmTargetMinutes((picked + needMin) % (24 * 60))
+                    showBedPicker = false
+                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                },
             )
         }
         if (showWakePicker) {
@@ -3165,11 +3192,12 @@ private fun TodayHealthStrip(
     // Scope live BPM here so the Today body does not recompose on every beat.
     val live by vm.live.collectAsStateWithLifecycle()
     val hr = live.heartRate
-    val vd = day ?: vitalsDay
-    val spo2 = vd?.spo2Pct
-    val skin = vd?.skinTempDevC
-    val resp = vd?.respRateBpm
-    val hrv = vd?.avgHrv
+    // Per-field today-first + vitalsDay (Fold 2026-07-16): a mid-day shell row with null avgHrv
+    // must NOT blank overnight HRV — `day ?: vitalsDay` preferred the empty shell (#543 / Gilbert P0).
+    val spo2 = day?.spo2Pct ?: vitalsDay?.spo2Pct
+    val skin = day?.skinTempDevC ?: vitalsDay?.skinTempDevC
+    val resp = overnightRespBpm(day, vitalsDay)
+    val hrv = overnightHrvMs(day, vitalsDay)
     val interaction = remember { MutableInteractionSource() }
     val gap = if (compact) 6.dp else 8.dp
     // Rose = Health HR identity — not Recovery tint (vitals live on Health, not a ghost Recovery card).
@@ -4024,6 +4052,9 @@ internal fun mayShowChargeVessel(
  * Charge uses [mayShowChargeVessel]; Rest must show scored nights — including
  * imported WHOOP CSV `sleep_performance` ("Whoop") and on-the-fly [RestScorer.restFromDaily]
  * when the series point is missing. Still blanks true **WHOOP app** manual labels.
+ *
+ * SHIP #74 — Health Connect asleep minutes that fused into Rest must surface (duration honesty),
+ * not stay gated like Charge recovery. Apple Health Rest stays blank (no asleep fusion path).
  */
 internal fun mayShowRestVessel(
     restScore: Double?,
@@ -4036,10 +4067,25 @@ internal fun mayShowRestVessel(
     if (raw == null) return true // restFromDaily / no series winner
     val l = restProvenanceLabel?.lowercase(Locale.US).orEmpty()
     if ("whoop app" in l) return false
-    // "Whoop" (CSV/import merge) is a real Rest % — show it. HC/Apple stay gated like Charge.
+    // "Whoop" (CSV/import merge) is a real Rest % — show it.
     if ("apple" in l) return false
-    if ("health connect" in l || "health-connect" in l) return false
+    // HC asleep → Rest duration / fused score is intentional (#74).
+    if ("health connect" in l || "health-connect" in l) return true
     return true
+}
+
+/** SHIP #74 — Rest Key Metrics / vessel honesty when HC asleep drove the score. */
+internal fun restSourceCaption(
+    restScore: Double?,
+    restProvenanceLabel: String?,
+): String? {
+    if (restScore == null) return null
+    val l = restProvenanceLabel?.lowercase(Locale.US).orEmpty()
+    return when {
+        "health connect" in l || "health-connect" in l ->
+            "HC asleep · Sleep tab"
+        else -> "night readiness · Sleep tab"
+    }
 }
 
 @Composable
@@ -5044,11 +5090,12 @@ private fun dashboardCardFraction(
         DashboardCard.STRESS -> over(stress, 3.0)
         DashboardCard.FITNESS_AGE -> if (fitnessAge != null) 0.5 else null
         DashboardCard.VITALITY -> over(vitality, 100.0)
-        DashboardCard.HRV -> over(day?.avgHrv ?: vitalsDay?.avgHrv, 120.0)
-        DashboardCard.RESTING_HR -> over((day?.restingHr ?: vitalsDay?.restingHr)?.toDouble(), 100.0)
-        DashboardCard.RESPIRATORY -> over(day?.respRateBpm ?: vitalsDay?.respRateBpm, 24.0)
+        DashboardCard.HRV -> over(overnightHrvMs(day, vitalsDay), 120.0)
+        DashboardCard.RESTING_HR -> over(overnightRestingHr(day, vitalsDay)?.toDouble(), 100.0)
+        DashboardCard.RESPIRATORY -> over(overnightRespBpm(day, vitalsDay), 24.0)
         DashboardCard.STEPS -> {
-            val steps = (day?.steps ?: importedStepsForDay ?: estimatedStepsForDay)?.toDouble()
+            val steps = (day?.steps ?: estimatedStepsForDay)?.toDouble()
+            // Phone HC intentionally omitted from spark frac — band only.
             over(steps, 10000.0)
         }
         DashboardCard.SLEEP -> over(vd?.totalSleepMin, 480.0)
@@ -5096,11 +5143,11 @@ private fun dashboardCardValue(
 
     return when (card) {
         DashboardCard.HRV ->
-            withUnit((day?.avgHrv ?: vitalsDay?.avgHrv)?.let { it.roundToInt().toString() } ?: NO_DATA)
+            withUnit(overnightHrvMs(day, vitalsDay)?.let { it.roundToInt().toString() } ?: NO_DATA)
         DashboardCard.RESTING_HR ->
-            withUnit((day?.restingHr ?: vitalsDay?.restingHr)?.toString() ?: NO_DATA)
+            withUnit(overnightRestingHr(day, vitalsDay)?.toString() ?: NO_DATA)
         DashboardCard.RESPIRATORY ->
-            withUnit((day?.respRateBpm ?: vitalsDay?.respRateBpm)?.let { String.format(Locale.US, "%.1f", it) } ?: NO_DATA)
+            withUnit(overnightRespBpm(day, vitalsDay)?.let { String.format(Locale.US, "%.1f", it) } ?: NO_DATA)
         DashboardCard.BLOOD_OXYGEN ->
             vd?.spo2Pct?.let { String.format(Locale.US, "%.0f%%", it) } ?: NO_DATA
         DashboardCard.SKIN_TEMP ->
@@ -5108,10 +5155,13 @@ private fun dashboardCardValue(
             vd?.skinTempDevC?.let { String.format(Locale.US, "%+.1f°", it) } ?: NO_DATA
         DashboardCard.SLEEP -> sleepValue(vd)
         DashboardCard.STEPS -> {
-            val real = day?.steps?.let { intStringGrouped(it.toDouble()) }
-                ?: importedStepsForDay?.let { intStringGrouped(it.toDouble()) }
-            val est = estimatedStepsForDay?.let { intStringGrouped(it.toDouble()) }
-            real ?: est ?: NO_DATA
+            // Band only (Gilbert 2026-07-17) — never phone HC digit.
+            val band = com.noop.analytics.HcNoopAlign.preferSteps(
+                strap = day?.steps,
+                hc = importedStepsForDay,
+                estimate = estimatedStepsForDay,
+            )
+            band?.let { intStringGrouped(it.toDouble()) } ?: NO_DATA
         }
         DashboardCard.CALORIES ->
             withUnit(latestActiveKcal?.let { intStringGrouped(it) } ?: NO_DATA)
@@ -5344,13 +5394,9 @@ private fun DashboardCardRow(
     }
 }
 
-/** #760/#792: the caption under an ESTIMATED Steps tile: "est. · <status detail>", where the detail is the
- *  engine's own STATUS line (manual k, or k=… from N days + confidence tier) built from the SAME persisted
- *  calibration the estimate used. So a WHOOP 4.0 user can see WHY the number reads as it does (and why it may
- *  look frozen at low confidence) right where they notice the "est." flag. Falls back to a bare "est." when no
- *  coefficient is recorded yet. Mirrors iOS `stepsEstimateCaption`. */
+/** #760/#792: caption under an ESTIMATED Steps tile — band gravity/IMU, never phone pedometer. */
 private fun stepsEstimateCaption(profileStore: ProfileStore): String {
-    if (profileStore.stepsCalibrationCoefficient <= 0.0) return "est."
+    if (profileStore.stepsCalibrationCoefficient <= 0.0) return "est. · band motion"
     val status: StepsEstimateEngine.CalibrationStatus = if (profileStore.stepsCalibrationManual) {
         StepsEstimateEngine.CalibrationStatus.Manual(
             coefficient = profileStore.stepsCalibrationCoefficient,
@@ -5530,6 +5576,7 @@ internal fun ChargeBreakdownSheet(
     days: List<DailyMetric>,
     displayDay: DailyMetric?,
     carriedDay: DailyMetric?,
+    vitalsDay: DailyMetric? = null,
     showReadiness: Boolean,
     onClose: () -> Unit,
     onHowCalculated: () -> Unit,
@@ -5564,6 +5611,7 @@ internal fun ChargeBreakdownSheet(
                     days = days,
                     displayDay = displayDay,
                     carriedDay = carriedDay,
+                    vitalsDay = vitalsDay,
                     showReadiness = showReadiness,
                     onHowCalculated = onHowCalculated,
                 )
@@ -5578,13 +5626,14 @@ internal fun ChargeBreakdownBody(
     days: List<DailyMetric>,
     displayDay: DailyMetric?,
     carriedDay: DailyMetric?,
+    vitalsDay: DailyMetric? = null,
     showReadiness: Boolean,
     onHowCalculated: () -> Unit,
 ) {
     // The breakdown self-gates: a calibrating night (empty drivers) renders nothing here, the
     // Contributors + Readiness below still give an honest read, never a blank sheet.
     RecoveryDriversSection(days = days, displayDay = displayDay, carriedDay = carriedDay)
-    RecoveryContributorsSection(day = displayDay, carriedDay = carriedDay)
+    RecoveryContributorsSection(day = displayDay, carriedDay = carriedDay, vitalsDay = vitalsDay)
     // S4: the SEPARATE Readiness block now lives here behind the Charge-ring tap (today-only,
     // matching the old inline gate). A one-word read (Push / Maintain / Rest) stays on the hero.
     if (showReadiness) ReadinessSection(days, carriedDay = carriedDay)
@@ -5641,7 +5690,7 @@ internal fun ChargeBreakdownBody(
 
 /**
  * Today Weight tile entry — typeable profile kg/lb (same StepperField as Settings).
- * Health Connect / Apple readings still win the tile number when present; this edits the profile fallback.
+ * A save stamps the profile and wins Key Metrics over a same-day (or older) Health reading.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -5872,18 +5921,27 @@ private fun DriverRow(driver: ChargeDriver) {
 // Suppressed entirely until at least one contributor has a value.
 
 @Composable
-private fun RecoveryContributorsSection(day: DailyMetric?, carriedDay: DailyMetric? = null) {
-    // The row the contributors read from: today's own when it carries recovery, else the carried last
-    // scored day (#543) so the bars don't all read "No Data" at the rollover while live HR ticks. The
-    // overline stamps "Last night · <date>" when carrying so the prior read isn't passed off as today's.
-    val cd = carriedDay ?: day
-    val hrv = cd?.avgHrv
-    val rhr = cd?.restingHr?.toDouble()
-    val sleepMin = cd?.totalSleepMin
-    val resp = cd?.respRateBpm
+private fun RecoveryContributorsSection(
+    day: DailyMetric?,
+    carriedDay: DailyMetric? = null,
+    vitalsDay: DailyMetric? = null,
+) {
+    // Sleep / Charge framing still use the recovery-gated carry. Overnight vitals (HRV / RHR / resp)
+    // read PER-FIELD today-first with recovery-INDEPENDENT [vitalsDay] so a nulled recovery night
+    // still shows its own banked ms/bpm (#543 follow-up) — never an older scored day's numbers.
+    val sleepRow = day?.takeIf { it.totalSleepMin != null } ?: carriedDay
+    val hrv = overnightHrvMs(day, vitalsDay)
+    val rhr = overnightRestingHr(day, vitalsDay)?.toDouble()
+    val sleepMin = sleepRow?.totalSleepMin
+    val resp = overnightRespBpm(day, vitalsDay)
     if (hrv == null && rhr == null && sleepMin == null && resp == null) return
 
-    val overline = carriedDay?.let { "Charge · ${carriedCaption(it.day)}" } ?: "Charge"
+    val overline = when {
+        day?.avgHrv != null || day?.restingHr != null || day?.recovery != null -> "Charge"
+        vitalsDay != null -> "Charge · ${carriedCaption(vitalsDay.day)}"
+        carriedDay != null -> "Charge · ${carriedCaption(carriedDay.day)}"
+        else -> "Charge"
+    }
     SectionHeader("Contributors", overline = overline, trailing = "What drove Charge")
     // Flat list — Charge sheet already sits on surfaceBase; skip nested card wash.
     Column(verticalArrangement = Arrangement.spacedBy(Metrics.space16)) {
@@ -5905,7 +5963,7 @@ private fun RecoveryContributorsSection(day: DailyMetric?, carriedDay: DailyMetr
         // Sleep, hours in bed against an 8h target. Blue (sleep world).
         ContributorBar(
             label = "Sleep",
-            readout = sleepMin?.let { sleepValue(cd) } ?: NO_DATA,
+            readout = sleepMin?.let { sleepValue(sleepRow) } ?: NO_DATA,
             fraction = sleepMin?.let { (it / 60.0) / 8.0 },
             color = Palette.sleepLight,
         )
@@ -6076,6 +6134,11 @@ internal fun lastChargeDateLabel(dayKey: String): String =
 /**
  * In-progress Effort for the selected wake-day. Floors live against stored ONLY when stored is the
  * SAME day — never resurrects yesterday's completed Effort (e.g. 43) after the logical day rolls.
+ *
+ * Honesty (Fold 2026-07-16 / Gilbert P0): StrainScorer can return **0.0** when there is enough HR
+ * but zero cardio TRIMP (resting-only wear). Banking already skips ≤0 ([IntelligenceEngine.backfillNullEffort]);
+ * UI must match — treat ≤0 live/stored as null so Today shows "—" / "No Effort yet", never a fake
+ * **0.0 load** on the 0–21 scale.
  */
 internal fun effectiveEffortStrain(
     live: Double?,
@@ -6083,15 +6146,30 @@ internal fun effectiveEffortStrain(
     storedDayKey: String?,
     selectedDayKey: String?,
 ): Double? {
-    val sameDayStored = stored?.takeIf {
+    fun meaningful(v: Double?): Double? = v?.takeIf { it > 0.0 }
+    val liveM = meaningful(live)
+    val sameDayStored = meaningful(stored)?.takeIf {
         selectedDayKey != null && storedDayKey != null && storedDayKey == selectedDayKey
     }
     return when {
-        live != null && sameDayStored != null -> maxOf(live, sameDayStored)
-        live != null -> live
+        liveM != null && sameDayStored != null -> maxOf(liveM, sameDayStored)
+        liveM != null -> liveM
         else -> sameDayStored
     }
 }
+
+/**
+ * Resolve overnight vitals for UI — today-first, else recovery-INDEPENDENT [vitalsDay].
+ * Pure helper so Key Metrics / Health / Charge contributors stay in lockstep (Gilbert P0 HRV).
+ */
+internal fun overnightHrvMs(day: DailyMetric?, vitalsDay: DailyMetric?): Double? =
+    day?.avgHrv ?: vitalsDay?.avgHrv
+
+internal fun overnightRestingHr(day: DailyMetric?, vitalsDay: DailyMetric?): Int? =
+    day?.restingHr ?: vitalsDay?.restingHr
+
+internal fun overnightRespBpm(day: DailyMetric?, vitalsDay: DailyMetric?): Double? =
+    day?.respRateBpm ?: vitalsDay?.respRateBpm
 
 /** Key Metrics Effort tube fill — same axis as the vessel (0–100 or 0–21). */
 internal fun effortKeyTileFrac(strain100: Double, scale: EffortScale): Double {
@@ -6476,6 +6554,8 @@ private fun MetricGrid(
     recoveryCalibration: Int? = null,
     lastScoredCharge: LastCharge? = null,
     carriedDay: DailyMetric? = null,
+    /** Recovery-INDEPENDENT overnight vitals carry (HRV / RHR / resp) — see [lastVitalsRow]. */
+    vitalsDay: DailyMetric? = null,
     unitSystem: UnitSystem = UnitSystem.METRIC,
     effortScale: EffortScale = EffortScale.HUNDRED,
     /** Live in-progress Effort for today — same source as the Effort vessel (#402 / same-day floor). */
@@ -6483,7 +6563,11 @@ private fun MetricGrid(
     /** Wake-day key on screen — Effort floor must not use a prior day's stored strain. */
     selectedDayKey: String? = null,
     latestWeightKg: Double? = null,
+    /** ISO day of [latestWeightKg] (yyyy-MM-dd); used so a just-typed profile can beat same-day HC. */
+    latestWeightDay: String? = null,
     profileWeightKg: Double = 75.0,
+    /** Epoch ms of last explicit profile weight save; 0 = never typed (HC may win). */
+    profileWeightEditedAtMs: Long = 0L,
     importedStepsForDay: Int? = null,
     estimatedStepsForDay: Int? = null,
     // #316 / @63, the selected day's representative activity class (0=still, 1=walk, 2=run), shown as a small
@@ -6494,6 +6578,8 @@ private fun MetricGrid(
     // persisted calibration the estimate used; defaults to a bare "est." for callers that don't supply it.
     stepsEstimateCaption: String = "est.",
     restScore: Double? = null,
+    /** SHIP #74 — Key Metrics Rest caption when HC asleep drove the score. */
+    restProvenanceLabel: String? = null,
     // The Rest tile's sparkline: the trailing-window Rest composite (0–100, `sleep_performance`), so the
     // mini-graph tracks the Rest SCORE rather than raw sleep minutes (#614 follow-up). Other tiles still
     // read their series off `w` (the DailyMetric windows).
@@ -6516,7 +6602,7 @@ private fun MetricGrid(
     onChargeTap: () -> Unit = {},
     /** Rest tile → Rest cloud brief (vessel still deep-links Sleep). */
     onRestCloudTap: () -> Unit = {},
-    /** Weight tile → typeable profile entry (Health Connect still wins the number when present). */
+    /** Weight tile → typeable profile entry (typed weight wins until a newer Health day arrives). */
     onOpenWeight: () -> Unit = {},
     /** Hold a tile → layout editor. Distinct from tap (Charge/Effort/Rest → cloud explain). */
     onEditMetrics: () -> Unit = {},
@@ -6549,6 +6635,7 @@ private fun MetricGrid(
         KeyMetric.EFFORT to run {
             // Same binding as ScoreHeroRow Effort vessel: live + same-day stored floor on today;
             // past days stay on the banked row only. Unit/frac honour the 0–100 / 0–21 toggle.
+            // ≤0 Effort → NO_DATA (never "0.0 load"); see [effectiveEffortStrain].
             val effortStrain = if (isToday) {
                 effectiveEffortStrain(
                     live = liveTodayStrain,
@@ -6557,7 +6644,7 @@ private fun MetricGrid(
                     selectedDayKey = selectedDayKey ?: d?.day,
                 )
             } else {
-                d?.strain
+                d?.strain?.takeIf { it > 0.0 }
             }
             KeyTileData(
                 label = "Effort",
@@ -6574,27 +6661,36 @@ private fun MetricGrid(
             unit = if (restScore != null) "%" else "",
             tint = restScore?.let { Palette.recoveryColor(it) } ?: Palette.restColor,
             frac = restScore?.let { (it / 100.0).coerceIn(0.0, 1.0) },
+            // SHIP #45/#74 — Rest ≠ Sleep stages; HC asleep gets an honest duration cue.
+            caption = restSourceCaption(restScore, restProvenanceLabel),
         ),
         KeyMetric.HRV to run {
-            val v = d?.avgHrv ?: carriedDay?.avgHrv
-            val sdnn = d?.avgSdnn ?: carriedDay?.avgSdnn
+            // Per-field today-first + vitalsDay (NOT recovery-gated carriedDay) — matches dashboardCardValue.
+            val v = overnightHrvMs(d, vitalsDay)
+            val sdnn = d?.avgSdnn ?: vitalsDay?.avgSdnn
             KeyTileData(
                 label = LifeChapterLacquer.HRV_RMSSD_CHIP_LABEL,
                 value = v?.let { "${it.roundToInt()}" } ?: NO_DATA,
                 unit = if (v != null) "ms" else "",
                 tint = Palette.metricCyan,
                 frac = v?.let { (it / 120.0).coerceIn(0.0, 1.0) },
-                caption = sdnn?.let { "SDNN ${it.roundToInt()} ms" },
+                caption = sdnn?.let { "SDNN ${it.roundToInt()} ms" }
+                    ?: vitalsDay?.takeIf { d?.avgHrv == null && v != null }?.let {
+                        carriedCaption(it.day)
+                    },
             )
         },
         KeyMetric.RESTING_HR to run {
-            val v = d?.restingHr ?: carriedDay?.restingHr
+            val v = overnightRestingHr(d, vitalsDay)
             KeyTileData(
                 label = "Rest HR",
                 value = v?.toString() ?: NO_DATA,
                 unit = if (v != null) "bpm" else "",
                 tint = Palette.metricRose,
                 frac = v?.let { (it / 100.0).coerceIn(0.0, 1.0) },
+                caption = vitalsDay?.takeIf { d?.restingHr == null && v != null }?.let {
+                    carriedCaption(it.day)
+                },
             )
         },
         KeyMetric.BLOOD_OXYGEN to run {
@@ -6608,25 +6704,28 @@ private fun MetricGrid(
             )
         },
         KeyMetric.RESPIRATORY to run {
-            val v = d?.respRateBpm ?: carriedDay?.respRateBpm
+            val v = overnightRespBpm(d, vitalsDay)
             KeyTileData(
                 label = "Respiratory",
                 value = v?.let { String.format(Locale.US, "%.1f", it) } ?: NO_DATA,
                 unit = if (v != null) "rpm" else "",
                 tint = Palette.accent,
                 frac = v?.let { (it / 24.0).coerceIn(0.0, 1.0) },
+                caption = vitalsDay?.takeIf { d?.respRateBpm == null && v != null }?.let {
+                    carriedCaption(it.day)
+                },
             )
         },
         KeyMetric.STEPS to run {
-            // Steps precedence (unchanged): on-device count → imported → estimate. (#107/#150)
+            // Steps precedence (Gilbert 2026-07-17): band @57 → band motion estimate. Phone never wins.
             val strap = d?.steps
             val realSteps = com.noop.analytics.HcNoopAlign.preferSteps(
                 strap = strap,
                 hc = importedStepsForDay,
                 estimate = estimatedStepsForDay,
             )
-            val steps = realSteps ?: estimatedStepsForDay
-            // Fable #320: restore source caption lost in liquid ktile migration (strap ≠ WHOOP app).
+            val steps = realSteps
+            // Band digit; phone only appears in "≠ phone" / "no band steps" honesty captions.
             val caption = com.noop.analytics.HcNoopAlign.stepsTileCaption(
                 strap = strap,
                 hc = importedStepsForDay,
@@ -6643,7 +6742,13 @@ private fun MetricGrid(
             )
         },
         KeyMetric.WEIGHT to run {
-            val weight = weightTile(latestWeightKg, profileWeightKg, unitSystem)
+            val weight = weightTile(
+                latestWeightKg = latestWeightKg,
+                latestWeightDay = latestWeightDay,
+                profileWeightKg = profileWeightKg,
+                profileWeightEditedAtMs = profileWeightEditedAtMs,
+                system = unitSystem,
+            )
             KeyTileData(
                 label = "Weight",
                 value = weight.value,
@@ -7660,7 +7765,7 @@ private fun TodayWorkoutsSection(
                 rowWorkouts.forEach { workout ->
                     // Fable 200 #17 / 300 #312: Effort contribution chip with "Effort" word
                     // so "+2.1" is not read as Strain points.
-                    val effortChip = workout.strain?.let { s ->
+                    val effortChip = workout.strain?.takeIf { it > 0 }?.let { s ->
                         val shown = UnitFormatter.effortValue(s, effortScale)
                         if (effortScale == EffortScale.WHOOP) {
                             String.format(Locale.US, "+%.1f Effort", shown)
@@ -7681,7 +7786,7 @@ private fun TodayWorkoutsSection(
                         label = WorkoutEditing.displaySport(workout.sport),
                         value = workoutDuration(workout),
                         caption = listOfNotNull(workoutCaption(workout), kcalBit).joinToString(" · "),
-                        accent = workout.strain?.let { Palette.effortTint(it / StrainScorer.maxStrain) } ?: Palette.textPrimary,
+                        accent = workout.strain?.takeIf { it > 0 }?.let { Palette.effortTint(it / StrainScorer.maxStrain) } ?: Palette.textPrimary,
                         delta = effortChip,
                         deltaColor = Palette.effortColor,
                         compactDelta = true,
@@ -8212,7 +8317,7 @@ private fun synthesisDetail(d: DailyMetric?): String {
 }
 
 private fun sleepValue(d: DailyMetric?): String {
-    val m = d?.totalSleepMin ?: return NO_DATA
+    val m = d?.totalSleepMin?.takeIf { it > 0.0 } ?: return NO_DATA
     val total = m.roundToInt()
     return "${total / 60}h ${total % 60}m"
 }
@@ -8294,16 +8399,23 @@ internal fun buildingHint(metric: KeyMetric, isToday: Boolean): String? {
 /** The Weight tile's display string and an honest caption ("from profile" only on fallback). */
 internal data class WeightTileText(val value: String, val caption: String?)
 
+/** Newest body-weight reading across Apple Health + Health Connect, with its ISO day. */
+internal data class LatestBodyWeight(val kg: Double, val day: String)
+
 /**
  * The newest body weight across the two Apple-side sources (apple-health + health-connect), or null
  * when neither carries one. Days are ISO `yyyy-MM-dd`, which sorts chronologically, so the lexically
  * greatest day with a non-null `weightKg` is the most recent, no date parsing needed. (#107)
  */
-internal fun latestWeightKg(apple: List<AppleDaily>, healthConnect: List<AppleDaily>): Double? =
+internal fun latestBodyWeight(apple: List<AppleDaily>, healthConnect: List<AppleDaily>): LatestBodyWeight? =
     (apple + healthConnect)
         .filter { it.weightKg != null }
         .maxByOrNull { it.day }
-        ?.weightKg
+        ?.let { LatestBodyWeight(kg = it.weightKg!!, day = it.day) }
+
+/** Convenience for callers / tests that only need the kilograms. */
+internal fun latestWeightKg(apple: List<AppleDaily>, healthConnect: List<AppleDaily>): Double? =
+    latestBodyWeight(apple, healthConnect)?.kg
 
 /**
  * Steps for [dayKey] from the imported Apple Health / Health Connect daily aggregates, or null when
@@ -8321,16 +8433,59 @@ internal fun stepsForDay(apple: List<AppleDaily>, healthConnect: List<AppleDaily
         .maxOrNull()
 
 /**
- * Resolve the Weight tile text: prefer the latest Apple/Health-Connect weight, else fall back to the
- * SI profile weight with a "from profile" caption so the source stays honest. Both are formatted
- * through the shared [UnitFormatter] so the Imperial/Metric toggle reaches this tile too. (#107)
+ * Resolve the Weight tile text.
+ *
+ * - Prefer Health "latest" when there is no explicit profile edit stamp, or when the Health sample's
+ *   day is **strictly after** the calendar day of the profile edit.
+ * - Otherwise show the SI profile weight with a "from profile" caption — so a weight Gilbert just
+ *   typed on Today updates Key Metrics immediately and is not stuck behind a same-day HC reading.
+ *
+ * Both values format through [UnitFormatter] so the Imperial/Metric toggle reaches this tile. (#107)
+ *
+ * @param profileEditDayKey injectable ISO day of the profile edit (tests); when null, derived from
+ *   [profileWeightEditedAtMs] in the device default zone.
  */
-internal fun weightTile(latestWeightKg: Double?, profileWeightKg: Double, system: UnitSystem): WeightTileText =
-    if (latestWeightKg != null) {
+internal fun weightTile(
+    latestWeightKg: Double?,
+    profileWeightKg: Double,
+    system: UnitSystem,
+    latestWeightDay: String? = null,
+    profileWeightEditedAtMs: Long = 0L,
+    profileEditDayKey: String? = null,
+): WeightTileText {
+    val preferProfile = preferProfileWeight(
+        latestWeightKg = latestWeightKg,
+        latestWeightDay = latestWeightDay,
+        profileWeightEditedAtMs = profileWeightEditedAtMs,
+        profileEditDayKey = profileEditDayKey,
+    )
+    return if (!preferProfile && latestWeightKg != null) {
         WeightTileText(UnitFormatter.massFromKilograms(latestWeightKg, system), "latest")
     } else {
         WeightTileText(UnitFormatter.massFromKilograms(profileWeightKg, system), "from profile")
     }
+}
+
+/**
+ * True when the Key Metrics Weight digit should follow the profile (typed / Settings) rather than
+ * the imported Health reading. Pure so [TodayMetricTilesTest] owns the precedence oracle.
+ */
+internal fun preferProfileWeight(
+    latestWeightKg: Double?,
+    latestWeightDay: String?,
+    profileWeightEditedAtMs: Long,
+    profileEditDayKey: String? = null,
+): Boolean {
+    if (latestWeightKg == null) return true
+    if (profileWeightEditedAtMs <= 0L) return false
+    val editDay = profileEditDayKey
+        ?: java.time.Instant.ofEpochMilli(profileWeightEditedAtMs)
+            .atZone(java.time.ZoneId.systemDefault())
+            .toLocalDate()
+            .toString()
+    // Same-day or older Health sample must not hide a just-typed profile weight.
+    return latestWeightDay == null || latestWeightDay <= editDay
+}
 
 /** Group-separated integer display from a Double (e.g. 12 345 steps), matching the Apple Health tiles. */
 private fun intString(v: Double): String {

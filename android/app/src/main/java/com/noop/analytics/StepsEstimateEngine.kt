@@ -102,7 +102,7 @@ object StepsEstimateEngine {
         data class Calibrated(val coefficient: Double, val sampleDays: Int, val confidence: Double) : CalibrationStatus {
             override val canEstimate: Boolean get() = true
             override val headline: String
-                get() = "Estimated from $sampleDays day${if (sampleDays == 1) "" else "s"} your phone also counted"
+                get() = "Band motion fit from $sampleDays day${if (sampleDays == 1) "" else "s"} (phone compare only)"
             override val confidenceTier: ConfidenceTier get() = ConfidenceTier.from(confidence)
             override val coefficientOrNull: Double get() = coefficient
             override val detail: String

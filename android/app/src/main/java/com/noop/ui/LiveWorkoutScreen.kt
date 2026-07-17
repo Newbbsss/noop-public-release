@@ -161,8 +161,13 @@ fun LiveWorkoutScreen(vm: AppViewModel, onClose: () -> Unit) {
                     accent = if (w.avgHr > 0) Palette.metricRose else Palette.textPrimary)
                 StatTile(modifier = Modifier.weight(1f), label = "Peak", value = if (w.peakHr > 0) "${w.peakHr}" else "—",
                     accent = if (w.peakHr > 0) Palette.metricRose else Palette.textPrimary)
-                StatTile(modifier = Modifier.weight(1f), label = "Effort", value = UnitFormatter.effortDisplay(w.liveStrain, effortScale),
-                    accent = Palette.strainColor(w.liveStrain))
+                StatTile(
+                    modifier = Modifier.weight(1f),
+                    label = "Effort",
+                    value = UnitFormatter.effortDisplayOrEmpty(w.liveStrain, effortScale),
+                    accent = w.liveStrain.takeIf { it > 0.0 }?.let { Palette.strainColor(it) }
+                        ?: Palette.textPrimary,
+                )
             }
 
             // Additive sensor readout — only renders when a connected standard fitness sensor is feeding.
@@ -232,9 +237,9 @@ private fun EffortGauge(liveStrain: Double, effortScale: EffortScale) {
         ) {
             Overline("Effort building", color = Palette.effortColor)
             StrainGauge(
-                strain = UnitFormatter.effortValue(liveStrain, effortScale),
+                strain = UnitFormatter.effortValue(liveStrain.coerceAtLeast(0.0), effortScale),
                 outOf = if (effortScale == EffortScale.WHOOP) 21.0 else 100.0,
-                valueText = UnitFormatter.effortDisplay(liveStrain, effortScale),
+                valueText = UnitFormatter.effortDisplayOrEmpty(liveStrain, effortScale),
                 diameter = 150.dp,
                 lineWidth = 14.dp,
             )

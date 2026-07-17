@@ -51,6 +51,10 @@ public enum DaytimeStress {
     /// When waking quiet HR is within this many bpm of overnight quiet, pull toward LOW (#12).
     public static let overnightAnchorSlackBpm: Double = 5.0
     public static let overnightCalmBias: Double = 0.55
+    /// Soft tip ceiling outside clock waking (Android Now twin). Allows WHOOP overnight awake ~1.5.
+    public static let nightTipCeiling: Double = 1.55
+    /// Tighter ceiling inside sleep window / band asleep.
+    public static let sleepTipCeiling: Double = 0.95
     /// Soft blend of prior days' resting/calm HR into today's calm reference (#11).
     public static let priorCalmBlendMax: Int = 14
     public static let baevskyCalmSi: Double = 80.0

@@ -116,26 +116,32 @@ object HcNoopAlign {
     }
 
     /**
-     * Display preference: strap counter > HC phone/watch > motion estimate.
-     * Never sums sources (double-count).
+     * Display preference — **band only** (Gilbert 2026-07-17):
+     *   1. Strap @57 motion counter (WHOOP 5/MG live/offload)
+     *   2. Strap gravity/IMU motion estimate (WHOOP 4 / sparse counter)
+     * Phone / Health Connect pedometer is **never** the Today number — it may still feed
+     * Settings calibration compare only. Never sums sources (double-count).
+     *
+     * [hc] kept in the signature so call sites stay stable; intentionally unused for the digit.
      */
+    @Suppress("UNUSED_PARAMETER")
     fun preferSteps(strap: Int?, hc: Int?, estimate: Int?): Int? =
-        strap?.takeIf { it > 0 } ?: hc?.takeIf { it > 0 } ?: estimate?.takeIf { it > 0 }
+        strap?.takeIf { it > 0 } ?: estimate?.takeIf { it > 0 }
 
     /** Which source [preferSteps] would pick — for honest UI captions (Fable #320). */
-    enum class StepsSource { STRAP, PHONE, ESTIMATE }
+    enum class StepsSource { STRAP, ESTIMATE, UNAVAILABLE }
 
+    @Suppress("UNUSED_PARAMETER")
     fun stepsSource(strap: Int?, hc: Int?, estimate: Int?): StepsSource? = when {
         strap != null && strap > 0 -> StepsSource.STRAP
-        hc != null && hc > 0 -> StepsSource.PHONE
         estimate != null && estimate > 0 -> StepsSource.ESTIMATE
         else -> null
     }
 
     /**
-     * Caption under the Today Steps tile so dual sources don't look like one pedometer.
-     * Strap BLE counter often under-reads vs the official WHOOP app / phone total (e.g. 615 vs 2831).
-     * When strap wins but phone differs by ≥ [STEPS_SOURCE_GAP], add "≠ phone".
+     * Caption under the Today Steps tile. Band steps are primary; phone is compare-only.
+     * When strap wins but phone differs by ≥ [STEPS_SOURCE_GAP], add "≠ phone" as honesty —
+     * never swap the digit to the phone count.
      */
     const val STEPS_SOURCE_GAP = 500
 
@@ -143,16 +149,17 @@ object HcNoopAlign {
         strap: Int?,
         hc: Int?,
         estimate: Int?,
-        estimateDetail: String = "est.",
+        estimateDetail: String = "est. · band motion",
     ): String? = when (stepsSource(strap, hc, estimate)) {
         StepsSource.STRAP -> {
             val phone = hc?.takeIf { it > 0 }
             val gap = if (phone != null) stepsGap(strap, phone) else null
-            if (gap != null && gap >= STEPS_SOURCE_GAP) "strap · ≠ phone" else "strap"
+            if (gap != null && gap >= STEPS_SOURCE_GAP) "band · ≠ phone" else "band"
         }
-        StepsSource.PHONE -> "phone"
-        StepsSource.ESTIMATE -> estimateDetail.ifBlank { "est." }
-        null -> null
+        StepsSource.ESTIMATE -> estimateDetail.ifBlank { "est. · band motion" }
+        StepsSource.UNAVAILABLE, null ->
+            // Honest empty — do not silently show phone pedometer as the day total.
+            if (hc != null && hc > 0) "no band steps" else null
     }
 
     /**

@@ -175,7 +175,15 @@ class ProfileStore(private val prefs: SharedPreferences) {
 
     var weightKg: Double
         get() = prefs.getFloat(KEY_WEIGHT, 75f).toDouble().coerceIn(WEIGHT_MIN, WEIGHT_MAX)
-        set(v) = prefs.edit().putFloat(KEY_WEIGHT, v.coerceIn(WEIGHT_MIN, WEIGHT_MAX).toFloat()).apply()
+        set(v) = prefs.edit()
+            .putFloat(KEY_WEIGHT, v.coerceIn(WEIGHT_MIN, WEIGHT_MAX).toFloat())
+            // Stamp so Today Key Metrics can prefer a just-typed profile over a same-day HC reading.
+            .putLong(KEY_WEIGHT_EDITED_AT, System.currentTimeMillis())
+            .apply()
+
+    /** Epoch ms of the last explicit profile weight save (0 = never typed / pre-stamp installs). */
+    val weightEditedAtMs: Long
+        get() = prefs.getLong(KEY_WEIGHT_EDITED_AT, 0L)
 
     var heightCm: Double
         get() = prefs.getFloat(KEY_HEIGHT, 178f).toDouble().coerceIn(HEIGHT_MIN, HEIGHT_MAX)
@@ -286,6 +294,7 @@ class ProfileStore(private val prefs: SharedPreferences) {
         private const val KEY_DISPLAY_NAME = "display_name"
         private const val KEY_SEX = "sex"
         private const val KEY_WEIGHT = "weight_kg"
+        private const val KEY_WEIGHT_EDITED_AT = "weight_kg_edited_at"
         private const val KEY_HEIGHT = "height_cm"
         private const val KEY_WAIST = "waist_cm"
         private const val KEY_HRMAX = "hr_max_override"
@@ -1103,7 +1112,7 @@ fun SettingsScreen(
         SettingsSection(
             icon = Icons.Filled.Brightness6,
             title = "Appearance",
-            blurb = "Light / Dark / System, plus named theme packs (Pink Blossom, Ocean Glass, and more). Frosted nav comes with packs that enable it.",
+            blurb = "Make it yours â€” Light, Dark, or System, plus named packs (Pink Blossom, Ocean Glass, and more). Change any time; frosted nav comes with packs that enable it.",
         ) {
             FormRow(label = "Brightness") {
                 SegmentedPillControl(
@@ -1116,12 +1125,33 @@ fun SettingsScreen(
                     },
                 )
             }
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(Metrics.gap),
+            ) {
+                AppearanceLookChip(
+                    title = "Light",
+                    fill = LightTokens.surfaceRaised,
+                    ink = LightTokens.textPrimary,
+                    selected = Palette.schemeIsLight,
+                    modifier = Modifier.weight(1f),
+                )
+                AppearanceLookChip(
+                    title = "Dark",
+                    fill = DarkTokens.surfaceRaised,
+                    ink = DarkTokens.textPrimary,
+                    selected = !Palette.schemeIsLight,
+                    modifier = Modifier.weight(1f),
+                )
+            }
             RowDivider()
             var packMenuOpen by remember { mutableStateOf(false) }
             val selectedPack = ThemePacks.byId(ThemePackPrefs.packId)
             Text("Theme pack", style = NoopType.subhead, color = Palette.textPrimary)
             Text(
-                "Named finish (not a marketing code). Frosted nav comes with packs that enable it.",
+                "Named finish for the whole app. Frosted nav comes with packs that enable it.",
                 style = NoopType.footnote,
                 color = Palette.textTertiary,
             )
@@ -1781,7 +1811,8 @@ fun SettingsScreen(
                             color = Palette.textPrimary,
                         )
                         Text(
-                            "When you open the official WHOOP app, NOOP reads on-screen Recovery % and Day Strain (0â€“21) for model labels â€” not from the bracelet. Also parses WHOOP notifications. Grant Accessibility + Notification access below.",
+                            // SHIP #389 â€” name the Accessibility service + daily open path.
+                            "Grant Accessibility â†’ â€œNOOP WHOOP app captureâ€, then open WHOOP Today so Recovery % and Day Strain (0â€“21) land as model labels â€” not from the bracelet. Notifications also parse when WHOOP posts.",
                             style = NoopType.footnote,
                             color = Palette.textTertiary,
                         )
@@ -1808,7 +1839,7 @@ fun SettingsScreen(
                         }
                     },
                     modifier = Modifier.fillMaxWidth(),
-                ) { Text("Open Accessibility settings", style = NoopType.footnote) }
+                ) { Text("Open Accessibility Â· NOOP WHOOP app capture", style = NoopType.footnote) }
                 OutlinedButton(
                     onClick = {
                         runCatching {
@@ -1817,6 +1848,11 @@ fun SettingsScreen(
                     },
                     modifier = Modifier.fillMaxWidth(),
                 ) { Text("Open Notification access", style = NoopType.footnote) }
+                Text(
+                    "After grant: open WHOOP Today once, return to NOOP â€” Compare WHOOP-app column fills without typing.",
+                    style = NoopType.footnote,
+                    color = Palette.textTertiary,
+                )
 
                 // Keep streaming when the app is closed (Android foreground service). On Mac, NOOP
                 // already keeps your strap connected from the menu bar â€” just close the window.
@@ -3111,6 +3147,13 @@ fun SettingsScreen(
                     text = "Importing overwrites everything currently on this phone. Your old data is kept in a side file just in case. NOOP needs a relaunch for an import to take effect. " +
                         "Export CSV writes a WHOOP-format zip of your days, sleeps, workouts and journal that re-imports into NOOP on Android or Mac. On-device computed rows are marked APPROXIMATE in its Source column; the .noopbak backup stays the lossless restore path.",
                 )
+                // SHIP #386 â€” FullRelease / new-phone merge checklist (user-facing, not docs-only).
+                Text(
+                    "After a FullRelease or new phone: 1) Export .noopbak Â· 2) Install MAIN (not DEBUG) Â· " +
+                        "3) Import the .noopbak Â· 4) Re-pair strap if Live is blank Â· 5) Confirm Sleep nights + Stress still bank.",
+                    style = NoopType.footnote,
+                    color = Palette.textTertiary,
+                )
             }
         }
 
@@ -3883,6 +3926,38 @@ private fun ToggleRow(
 }
 
 // MARK: - Two-column form row (ports SettingsView's private FormRow)
+
+/** Mini Light/Dark look chip â€” mirrors onboarding AppearanceStep warmth (#240 / Themes backlog). */
+@Composable
+private fun AppearanceLookChip(
+    title: String,
+    fill: Color,
+    ink: Color,
+    selected: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier
+            .clip(RoundedCornerShape(14.dp))
+            .background(fill)
+            .border(
+                width = if (selected) 2.dp else 1.dp,
+                color = if (selected) Palette.accent else Palette.hairline,
+                shape = RoundedCornerShape(14.dp),
+            )
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Text(title, style = NoopType.footnote, color = ink)
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .height(8.dp)
+                .clip(RoundedCornerShape(4.dp))
+                .background(ink.copy(alpha = 0.18f)),
+        )
+    }
+}
 
 /** Label on the left, control on the right â€” the two-column form feel. */
 @Composable

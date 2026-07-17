@@ -406,8 +406,8 @@ private fun DayCard(d: DailyMetric, effortScale: EffortScale) {
                 )
                 DayStat(
                     "Effort",
-                    d.strain?.let { UnitFormatter.effortDisplay(it, effortScale) } ?: "—",
-                    d.strain?.let { Palette.strainColor(it) } ?: Palette.textSecondary,
+                    UnitFormatter.effortDisplayOrEmpty(d.strain, effortScale),
+                    d.strain?.takeIf { it > 0.0 }?.let { Palette.strainColor(it) } ?: Palette.textSecondary,
                     Modifier.weight(1f),
                 )
                 DayStat(
@@ -430,8 +430,8 @@ private fun DayCard(d: DailyMetric, effortScale: EffortScale) {
                 )
             }
 
-            // Effort load meter (0–100), tinted along the strain ramp.
-            d.strain?.let { s ->
+            // Effort load meter (0–100), tinted along the strain ramp — skip ≤0 empty shells.
+            d.strain?.takeIf { it > 0.0 }?.let { s ->
                 Meter(
                     fraction = (s / 100.0).toFloat(),
                     color = Palette.strainColor(s),
@@ -464,7 +464,7 @@ private fun DayStat(label: String, value: String, color: Color, modifier: Modifi
 // MARK: - Derived helpers
 
 private fun sleepValue(totalMin: Double?): String {
-    val m = totalMin ?: return "—"
+    val m = totalMin?.takeIf { it > 0.0 } ?: return "—"
     val total = m.roundToInt()
     return "${total / 60}h ${total % 60}m"
 }
