@@ -1,4 +1,4 @@
-﻿package com.noop.update
+package com.noop.update
 
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -17,10 +17,6 @@ import java.net.URL
  */
 object UpdateCheck {
 
-    /**
-     * Catalog URLs. GitHub first so Fold/away updates don't depend on LAN.
-     * LAN hosts stay as fallback for on-network installs (not user-facing store branding).
-     */
     /** Public release: no private LAN/Tailscale catalogs — GitHub Releases only. */
     val STORE_CATALOGS: List<String> = emptyList()
 
@@ -234,8 +230,8 @@ object UpdateCheck {
         val source = when {
             isAbsoluteHttp(apkGithub) ||
                 (isAbsoluteHttp(apkRel) && apkRel.contains("github.com", ignoreCase = true)) ->
-                " param($m) if ($m.Value -match 'ai-store') { '"github"' } else { 'GitHub' } "
-            else ->  param($m) if ($m.Value -match 'ai-store') { '"github"' } else { 'GitHub' } 
+                "github"
+            else -> "github"
         }
         if (versionName.isBlank() && versionCode == null) return Result.Failed
         val newerByCode = versionCode != null && currentVersionCode > 0 && versionCode > currentVersionCode
