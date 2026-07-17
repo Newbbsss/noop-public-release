@@ -381,7 +381,7 @@ object UpdateCheck {
         return fallback
     }
 
-    /** Optional `versionCode: N` hint in release notes in release notes. */
+    /** Optional `versionCode: N` hint in release notes. */
     fun versionCodeFromTagNotes(tag: String, notes: String): Int? {
         val fromNotes = Regex("""versionCode\s*[:=]\s*(\d+)""", RegexOption.IGNORE_CASE)
             .find(notes)?.groupValues?.getOrNull(1)?.toIntOrNull()
