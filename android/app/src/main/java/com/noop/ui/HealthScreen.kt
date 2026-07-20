@@ -64,6 +64,7 @@ import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -88,6 +89,7 @@ import com.noop.ble.LiveState
 import com.noop.data.DailyMetric
 import java.time.Instant
 import java.time.LocalDate
+import java.time.LocalTime
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Locale
@@ -1943,7 +1945,7 @@ private fun VitalsSection(
 
 // MARK: - Vital model
 
-/** Two-page skin-temp mini-card: baselines (tonight + personal) ↔ signed difference. */
+/** Two-page skin-temp mini-card: baselines (Today/Tonight + personal) ↔ signed difference. */
 private data class SkinTempSwipe(
     val tonightLabel: String,
     val tonightValue: String,
@@ -2110,7 +2112,8 @@ private fun vitalsFor(
             .removeSuffix(" $skinUnitLabel")
     }
     val skinSwipe: SkinTempSwipe? = if (skin == null) null else SkinTempSwipe(
-        tonightLabel = "Tonight",
+        // Daytime reads as "Today"; after 18:00 local it becomes "Tonight".
+        tonightLabel = if (LocalTime.now().hour >= 18) "Tonight" else "Today",
         tonightValue = tonightAbsC?.let { "${absFormat(it)} $skinUnitLabel" }
             ?: skinFormat(skin).let { "$it $skinUnitLabel" },
         baselineLabel = if (personalBaselineC != null) "Baseline" else "Last night",
@@ -2124,7 +2127,7 @@ private fun vitalsFor(
         diffCaption = when {
             personalBaselineC != null -> "vs your baseline"
             previousSkin != null -> "vs last night"
-            else -> "Need more nights for baseline"
+            else -> "Need more nights"
         },
     )
     val respRangeCaption = rangeCaption(days.mapNotNull { it.respRateBpm }, "rpm") { String.format(Locale.US, "%.1f", it) }
@@ -2256,7 +2259,12 @@ private fun SkinTempVitalTile(
 ) {
     val pagerState = rememberPagerState(pageCount = { 2 })
     val scope = rememberCoroutineScope()
-    NoopCard(modifier = modifier.height(Metrics.tileHeight), padding = Metrics.space14, tint = accent) {
+    // Same envelope as sibling VitalTiles — compress pager content instead of stretching height.
+    NoopCard(
+        modifier = modifier.height(Metrics.tileHeight),
+        padding = Metrics.space10,
+        tint = accent,
+    ) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -2279,7 +2287,7 @@ private fun SkinTempVitalTile(
                 style = NoopType.overline,
                 color = Palette.textSecondary,
                 maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
+                overflow = TextOverflow.Clip,
             )
             HorizontalPager(
                 state = pagerState,
@@ -2289,35 +2297,23 @@ private fun SkinTempVitalTile(
                 userScrollEnabled = true,
             ) { page ->
                 when (page) {
-                    0 -> Column(
+                    // Face 0: Today|Tonight | baseline side-by-side.
+                    0 -> Row(
                         modifier = Modifier.fillMaxSize(),
-                        verticalArrangement = Arrangement.Center,
-                        horizontalAlignment = Alignment.CenterHorizontally,
+                        horizontalArrangement = Arrangement.spacedBy(Metrics.space2),
+                        verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Text(
-                            swipe.tonightValue,
-                            style = NoopType.tileValueLarge,
-                            color = accent,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
+                        SkinTempSwipeHalf(
+                            value = swipe.tonightValue,
+                            label = swipe.tonightLabel,
+                            valueColor = accent,
+                            modifier = Modifier.weight(1f),
                         )
-                        Text(
-                            swipe.tonightLabel,
-                            style = NoopType.caption,
-                            color = Palette.textTertiary,
-                        )
-                        Spacer(modifier = Modifier.height(Metrics.space4))
-                        Text(
-                            swipe.baselineValue,
-                            style = NoopType.headline,
-                            color = Palette.textPrimary,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                        Text(
-                            swipe.baselineLabel,
-                            style = NoopType.caption,
-                            color = Palette.textTertiary,
+                        SkinTempSwipeHalf(
+                            value = swipe.baselineValue,
+                            label = swipe.baselineLabel,
+                            valueColor = Palette.textPrimary,
+                            modifier = Modifier.weight(1f),
                         )
                     }
                     else -> Column(
@@ -2325,26 +2321,28 @@ private fun SkinTempVitalTile(
                         verticalArrangement = Arrangement.Center,
                         horizontalAlignment = Alignment.CenterHorizontally,
                     ) {
-                        Text(
-                            swipe.diffValue,
-                            style = NoopType.tileValueLarge,
+                        AutoSizeValue(
+                            text = swipe.diffValue,
+                            style = NoopType.number(22f),
                             color = accent,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.fillMaxWidth(),
                         )
                         Text(
-                            swipe.diffCaption,
-                            style = NoopType.caption,
+                            text = swipe.diffCaption,
+                            style = NoopType.footnote,
                             color = Palette.textTertiary,
-                            maxLines = 2,
-                            overflow = TextOverflow.Ellipsis,
+                            maxLines = 1,
+                            softWrap = false,
+                            overflow = TextOverflow.Clip,
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier.fillMaxWidth(),
                         )
                     }
                 }
             }
-            // Centered 2-dot page indicator — selected = accent, other = grey.
+            // Compact 2-dot indicator — same rhythm as siblings' caption row.
             Row(
-                modifier = Modifier.padding(vertical = Metrics.space4),
+                modifier = Modifier.padding(top = 2.dp, bottom = 2.dp),
                 horizontalArrangement = Arrangement.Center,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
@@ -2352,8 +2350,8 @@ private fun SkinTempVitalTile(
                     val selected = pagerState.currentPage == i
                     Box(
                         modifier = Modifier
-                            .padding(horizontal = 3.dp)
-                            .size(6.dp)
+                            .padding(horizontal = 2.dp)
+                            .size(4.dp)
                             .clip(CircleShape)
                             .background(
                                 if (selected) accent else Palette.textTertiary.copy(alpha = 0.40f),
@@ -2369,9 +2367,40 @@ private fun SkinTempVitalTile(
                 style = NoopType.footnote,
                 color = Palette.textTertiary,
                 maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
+                overflow = TextOverflow.Clip,
             )
         }
+    }
+}
+
+/** One column of the baselines face: AutoSize value + label, no mid-word ellipsis. */
+@Composable
+private fun SkinTempSwipeHalf(
+    value: String,
+    label: String,
+    valueColor: Color,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier,
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+    ) {
+        AutoSizeValue(
+            text = value,
+            style = NoopType.number(18f),
+            color = valueColor,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Text(
+            text = label,
+            style = NoopType.footnote,
+            color = Palette.textTertiary,
+            maxLines = 1,
+            overflow = TextOverflow.Clip,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.fillMaxWidth(),
+        )
     }
 }
 

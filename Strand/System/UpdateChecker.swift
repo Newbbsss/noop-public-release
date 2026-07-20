@@ -28,7 +28,7 @@ final class UpdateChecker: ObservableObject {
 
     /// Upstream AltStore / SideStore source (ryanbr IPA). Gilbert fork has no IPA row yet.
     static let altStoreSourceURL =
-        "https://raw.githubusercontent.com/ryanbr/noop/main/altstore-source.json"
+        "https://raw.githubusercontent.com/Newbbsss/noop-public-release/main/altstore-source.json"
 
     /// Plain-text invite for friends already on the same Tailscale tailnet.
     static var friendsTailnetShareText: String {

@@ -79,7 +79,7 @@ object UpdateCheck {
      * Friends install help uses Newbbsss/noop (match Android version when IPA is published).
      */
     const val ALTSTORE_SOURCE_URL =
-        "https://raw.githubusercontent.com/Newbbsss/noop/main/altstore-source.json"
+        "https://raw.githubusercontent.com/Newbbsss/noop-public-release/main/altstore-source.json"
 
     /**
      * Plain-text invite for Friends network (LAN / Tailscale private pipe).

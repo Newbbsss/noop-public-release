@@ -25,7 +25,7 @@ object AppChangelog {
      * Bump this when you add a release below. The "What's New" sheet shows automatically when the
      * stored last-seen version is behind this. (Decoupled from the bundle version on purpose.)
      */
-    const val CURRENT_VERSION = "8.6.238"
+    const val CURRENT_VERSION = "8.6.240"
 
     data class Release(
         val version: String,
@@ -36,6 +36,26 @@ object AppChangelog {
 
     /** Newest first. */
     val releases: List<Release> = listOf(
+        Release(
+            version = "8.6.240",
+            title = "Skin-temp Today Â· proportional tile",
+            date = "2026-07-20",
+            items = listOf(
+                "Health skin-temp swipe: says Today until 18:00 local, Tonight after â€” no daytime Tonight.",
+                "Same height as sibling vitals (no stretched tile); no ellipsis cutoff on swipe faces.",
+                "Unsigned iOS IPA + AltStore source ship alongside Android public release.",
+                "SpOâ‚‚ honesty unchanged: never invents a %.",
+            ),
+        ),
+        Release(
+            version = "8.6.239",
+            title = "Skin-temp swipe text fits",
+            date = "2026-07-20",
+            items = listOf(
+                "Health skin-temp swipe card: baselines and difference faces no longer clip â€” taller tile, side-by-side tonight/baseline, AutoSize values.",
+                "SpOâ‚‚ honesty unchanged: never invents a %.",
+            ),
+        ),
         Release(
             version = "8.6.238",
             title = "Charge cold-open Â· Effort floor Â· Fitness Age Â· Drive",
