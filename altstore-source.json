@@ -1,4 +1,4 @@
-﻿{
+{
     "name":  "NOOP",
     "subtitle":  "A standalone WHOOP app — your strap, your device, fully offline.",
     "description":  "AltStore / SideStore source for NOOP public releases (Newbbsss/noop-public-release). Tracks the same version line as the Android APK on GitHub Releases.\n\nNOOP is not affiliated with WHOOP. It reads a strap you own, directly over Bluetooth, on your own device — no WHOOP app, no subscription, no cloud.",
