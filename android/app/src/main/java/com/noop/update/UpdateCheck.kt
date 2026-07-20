@@ -11,16 +11,16 @@ import java.net.URL
  * User-initiated + quiet launch "Check for updates".
  *
  * Gilbert's daily-driver builds (`com.noop.whoop` / `com.noop.whoop.debug`) update from
- * GitHub (`Newbbsss/noop-public-release` + `Newbbsss/noop-public-release` Releases). Optional LAN catalog
- * hosts remain as fallbacks for on-network installs â€” not user-facing "AI store" copy.
+ * public GitHub Releases (`Newbbsss/noop-public-release`) so Fold checks work without a
+ * private-repo token. Optional LAN catalog hosts remain as on-network fallbacks.
  * Upstream `ryanbr/noop` releases are a separate lineage and must not drive this fork's prompts.
  *
  * Sources (first hit wins):
- *  1. GitHub apps catalog (`apk_github` preferred in parse) â€” matches [applicationId]
- *  2. Optional LAN catalog hosts (same Wiâ€‘Fi / private net fallback)
- *  3. GitHub Releases latest on `Newbbsss/noop-public-release`
+ *  1. Optional LAN catalog hosts (same Wiâ€‘Fi / private net)
+ *  2. Public GitHub Releases latest (`Newbbsss/noop-public-release`) â€” works without auth
+ *  3. Private gilbert Releases only if a token somehow succeeds (normally 404)
  *
- * Version select ([listAvailableVersions]) lists Releases APKs for install/downgrade.
+ * Version select ([listAvailableVersions]) prefers public Releases APKs (unauthenticated).
  *
  * Runs only when asked (Settings tap) or once per quiet window on launch. Nothing about the user
  * is sent â€” the client only GETs a catalog or the releases JSON.
@@ -30,15 +30,11 @@ import java.net.URL
 object UpdateCheck {
 
     /**
-     * Catalog URLs. GitHub first so Fold/away updates don't depend on LAN.
-     * LAN hosts stay as fallback for on-network installs (not user-facing store branding).
+     * Catalog URLs. LAN only â€” private GitHub raw `GitHub Releases` 404s without auth and
+     * used to burn the quiet-launch budget before public Releases. Away-from-LAN â†’ Releases.
      */
     val STORE_CATALOGS: List<String> = listOf(
         // Public release: GitHub Releases only (no private LAN / Tailscale catalogs).
-    ). Private raw needs network auth;
-        // unauthenticated clients fall through to Releases latest below.
-        "",
-        "",
     )
 
     const val GITHUB_APPS_CATALOG_URL =
@@ -46,13 +42,24 @@ object UpdateCheck {
     const val GITHUB_RELEASES_LATEST =
         "https://api.github.com/repos/Newbbsss/noop-public-release/releases/latest"
 
+    /** Public APK mirror â€” unauthenticated; used when private Releases 404. */
+    const val GITHUB_RELEASES_LATEST_PUBLIC =
+        "https://api.github.com/repos/Newbbsss/noop-public-release/releases/latest"
+
     /**
-     * GitHub Releases list endpoints for in-app version select.
-     * Primary: Gilbert APK home. Optional public mirror listed second (merged, primary wins on tag).
+     * GitHub Releases list for in-app version select.
+     * Public first (unauthenticated). Private gilbert second (404 without token â€” skipped).
+     * Do not merge upstream `Newbbsss/noop` â€” wrong lineage for this fork.
      */
     val GITHUB_RELEASES_LIST: List<String> = listOf(
         "https://api.github.com/repos/Newbbsss/noop-public-release/releases?per_page=40",
-        "https://api.github.com/repos/Newbbsss/noop/releases?per_page=20",
+        "https://api.github.com/repos/Newbbsss/noop-public-release/releases?per_page=20",
+    )
+
+    /** Prefer public latest, then private â€” Fold installs must work without GitHub auth. */
+    val GITHUB_RELEASES_LATEST_CANDIDATES: List<String> = listOf(
+        GITHUB_RELEASES_LATEST_PUBLIC,
+        GITHUB_RELEASES_LATEST,
     )
 
     const val PROJECT_HOME_URL = "https://github.com/Newbbsss/noop-public-release"
@@ -316,8 +323,24 @@ object UpdateCheck {
     private fun checkGitHubRelease(
         currentVersion: String,
         currentVersionCode: Int,
+    ): Result {
+        for (url in GITHUB_RELEASES_LATEST_CANDIDATES) {
+            val parsed = parseGitHubLatestBody(
+                body = httpGet(url) ?: continue,
+                currentVersion = currentVersion,
+                currentVersionCode = currentVersionCode,
+            )
+            if (parsed !is Result.Failed) return parsed
+        }
+        return Result.Failed
+    }
+
+    /** Parse one Releases/latest JSON body. Pure enough for unit tests via [parseReleasesList]. */
+    private fun parseGitHubLatestBody(
+        body: String,
+        currentVersion: String,
+        currentVersionCode: Int,
     ): Result = runCatching {
-        val body = httpGet(GITHUB_RELEASES_LATEST) ?: return Result.Failed
         val json = JSONObject(body)
         val latest = json.getString("tag_name").removePrefix("v")
         val htmlUrl = json.getString("html_url")
@@ -401,12 +424,20 @@ object UpdateCheck {
         return fallback
     }
 
-    /** Optional `versionCode: N` hint in release notes for fable builds. */
+    /**
+     * Optional versionCode hint in release notes / tag.
+     * Accepts `versionCode: 490`, public title `8.6.220 (490)`, or rare `-490` tag tails.
+     * Never treats the middle `220` of `8.6.220-fable` as a versionCode.
+     */
     fun versionCodeFromTagNotes(tag: String, notes: String): Int? {
         val fromNotes = Regex("""versionCode\s*[:=]\s*(\d+)""", RegexOption.IGNORE_CASE)
             .find(notes)?.groupValues?.getOrNull(1)?.toIntOrNull()
         if (fromNotes != null) return fromNotes
-        return Regex("""-(\d{2,})(?:-|$|\s)""").find(tag)?.groupValues?.getOrNull(1)?.toIntOrNull()
+        // Public release bodies: "NOOP 8.6.220 (490) Public" / "8.6.220-fable (490)"
+        val fromParen = Regex("""\((\d{3,})\)""").find(notes)?.groupValues?.getOrNull(1)?.toIntOrNull()
+        if (fromParen != null) return fromParen
+        // Only hyphenated integer tails that look like codes (3+ digits), not `-fable`.
+        return Regex("""-(\d{3,})(?:-|$|\s)""").find(tag)?.groupValues?.getOrNull(1)?.toIntOrNull()
     }
 
     private fun segments(s: String): List<Int> =

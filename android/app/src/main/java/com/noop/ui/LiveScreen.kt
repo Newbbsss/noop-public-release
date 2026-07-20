@@ -44,8 +44,11 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import androidx.compose.material3.TextButton
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -55,6 +58,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -75,6 +79,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
+import com.noop.R
 import com.noop.analytics.BatteryEstimator
 import com.noop.analytics.HrZones
 import com.noop.analytics.HrvAnalyzer
@@ -109,12 +114,26 @@ fun LiveScreen(viewModel: AppViewModel, onManageDevices: () -> Unit = {}) {
     val selectedModel by viewModel.selectedModel.collectAsStateWithLifecycle()
     // Active band name (MW-6) — names the band whose live data the console shows; falls back to "WHOOP".
     val activeDeviceName by viewModel.activeDeviceName.collectAsStateWithLifecycle()
+    val scope = rememberCoroutineScope()
+    var wornMgCandidate by remember { mutableStateOf<com.noop.data.PairedDeviceRow?>(null) }
+    LaunchedEffect(Unit) {
+        wornMgCandidate = runCatching { viewModel.pairedDevices() }.getOrDefault(emptyList())
+            .firstOrNull { isWornMgDeviceCandidate(it) }
+    }
+    val liveLooksLike5AmSibling =
+        com.noop.ble.WhoopBleClient.isStaleUnwornSiblingName(live.advertisingName.orEmpty())
     val activeWorkout by viewModel.activeWorkout.collectAsStateWithLifecycle()
     val lastWorkout by viewModel.lastWorkout.collectAsStateWithLifecycle()
 
     // Imperial/Metric display preference (D#103). Live distance/pace are computed from metres + sec/km
     // and re-labelled here. Display-only.
     val context = LocalContext.current
+    val strapBatt = remember(
+        live.connected, live.batteryPct, live.charging,
+        live.batteryFreshCount, live.linkUpAtMs,
+    ) {
+        resolveStrapBatteryDisplay(context, live)
+    }
     val unitSystem = UnitPrefs.system(context)
     // Effort display scale (#268) — routes the live + saved workout Effort read-outs. Display-only.
     val effortScale = UnitPrefs.effortScale(context)
@@ -218,8 +237,8 @@ fun LiveScreen(viewModel: AppViewModel, onManageDevices: () -> Unit = {}) {
 
     LazyScreenScaffold(
         // SHIP #161 — speak "Live" (BLE stream), not "Live HR" / Monitor twin.
-        title = "Live",
-        subtitle = "Strap stream · keeps BLE awake · session HR on the workout card is authoritative mid-set",
+        title = stringResource(R.string.nav_live),
+        subtitle = stringResource(R.string.live_subtitle),
         topBackground = if (showDayCycleBackground) { { LiquidScreenSky(fillHeight = true) } } else null,
         fullBleedBackground = showDayCycleBackground,
     ) {
@@ -228,7 +247,23 @@ fun LiveScreen(viewModel: AppViewModel, onManageDevices: () -> Unit = {}) {
         // affordance that opens the Devices screen. Additive; the connect/disconnect controls below are
         // untouched. Mirrors the iOS Live screen's active-band header + Manage-devices link.
         item {
-        ActiveBandRow(name = activeDeviceName ?: "WHOOP", onManageDevices = onManageDevices)
+        ActiveBandRow(
+            name = activeDeviceName ?: "WHOOP",
+            liveBleName = live.advertisingName?.takeIf { it.isNotBlank() },
+            liveConnected = live.connected,
+            liveLooksLike5AmSibling = liveLooksLike5AmSibling,
+            wornMgLabel = wornMgCandidate?.let { displayName(it) },
+            onManageDevices = onManageDevices,
+            onUseWornMg = wornMgCandidate?.let { mg ->
+                {
+                    scope.launch {
+                        viewModel.preferWornMgDevice(mg)
+                        wornMgCandidate = runCatching { viewModel.pairedDevices() }.getOrDefault(emptyList())
+                            .firstOrNull { isWornMgDeviceCandidate(it) }
+                    }
+                }
+            },
+        )
         }
 
         // Console header — the pill + a connection-mode badge (+ a live SYNCING badge during a history
@@ -338,20 +373,20 @@ fun LiveScreen(viewModel: AppViewModel, onManageDevices: () -> Unit = {}) {
         }
 
         // AirPods-style charge hero when charging — tap re-opens full-screen overlay.
-        if (live.charging == true) {
+        if (live.charging == true && live.connected) {
             item {
                 ChargingHeroCard(
-                    pct = live.batteryPct,
+                    pct = live.batteryPct ?: strapBatt?.pct,
                     model = selectedModel,
                     viewModel = viewModel,
                 )
             }
-        } else if (live.batteryPct != null && live.connected) {
-            // Always show a compact battery ETA strip when linked (days remaining / not charging).
+        } else if (strapBatt != null) {
+            // Always show a compact battery strip — predicted while offline / until live is trusted.
             item {
                 BatteryStatusStrip(
-                    pct = live.batteryPct,
-                    charging = live.charging == true,
+                    pct = strapBatt.pct,
+                    charging = strapBatt.charging,
                     model = selectedModel,
                     viewModel = viewModel,
                 )
@@ -401,7 +436,10 @@ fun LiveScreen(viewModel: AppViewModel, onManageDevices: () -> Unit = {}) {
 
         // Session console — record or inspect the current stream.
         item {
-        SectionHeader(title = "Session", overline = "Record or inspect the current stream")
+        SectionHeader(
+            title = stringResource(R.string.live_session_title),
+            overline = stringResource(R.string.live_session_overline),
+        )
         }
 
         // Manual workout — start/stop a session yourself; records HR + strain until you end it.
@@ -433,13 +471,25 @@ fun LiveScreen(viewModel: AppViewModel, onManageDevices: () -> Unit = {}) {
                         )
                     }
                     Row(horizontalArrangement = Arrangement.spacedBy(Metrics.gap)) {
-                        StatTile(modifier = Modifier.weight(1f), label = "HR", value = bpm?.toString() ?: "—",
-                            accent = if (bpm == null) Palette.textPrimary else Palette.metricRose)
-                        StatTile(modifier = Modifier.weight(1f), label = "Avg", value = if (w.avgHr > 0) "${w.avgHr}" else "—")
-                        StatTile(modifier = Modifier.weight(1f), label = "Peak", value = if (w.peakHr > 0) "${w.peakHr}" else "—")
                         StatTile(
                             modifier = Modifier.weight(1f),
-                            label = "Effort",
+                            label = stringResource(R.string.live_stat_hr),
+                            value = bpm?.toString() ?: "—",
+                            accent = if (bpm == null) Palette.textPrimary else Palette.metricRose,
+                        )
+                        StatTile(
+                            modifier = Modifier.weight(1f),
+                            label = stringResource(R.string.live_stat_avg),
+                            value = if (w.avgHr > 0) "${w.avgHr}" else "—",
+                        )
+                        StatTile(
+                            modifier = Modifier.weight(1f),
+                            label = stringResource(R.string.live_stat_peak),
+                            value = if (w.peakHr > 0) "${w.peakHr}" else "—",
+                        )
+                        StatTile(
+                            modifier = Modifier.weight(1f),
+                            label = stringResource(R.string.domain_effort),
                             value = UnitFormatter.effortDisplayOrEmpty(w.liveStrain, effortScale),
                             accent = w.liveStrain.takeIf { it > 0.0 }?.let { Palette.strainColor(it) }
                                 ?: Palette.textPrimary,
@@ -447,8 +497,16 @@ fun LiveScreen(viewModel: AppViewModel, onManageDevices: () -> Unit = {}) {
                     }
                     if (w.gpsEnabled) {
                         Row(horizontalArrangement = Arrangement.spacedBy(Metrics.gap)) {
-                            StatTile(modifier = Modifier.weight(1f), label = "Distance", value = liveDistance(w.distanceM, unitSystem))
-                            StatTile(modifier = Modifier.weight(1f), label = "Pace", value = w.paceSecPerKm?.let { livePace(it, unitSystem) } ?: "—")
+                            StatTile(
+                                modifier = Modifier.weight(1f),
+                                label = stringResource(R.string.live_stat_distance),
+                                value = liveDistance(w.distanceM, unitSystem),
+                            )
+                            StatTile(
+                                modifier = Modifier.weight(1f),
+                                label = stringResource(R.string.live_stat_pace),
+                                value = w.paceSecPerKm?.let { livePace(it, unitSystem) } ?: "—",
+                            )
                         }
                     }
                     Button(
@@ -458,7 +516,9 @@ fun LiveScreen(viewModel: AppViewModel, onManageDevices: () -> Unit = {}) {
                         colors = ButtonDefaults.buttonColors(
                             containerColor = Palette.statusCritical, contentColor = Palette.surfaceBase,
                         ),
-                    ) { Text("End workout", style = NoopType.captionNumber) }
+                    ) {
+                        Text(stringResource(R.string.live_end_workout), style = NoopType.captionNumber)
+                    }
                 }
             }
             ConfirmEndWorkout(
@@ -534,7 +594,7 @@ fun LiveScreen(viewModel: AppViewModel, onManageDevices: () -> Unit = {}) {
                     modifier = Modifier.size(18.dp).padding(end = 4.dp),
                 )
                 Text(
-                    LifeChapterLacquer.HRV_TAKE_READING_LABEL, style = NoopType.captionNumber,
+                    stringResource(R.string.hrv_take_reading), style = NoopType.captionNumber,
                     maxLines = 1, softWrap = false, overflow = TextOverflow.Clip,
                 )
             }
@@ -555,7 +615,7 @@ fun LiveScreen(viewModel: AppViewModel, onManageDevices: () -> Unit = {}) {
                 horizontalArrangement = Arrangement.spacedBy(Metrics.gap),
                 modifier = Modifier.fillMaxWidth(),
             ) {
-                Text("Strap", style = NoopType.footnote, color = Palette.textSecondary)
+                Text(stringResource(R.string.live_strap_label), style = NoopType.footnote, color = Palette.textSecondary)
                 SegmentedPillControl(
                     items = WhoopModel.entries.toList(),
                     selection = selectedModel,
@@ -567,8 +627,7 @@ fun LiveScreen(viewModel: AppViewModel, onManageDevices: () -> Unit = {}) {
             // nothing while it's still paired in the official WHOOP app. Shown the moment 5/MG is picked.
             if (selectedModel == WhoopModel.WHOOP5_MG) {
                 Text(
-                    "WHOOP 5.0/MG pairs with one app at a time. If a scan finds nothing, unpair it in " +
-                        "the official WHOOP app and fully close that app, then Connect again.",
+                    stringResource(R.string.live_mg_one_app_note),
                     style = NoopType.footnote,
                     color = Palette.textSecondary,
                     modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
@@ -770,45 +829,88 @@ private fun MaxHrZoneCard(hrMax: Int, zone5Bpm: Int, coachingOn: Boolean) {
  * Active band row (MW-6): names the band whose live data the console is showing, with a "Manage devices"
  * affordance that opens the Devices screen. Additive — it sits above the console header and never touches
  * the connect/disconnect controls. Mirrors the iOS Live screen's active-band header + Manage-devices link.
+ * Multi-bond: when live LE looks like an unworn 5AM sibling, offers Use worn MG (same as Devices/Settings).
  */
 @Composable
-private fun ActiveBandRow(name: String, onManageDevices: () -> Unit) {
+private fun ActiveBandRow(
+    name: String,
+    liveBleName: String? = null,
+    liveConnected: Boolean = false,
+    liveLooksLike5AmSibling: Boolean = false,
+    wornMgLabel: String? = null,
+    onManageDevices: () -> Unit,
+    onUseWornMg: (() -> Unit)? = null,
+) {
     NoopCard(padding = 14.dp) {
-        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-            Icon(
-                Icons.Filled.Watch,
-                contentDescription = null,
-                tint = Palette.accent,
-                modifier = Modifier.size(22.dp),
-            )
-            Spacer(Modifier.size(10.dp))
-            Column(modifier = Modifier.weight(1f)) {
-                Overline("Active band")
-                Text(name, style = NoopType.headline, color = Palette.textPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            }
-            // liquidPress: the "Manage devices" affordance settles inward on press (the iOS LiquidPressStyle
-            // feel), the SAME interactionSource driving its clickable + the press response.
-            val manageInteraction = remember { MutableInteractionSource() }
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier
-                    .clip(RoundedCornerShape(8.dp))
-                    .liquidPress(manageInteraction)
-                    .clickable(
-                        interactionSource = manageInteraction,
-                        indication = null,
-                        onClick = onManageDevices,
-                    )
-                    .semantics { contentDescription = "Manage devices" }
-                    .padding(horizontal = 8.dp, vertical = 6.dp),
-            ) {
-                Text("Manage devices", style = NoopType.subhead, color = Palette.accent)
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
                 Icon(
-                    Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                    Icons.Filled.Watch,
                     contentDescription = null,
                     tint = Palette.accent,
-                    modifier = Modifier.size(18.dp),
+                    modifier = Modifier.size(22.dp),
                 )
+                Spacer(Modifier.size(10.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Overline("Active band")
+                    Text(name, style = NoopType.headline, color = Palette.textPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    if (liveConnected && liveBleName != null &&
+                        !liveBleName.equals(name, ignoreCase = true)
+                    ) {
+                        Text(
+                            "Live Bluetooth name · $liveBleName",
+                            style = NoopType.footnote,
+                            color = Palette.textTertiary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                    if (liveLooksLike5AmSibling) {
+                        Text(
+                            stringResource(R.string.live_5am_sibling_note),
+                            style = NoopType.footnote,
+                            color = Palette.textTertiary,
+                        )
+                    }
+                }
+                val manageInteraction = remember { MutableInteractionSource() }
+                val manageLabel = stringResource(R.string.live_manage_devices)
+                val manageA11y = stringResource(R.string.live_manage_devices_a11y)
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(8.dp))
+                        .liquidPress(manageInteraction)
+                        .clickable(
+                            interactionSource = manageInteraction,
+                            indication = null,
+                            onClick = onManageDevices,
+                        )
+                        .semantics { contentDescription = manageA11y }
+                        .padding(horizontal = 8.dp, vertical = 6.dp),
+                ) {
+                    Text(manageLabel, style = NoopType.subhead, color = Palette.accent)
+                    Icon(
+                        Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                        contentDescription = null,
+                        tint = Palette.accent,
+                        modifier = Modifier.size(18.dp),
+                    )
+                }
+            }
+            if (liveLooksLike5AmSibling && wornMgLabel != null && onUseWornMg != null) {
+                val useWornLabel = stringResource(R.string.live_use_worn_mg, wornMgLabel)
+                val useWornA11y = stringResource(R.string.live_use_worn_mg_a11y, wornMgLabel)
+                TextButton(
+                    onClick = onUseWornMg,
+                    modifier = Modifier.semantics { contentDescription = useWornA11y },
+                ) {
+                    Text(
+                        useWornLabel,
+                        style = NoopType.subhead,
+                        color = Palette.accent,
+                    )
+                }
             }
         }
     }
@@ -816,17 +918,26 @@ private fun ActiveBandRow(name: String, onManageDevices: () -> Unit) {
 
 @Composable
 private fun ConsoleHeader(live: LiveState, activeConnection: Boolean) {
+    val context = LocalContext.current
+    val strapBatt = remember(
+        live.connected, live.batteryPct, live.charging,
+        live.batteryFreshCount, live.linkUpAtMs,
+    ) {
+        resolveStrapBatteryDisplay(context, live)
+    }
     NoopCard(padding = 14.dp) {
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
             // Badges row — pill + connection-mode badge + a live SYNCING badge during an offload.
             val (label, tone) = when {
-                live.encryptedBond && live.backfilling -> "Bonded · syncing" to StrandTone.Accent
-                live.encryptedBond -> "Bonded" to StrandTone.Positive
-                live.bonded -> "Live HR (not fully paired)" to StrandTone.Warning
-                ringStreaming(live) -> LifeChapterLacquer.LIVE_LINK_STREAMING to StrandTone.Positive   // #56: trusted non-WHOOP stream
-                live.connected -> LifeChapterLacquer.LIVE_LINK_CONNECTED to StrandTone.Warning
-                live.scanning -> "Searching…" to StrandTone.Warning
-                else -> LifeChapterLacquer.LIVE_LINK_DISCONNECTED to StrandTone.Critical
+                live.encryptedBond && live.backfilling ->
+                    context.getString(R.string.live_link_bonded_syncing) to StrandTone.Accent
+                live.encryptedBond -> context.getString(R.string.live_link_bonded) to StrandTone.Positive
+                live.bonded -> context.getString(R.string.live_link_hr_not_fully_paired) to StrandTone.Warning
+                ringStreaming(live) ->
+                    context.getString(R.string.live_link_streaming) to StrandTone.Positive   // #56: trusted non-WHOOP stream
+                live.connected -> context.getString(R.string.live_link_connected) to StrandTone.Warning
+                live.scanning -> context.getString(R.string.live_link_searching) to StrandTone.Warning
+                else -> context.getString(R.string.live_link_disconnected) to StrandTone.Critical
             }
             Row(
                 verticalAlignment = Alignment.CenterVertically,
@@ -849,8 +960,8 @@ private fun ConsoleHeader(live: LiveState, activeConnection: Boolean) {
                 // Charging bolt next to the battery % when the strap reports it's charging (PR #568 reimpl).
                 HeaderStat(
                     "Battery",
-                    live.batteryPct?.let { "${it.toInt()}%" } ?: "—",
-                    charging = live.charging == true,
+                    strapBatt?.let { "${it.pctInt}%" } ?: "—",
+                    charging = strapBatt?.charging == true,
                 )
                 HeaderStat("Worn", if (activeConnection) (if (live.worn) "Yes" else "No") else "—")
                 HeaderStat("Last sync", lastSyncLabel(live))
@@ -905,19 +1016,29 @@ private fun ChargingHeroCard(
     Box(
         Modifier
             .fillMaxWidth()
+            .clip(RoundedCornerShape(18.dp))
+            // Opaque lacquer — translucent GlowCard let Live cards bleed through mint copy (unreadable).
+            .background(
+                Palette.surfaceRaised.copy(alpha = if (Palette.isLight) 0.98f else 0.94f),
+            )
+            .border(1.dp, StrapChargeMint.copy(alpha = 0.50f), RoundedCornerShape(18.dp))
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null,
             ) { localFull = true }
-            .semantics { contentDescription = "Charging ${p.roundToInt()} percent. Tap for full screen." },
+            .semantics { contentDescription = "Charging ${p.roundToInt()} percent. Tap for full screen." }
+            .padding(16.dp),
     ) {
-    GlowCard(tint = StrapChargeMint) {
         Column(
-            Modifier.fillMaxWidth().padding(8.dp),
+            Modifier.fillMaxWidth(),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            Text("Charging · tap for full screen", style = NoopType.footnote, color = StrapChargeMint)
+            Text(
+                "Charging · tap for full screen",
+                style = NoopType.footnote,
+                color = Palette.textPrimary,
+            )
             Box(contentAlignment = Alignment.Center, modifier = Modifier.size(200.dp)) {
                 Canvas(Modifier.fillMaxSize()) {
                     val stroke = 14.dp.toPx()
@@ -964,11 +1085,10 @@ private fun ChargingHeroCard(
             Text(
                 "Ding plays when charging starts · charge limit not on open BLE",
                 style = NoopType.footnote,
-                color = Palette.textTertiary,
+                color = Palette.textSecondary,
                 textAlign = TextAlign.Center,
             )
         }
-    }
     }
 }
 
@@ -1128,9 +1248,13 @@ private fun OfflineConnectCallout(scanning: Boolean, onConnect: () -> Unit) {
                     modifier = Modifier.size(20.dp),
                 )
                 Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    Text("Start a live stream", style = NoopType.headline, color = Palette.textPrimary)
                     Text(
-                        "Scan and connect to start a live stream.",
+                        stringResource(R.string.live_start_stream_title),
+                        style = NoopType.headline,
+                        color = Palette.textPrimary,
+                    )
+                    Text(
+                        stringResource(R.string.live_start_stream_body),
                         style = NoopType.subhead,
                         color = Palette.textSecondary,
                     )
@@ -1152,7 +1276,11 @@ private fun OfflineConnectCallout(scanning: Boolean, onConnect: () -> Unit) {
                     modifier = Modifier.size(18.dp).padding(end = 4.dp),
                 )
                 Text(
-                    if (scanning) "Searching…" else "Scan & Connect",
+                    if (scanning) {
+                        stringResource(R.string.live_searching)
+                    } else {
+                        stringResource(R.string.live_scan_connect)
+                    },
                     style = NoopType.captionNumber,
                     maxLines = 1,
                     softWrap = false,
@@ -1323,12 +1451,16 @@ private fun HeartReadout(
                 }
                 Text(LifeChapterLacquer.HRV_BPM_CAPTION, style = NoopType.subhead, color = Palette.textSecondary)
                 if (zone >= 1) {
-                    Text("ZONE $zone", style = NoopType.overline, color = tint)
+                    Text(
+                        stringResource(R.string.live_zone, zone),
+                        style = NoopType.overline,
+                        color = tint,
+                    )
                 }
             }
         }
         Text(
-            signalTrustSummary(live, activeConnection),
+            signalTrustSummary(LocalContext.current, live, activeConnection),
             style = NoopType.footnote,
             color = Palette.textTertiary,
             textAlign = TextAlign.Center,
@@ -1343,8 +1475,8 @@ private fun PhysiologyStack(live: LiveState, activeConnection: Boolean) {
     Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
         Row(verticalAlignment = Alignment.Top, modifier = Modifier.fillMaxWidth()) {
             Column(modifier = Modifier.weight(1f)) {
-                Overline(LifeChapterLacquer.LIVE_PHYSIOLOGY_OVERLINE)
-                Text(connectionModeDetail(live, activeConnection), style = NoopType.headline, color = Palette.textPrimary)
+                Overline(stringResource(R.string.live_physiology_overline))
+                Text(connectionModeDetail(LocalContext.current, live, activeConnection), style = NoopType.headline, color = Palette.textPrimary)
             }
             if (rmssd != null) {
                 Column(horizontalAlignment = Alignment.End) {
@@ -1406,6 +1538,7 @@ private fun PhysiologyStack(live: LiveState, activeConnection: Boolean) {
             )
             Text(
                 opticalLockCaption(
+                    context = LocalContext.current,
                     type40Frames = live.type40FramesThisSession,
                     type40WithRr = live.type40WithRrThisSession,
                     lockPct = live.type40RrLockPct,
@@ -1419,8 +1552,9 @@ private fun PhysiologyStack(live: LiveState, activeConnection: Boolean) {
             // Offline: show a muted "Offline" word (dimmed to textTertiary) instead of bare accent-
             // coloured em-dashes that read as broken live readouts. Real values + accents return on a
             // stream. Mirrors the macOS liveProofMetric(offline:).
+            val offlineLabel = stringResource(R.string.live_trust_offline)
             val rrProof = when {
-                !activeConnection -> LifeChapterLacquer.LIVE_TRUST_OFFLINE
+                !activeConnection -> offlineLabel
                 live.rr.lastOrNull() != null -> liveRrIntervalMsValue(live.rr.last()!!)
                 live.rrRecent.isNotEmpty() -> {
                     val mean = live.rrRecent.takeLast(5).average().roundToInt()
@@ -1434,8 +1568,8 @@ private fun PhysiologyStack(live: LiveState, activeConnection: Boolean) {
                 Palette.metricCyan, offline = !activeConnection,
             )
             LiveProofMetric(
-                Modifier.weight(1f), LifeChapterLacquer.LIVE_PROOF_EVENT_LABEL,
-                if (activeConnection) (live.lastEvent ?: "—") else LifeChapterLacquer.LIVE_TRUST_OFFLINE,
+                Modifier.weight(1f), stringResource(R.string.live_proof_event),
+                if (activeConnection) (live.lastEvent ?: "—") else offlineLabel,
                 Palette.statusWarning, offline = !activeConnection,
             )
         }
@@ -1496,10 +1630,11 @@ private fun RRStrip(
             when {
                 values.isEmpty() && lockPct != null && ownOpticalCaption ->
                     opticalLockCaption(
+                        context = LocalContext.current,
                         type40Frames = type40Frames ?: 0,
                         type40WithRr = type40WithRr ?: 0,
                         lockPct = lockPct,
-                        lead = LifeChapterLacquer.OPTICAL_LOCK_WAITING_LEAD,
+                        leadRes = R.string.optical_lock_waiting_lead,
                     )
                 values.isEmpty() && lockPct != null -> rrOpticalAwaitCaption()
                 values.isEmpty() -> rrFeelClimbCaption(0)
@@ -1580,30 +1715,58 @@ private fun LiveStepsCard(viewModel: AppViewModel, model: WhoopModel, connected:
         (delta / profile.stepTicksPerStep).roundToInt()
     } else null
     val act = when (live.liveActivityClass) {
-        0 -> "Still"
-        1 -> "Walk"
-        2 -> "Run"
+        0 -> stringResource(R.string.live_act_still)
+        1 -> stringResource(R.string.live_act_walk)
+        2 -> stringResource(R.string.live_act_run)
         else -> "—"
+    }
+    val stepsTrailing = when {
+        live.liveStepCounter != null -> stringResource(R.string.live_steps_trailing_frame)
+        connected -> stringResource(R.string.live_steps_trailing_db)
+        else -> stringResource(R.string.live_link_offline)
     }
     Column(verticalArrangement = Arrangement.spacedBy(Metrics.gap)) {
         SectionHeader(
-            title = "Live steps",
-            overline = if (model == WhoopModel.WHOOP5_MG) "Live step counter" else "WHOOP 4 estimate path",
-            trailing = if (live.liveStepCounter != null) "Live frame" else if (connected) "DB" else "Offline",
+            title = stringResource(R.string.live_steps_title),
+            overline = if (model == WhoopModel.WHOOP5_MG) {
+                stringResource(R.string.live_steps_overline_mg)
+            } else {
+                stringResource(R.string.live_steps_overline_w4)
+            },
+            trailing = stepsTrailing,
         )
         NoopCard(tint = Palette.effortColor) {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Row(modifier = Modifier.fillMaxWidth()) {
-                    MiniStat("Counter", counter?.toString() ?: "—", Modifier.weight(1f), tint = Palette.effortColor)
-                    MiniStat("Session d", if (counter != null) "$delta" else "—", Modifier.weight(1f))
-                    MiniStat("Est steps", est?.toString() ?: "—", Modifier.weight(1f), tint = Palette.metricAmber)
-                    MiniStat("Class", act, Modifier.weight(1f))
+                    MiniStat(
+                        stringResource(R.string.live_steps_counter),
+                        counter?.toString() ?: "—",
+                        Modifier.weight(1f),
+                        tint = Palette.effortColor,
+                    )
+                    MiniStat(
+                        stringResource(R.string.live_steps_session_d),
+                        if (counter != null) "$delta" else "—",
+                        Modifier.weight(1f),
+                    )
+                    MiniStat(
+                        stringResource(R.string.live_steps_est),
+                        est?.toString() ?: "—",
+                        Modifier.weight(1f),
+                        tint = Palette.metricAmber,
+                    )
+                    MiniStat(
+                        stringResource(R.string.live_steps_class),
+                        act,
+                        Modifier.weight(1f),
+                    )
                 }
                 Text(
-                    if (model == WhoopModel.WHOOP5_MG)
-                        "Steps from the strap this session. Train the step scale in Settings if the count feels off."
-                    else
-                        "WHOOP 4 has no live @57 pedometer field. Daily steps use band gravity/IMU motion (est.) — not the phone pedometer.",
+                    if (model == WhoopModel.WHOOP5_MG) {
+                        stringResource(R.string.live_steps_blurb_mg)
+                    } else {
+                        stringResource(R.string.live_steps_blurb_w4)
+                    },
                     style = NoopType.footnote,
                     color = Palette.textTertiary,
                 )
@@ -1656,17 +1819,22 @@ private fun HonestLiveVitalsCard(viewModel: AppViewModel, bpm: Int?, live: LiveS
     val bp = remember(bpSys, bpDia, bpDay) { HonestVitalsLabels.bpLine(bpSys, bpDia, bpDay) }
     val spo2Line = remember(spo2) { HonestVitalsLabels.spo2Line(spo2) }
     val vo2Line = remember(vo2) { HonestVitalsLabels.vo2Line(vo2) }
+    val bankedTrailing = when {
+        live.bonded -> stringResource(R.string.live_link_bonded)
+        live.connected -> stringResource(R.string.live_linked)
+        else -> stringResource(R.string.live_link_offline)
+    }
     Column(verticalArrangement = Arrangement.spacedBy(Metrics.gap)) {
         SectionHeader(
-            title = "Banked vitals",
-            overline = "Not live stream",
-            trailing = if (live.bonded) "Bonded" else if (live.connected) "Linked" else "Offline",
+            title = stringResource(R.string.live_banked_vitals_title),
+            overline = stringResource(R.string.live_banked_vitals_overline),
+            trailing = bankedTrailing,
         )
         HonestProvenanceLegend()
         NoopCard {
             Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
                 Text(
-                    "Live heart rate is above. These tiles are banked or Lab Book only — full grid in Health Monitor.",
+                    stringResource(R.string.live_banked_vitals_blurb),
                     style = NoopType.footnote,
                     color = Palette.textTertiary,
                 )
@@ -1722,21 +1890,31 @@ private fun LiveDatastreamCard(
     model: WhoopModel,
     deviceName: String?,
 ) {
+    val context = LocalContext.current
+    val strapBatt = remember(
+        live.connected, live.batteryPct, live.charging,
+        live.batteryFreshCount, live.linkUpAtMs,
+    ) {
+        resolveStrapBatteryDisplay(context, live)
+    }
     val linkLabel = when {
-        live.encryptedBond || (live.bonded && model != WhoopModel.WHOOP5_MG) -> "Fully bonded"
-        live.streamingLiveHR || live.heartRate != null -> "Live HR only"
-        live.connected -> "Connected · waiting for stream"
-        live.scanning -> "Scanning…"
-        else -> "Offline"
+        live.encryptedBond || (live.bonded && model != WhoopModel.WHOOP5_MG) ->
+            stringResource(R.string.live_fully_bonded)
+        live.streamingLiveHR || live.heartRate != null -> stringResource(R.string.live_link_hr_only)
+        live.connected -> stringResource(R.string.live_link_waiting_stream)
+        live.scanning -> stringResource(R.string.live_searching)
+        else -> stringResource(R.string.live_link_offline)
     }
     val hue = when {
         bpm != null -> Palette.accent
         live.connected -> Palette.metricAmber
         else -> Palette.textSecondary
     }
+    val yes = stringResource(R.string.live_yes)
+    val no = stringResource(R.string.live_no)
     Column(verticalArrangement = Arrangement.spacedBy(Metrics.gap)) {
         SectionHeader(
-            title = "Live datastream",
+            title = stringResource(R.string.live_datastream_title),
             overline = model.displayName,
             trailing = linkLabel,
         )
@@ -1748,30 +1926,67 @@ private fun LiveDatastreamCard(
                     color = Palette.textPrimary,
                 )
                 Row(modifier = Modifier.fillMaxWidth()) {
-                    MiniStat("HR", bpm?.let { "$it" } ?: "—", Modifier.weight(1f), tint = if (bpm != null) Palette.metricRose else Palette.textTertiary)
-                    MiniStat("R-R", if (live.rrRecent.isNotEmpty()) "${live.rrRecent.size}" else "—", Modifier.weight(1f))
-                    MiniStat("Battery", live.batteryPct?.let { "${it.roundToInt()}%" } ?: "—", Modifier.weight(1f))
                     MiniStat(
-                        "Worn",
+                        stringResource(R.string.live_stat_hr),
+                        bpm?.let { "$it" } ?: "—",
+                        Modifier.weight(1f),
+                        tint = if (bpm != null) Palette.metricRose else Palette.textTertiary,
+                    )
+                    MiniStat("R-R", if (live.rrRecent.isNotEmpty()) "${live.rrRecent.size}" else "—", Modifier.weight(1f))
+                    MiniStat(
+                        stringResource(R.string.live_trust_battery),
+                        strapBatt?.let { "${it.pctInt}%" } ?: "—",
+                        Modifier.weight(1f),
+                    )
+                    MiniStat(
+                        stringResource(R.string.live_worn),
                         when {
                             !live.connected -> "—"
-                            live.worn -> "Yes"
-                            else -> "No"
+                            live.worn -> yes
+                            else -> no
                         },
                         Modifier.weight(1f),
                     )
                 }
                 Row(modifier = Modifier.fillMaxWidth()) {
-                    MiniStat("Bond", if (live.bonded) "Yes" else "No", Modifier.weight(1f))
-                    MiniStat("Encrypted", if (live.encryptedBond) "Yes" else "No", Modifier.weight(1f))
-                    MiniStat("Stream", if (live.streamingLiveHR || bpm != null) "On" else "Off", Modifier.weight(1f))
-                    MiniStat("Charge", live.charging?.let { if (it) "Yes" else "No" } ?: "—", Modifier.weight(1f))
+                    MiniStat(
+                        stringResource(R.string.live_bond),
+                        if (live.bonded) yes else no,
+                        Modifier.weight(1f),
+                    )
+                    MiniStat(
+                        stringResource(R.string.live_encrypted),
+                        if (live.encryptedBond) yes else no,
+                        Modifier.weight(1f),
+                    )
+                    MiniStat(
+                        stringResource(R.string.live_stream),
+                        if (live.streamingLiveHR || bpm != null) {
+                            stringResource(R.string.live_on)
+                        } else {
+                            stringResource(R.string.live_off)
+                        },
+                        Modifier.weight(1f),
+                    )
+                    MiniStat(
+                        stringResource(R.string.live_charge),
+                        live.charging?.let { if (it) yes else no } ?: "—",
+                        Modifier.weight(1f),
+                    )
                 }
                 live.lastEvent?.let {
-                    Text("Last event: $it", style = NoopType.footnote, color = Palette.textTertiary)
+                    Text(
+                        stringResource(R.string.live_last_event, it),
+                        style = NoopType.footnote,
+                        color = Palette.textTertiary,
+                    )
                 }
                 live.strapFirmware?.let {
-                    Text("Firmware: $it", style = NoopType.footnote, color = Palette.textTertiary)
+                    Text(
+                        stringResource(R.string.live_firmware, it),
+                        style = NoopType.footnote,
+                        color = Palette.textTertiary,
+                    )
                 }
                 // Exact BLE listen inventory — same proprietary channels WHOOP app uses when we hold exclusive bond.
                 if (live.rawPacketsThisSession > 0 || live.rawListenSummary != null) {
@@ -1811,11 +2026,11 @@ private fun LiveDatastreamCard(
 
 @Composable
 private fun SignalTrustRail(live: LiveState, bpm: Int?, activeConnection: Boolean) {
-    val tiles = signalTiles(live, bpm, activeConnection)
+    val tiles = signalTiles(LocalContext.current, live, bpm, activeConnection)
     Column(verticalArrangement = Arrangement.spacedBy(Metrics.gap)) {
         SectionHeader(
-            title = LifeChapterLacquer.LIVE_SIGNAL_TRUST_TITLE,
-            overline = LifeChapterLacquer.LIVE_SIGNAL_TRUST_OVERLINE,
+            title = stringResource(R.string.live_signal_trust_title),
+            overline = stringResource(R.string.live_signal_trust_overline),
         )
         // Two tiles per row (a LazyVerticalGrid can't live inside the scrolling ScreenScaffold —
         // infinite-height constraints — so use fixed Rows, the correct Compose idiom here).
@@ -1838,16 +2053,22 @@ private data class SignalTile(
     val tint: Color,
 )
 
-private fun signalTiles(live: LiveState, bpm: Int?, activeConnection: Boolean): List<SignalTile> {
+private fun signalTiles(
+    context: android.content.Context,
+    live: LiveState,
+    bpm: Int?,
+    activeConnection: Boolean,
+): List<SignalTile> {
     val feelRmssd = HrvAnalyzer.feelRmssdMs(live.rrRecent)
+    val strapBatt = resolveStrapBatteryDisplay(context, live)
     return listOf(
     SignalTile(
-        LifeChapterLacquer.LIVE_TRUST_HR_TITLE,
-        bpm?.let { "$it ${LifeChapterLacquer.HRV_BPM_CAPTION}" } ?: LifeChapterLacquer.LIVE_TRUST_MISSING,
+        context.getString(R.string.live_trust_hr),
+        bpm?.let { "$it ${LifeChapterLacquer.HRV_BPM_CAPTION}" } ?: context.getString(R.string.live_trust_missing),
         if (activeConnection || ringStreaming(live)) {
-            LifeChapterLacquer.LIVE_TRUST_STREAMING_NOW
+            context.getString(R.string.live_trust_streaming_now)
         } else {
-            LifeChapterLacquer.LIVE_TRUST_NO_ACTIVE_STREAM
+            context.getString(R.string.live_trust_no_active_stream)
         },
         if (bpm == null) Palette.textTertiary else Palette.accent,
     ),
@@ -1855,18 +2076,19 @@ private fun signalTiles(live: LiveState, bpm: Int?, activeConnection: Boolean): 
         "${LifeChapterLacquer.RR_PROOF_LABEL} intervals",
         when {
             live.rrRecent.isNotEmpty() -> "${live.rrRecent.size} recent"
-            live.type40FramesThisSession > 0 -> opticalLockTrustValue(live.type40RrLockPct)
-            else -> LifeChapterLacquer.LIVE_TRUST_MISSING
+            live.type40FramesThisSession > 0 -> opticalLockTrustValue(context, live.type40RrLockPct)
+            else -> context.getString(R.string.live_trust_missing)
         },
         when {
             feelRmssd != null -> rrRmssdMsCaption(feelRmssd)
             live.rrRecent.isNotEmpty() -> rrFeelClimbCaption(live.rrRecent.size)
             live.type40FramesThisSession > 0 ->
                 opticalLockCaption(
+                    context = context,
                     type40Frames = live.type40FramesThisSession,
                     type40WithRr = live.type40WithRrThisSession,
                     lockPct = live.type40RrLockPct,
-                    lead = LifeChapterLacquer.OPTICAL_LOCK_TRUST_LEAD,
+                    leadRes = R.string.optical_lock_trust_lead,
                 )
             else -> LifeChapterLacquer.RR_NEEDS_FRAMES_DETAIL
         },
@@ -1877,44 +2099,51 @@ private fun signalTiles(live: LiveState, bpm: Int?, activeConnection: Boolean): 
         },
     ),
     SignalTile(
-        LifeChapterLacquer.LIVE_TRUST_CONNECTION,
+        context.getString(R.string.live_trust_connection),
         when {
-            activeConnection && live.encryptedBond -> LifeChapterLacquer.LIVE_TRUST_ENCRYPTED
-            activeConnection -> LifeChapterLacquer.LIVE_TRUST_PARTIAL
-            ringStreaming(live) -> LifeChapterLacquer.LIVE_LINK_STREAMING
-            live.connected -> LifeChapterLacquer.LIVE_LINK_CONNECTED
-            else -> LifeChapterLacquer.LIVE_TRUST_OFFLINE
+            activeConnection && live.encryptedBond -> context.getString(R.string.live_trust_encrypted)
+            activeConnection -> context.getString(R.string.live_trust_partial)
+            ringStreaming(live) -> context.getString(R.string.live_link_streaming)
+            live.connected -> context.getString(R.string.live_link_connected)
+            else -> context.getString(R.string.live_trust_offline)
         },
         when {
-            activeConnection && live.encryptedBond -> LifeChapterLacquer.LIVE_CONTROLS_UNLOCKED
-            else -> liveConnectionBondDetail(ringStreaming(live))
+            activeConnection && live.encryptedBond -> context.getString(R.string.live_controls_unlocked)
+            else -> liveConnectionBondDetail(context, ringStreaming(live))
         },
         connectionModeColor(live, activeConnection),
     ),
     SignalTile(
-        LifeChapterLacquer.LIVE_TRUST_HISTORY_SYNC,
+        context.getString(R.string.live_trust_history_sync),
         if (live.backfilling) "${live.syncChunksThisSession} chunks" else lastSyncLabel(live),
-        when {
-            live.lastSyncError != null -> live.lastSyncError
-            live.backfilling -> "Offload in progress"
-            live.lastSyncAt == null -> "No completed offload yet"
-            else -> "Last offload completed"
-        },
+        liveHistorySyncDetail(
+            context,
+            backfilling = live.backfilling,
+            lastSyncError = live.lastSyncError,
+            lastSyncAt = live.lastSyncAt,
+        ),
         if (live.backfilling) Palette.metricCyan else Palette.textSecondary,
     ),
     SignalTile(
-        LifeChapterLacquer.LIVE_TRUST_BATTERY,
-        live.batteryPct?.let { "${it.toInt()}%" } ?: "Unknown",
-        if (live.charging == true) "Charging" else "Last reported by strap",
-        batteryTint(live.batteryPct),
+        context.getString(R.string.live_trust_battery),
+        strapBatt?.let { "${it.pctInt}%" }
+            ?: context.getString(R.string.live_battery_unknown),
+        when {
+            strapBatt?.charging == true ->
+                context.getString(R.string.live_battery_charging)
+            !live.connected && strapBatt != null ->
+                "Predicted from last sync"
+            else -> context.getString(R.string.live_battery_last_reported)
+        },
+        batteryTint(strapBatt?.pct),
     ),
     // Wear is only trustworthy on a live link: `worn` defaults true and is only updated by
     // WRIST_ON/OFF events, so while OFFLINE it would read a false-green "On wrist". Gate value + tint
     // on activeConnection (triage fix for PR#191, parity with the macOS Wear tile).
     SignalTile(
-        LifeChapterLacquer.LIVE_TRUST_WEAR_STATE,
+        context.getString(R.string.live_trust_wear_state),
         if (activeConnection) {
-            if (live.worn) LifeChapterLacquer.LIVE_TRUST_ON_WRIST else LifeChapterLacquer.LIVE_TRUST_OFF_WRIST
+            if (live.worn) context.getString(R.string.live_trust_on_wrist) else context.getString(R.string.live_trust_off_wrist)
         } else {
             "Unknown"
         },
@@ -1941,29 +2170,37 @@ private fun SignalTrustTile(tile: SignalTile, modifier: Modifier = Modifier) {
 
 // MARK: - Pure helpers (shared by the body console + the trust rail)
 
-private fun signalTrustSummary(live: LiveState, activeConnection: Boolean): String = when {
+private fun signalTrustSummary(
+    context: android.content.Context,
+    live: LiveState,
+    activeConnection: Boolean,
+): String = when {
     activeConnection && live.encryptedBond && live.rrRecent.isNotEmpty() ->
-        liveRrLockedTrustSummary()
+        liveRrLockedTrustSummary(context)
     activeConnection && live.encryptedBond ->
-        liveEncryptedAwaitTrustSummary(live.type40RrLockPct)
+        liveEncryptedAwaitTrustSummary(context, live.type40RrLockPct)
     activeConnection && live.streamingLiveHR && live.rrRecent.isEmpty() ->
-        liveHrFlowingTrustSummary(live.type40RrLockPct)
-    activeConnection -> livePartialBondTrustSummary()
+        liveHrFlowingTrustSummary(context, live.type40RrLockPct)
+    activeConnection -> livePartialBondTrustSummary(context)
     live.connected -> liveAwaitingStreamTrustSummary()
     // The actionable "Scan and connect…" CTA now lives in the above-the-fold OfflineConnectCallout,
     // so this ring caption stays a calm empty-state descriptor rather than a competing CTA.
     else -> liveOfflineTrustSummary()
 }
 
-private fun connectionModeDetail(live: LiveState, activeConnection: Boolean): String = when {
-    activeConnection && live.encryptedBond && live.rrRecent.isNotEmpty() -> liveRrLockedModeDetail()
+private fun connectionModeDetail(
+    context: android.content.Context,
+    live: LiveState,
+    activeConnection: Boolean,
+): String = when {
+    activeConnection && live.encryptedBond && live.rrRecent.isNotEmpty() -> liveRrLockedModeDetail(context)
     activeConnection && live.encryptedBond ->
-        liveEncryptedAwaitModeDetail(live.type40RrLockPct)
+        liveEncryptedAwaitModeDetail(context, live.type40RrLockPct)
     (activeConnection || ringStreaming(live)) && live.rrRecent.isEmpty() && live.streamingLiveHR ->
-        liveHrOpticalModeDetail(live.type40RrLockPct)
-    activeConnection || ringStreaming(live) -> liveHrActiveModeDetail()
-    live.connected -> liveRadioUntrustedModeDetail()
-    else -> liveNoStreamModeDetail()
+        liveHrOpticalModeDetail(context, live.type40RrLockPct)
+    activeConnection || ringStreaming(live) -> liveHrActiveModeDetail(context)
+    live.connected -> liveRadioUntrustedModeDetail(context)
+    else -> liveNoStreamModeDetail(context)
 }
 
 private fun batteryTint(pct: Double?): Color = when {

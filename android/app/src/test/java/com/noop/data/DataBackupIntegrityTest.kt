@@ -1,7 +1,9 @@
 package com.noop.data
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -42,6 +44,30 @@ class DataBackupIntegrityTest {
         assertEquals(
             "Page 9 is never used",
             DataBackup.quickCheckVerdict(listOf("ok", "Page 9 is never used")),
+        )
+    }
+
+    @Test fun emptyTableSetDoesNotHoldUserData() {
+        assertFalse(DataBackup.holdsData(emptySet()))
+        assertFalse(DataBackup.holdsData(setOf("android_metadata", "sqlite_sequence", "room_master_table")))
+        assertTrue(DataBackup.holdsData(setOf("android_metadata", "dailyMetric")))
+    }
+
+    @Test fun ryanForkTablesStillClassifyAsAndroidOrigin() {
+        // ryanbr/noop backups carry room_master_table (+ optionally ppgWaveformSample). Origin must
+        // stay ANDROID so import proceeds into sibling-schema reconcile instead of foreign reject.
+        assertEquals(
+            DataBackup.BackupOrigin.ANDROID,
+            DataBackup.backupOriginOf(
+                setOf(
+                    "android_metadata",
+                    "room_master_table",
+                    "rrInterval",
+                    "hrSample",
+                    "skinTempSample",
+                    "ppgWaveformSample",
+                ),
+            ),
         )
     }
 }

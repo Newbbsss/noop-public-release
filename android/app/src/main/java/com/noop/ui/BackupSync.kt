@@ -164,6 +164,88 @@ object BackupSync {
     /** True when [nowMs] is at least a day past [lastBackupMs] (pure, so the catch-up gate is testable). */
     fun isCatchUpDue(lastBackupMs: Long, nowMs: Long): Boolean = nowMs - lastBackupMs >= DAY_MS
 
+    /**
+     * Pure gate for on-open auto-restore. Only seeds/recovers when the live store is empty and the
+     * backup actually holds data — never wipes a populated phone with an empty/corrupt file.
+     * [autoRestoreOn] defaults ON in prefs ("have it on open").
+     */
+    fun shouldAutoRestore(
+        autoRestoreOn: Boolean,
+        liveHoldsData: Boolean,
+        backupHoldsData: Boolean,
+    ): Boolean = autoRestoreOn && backupHoldsData && !liveHoldsData
+
+    /** Outcome of [autoRestoreIfNeeded]. */
+    sealed interface AutoRestoreOutcome {
+        data object Skipped : AutoRestoreOutcome
+        data object RestoredNeedsRelaunch : AutoRestoreOutcome
+        data class Failed(val message: String, val mustRelaunch: Boolean = false) : AutoRestoreOutcome
+    }
+
+    /**
+     * On-launch auto-restore from the chosen backup folder. Deferred IO by the caller (MainActivity).
+     * Restores the newest valid `.noopbak` only when [shouldAutoRestore] passes.
+     */
+    fun autoRestoreIfNeeded(context: Context): AutoRestoreOutcome {
+        if (!BackupSyncPrefs.autoRestoreEnabled(context)) return AutoRestoreOutcome.Skipped
+        val treeUri = BackupSyncPrefs.treeUri(context) ?: return AutoRestoreOutcome.Skipped
+        // Avoid restore→relaunch→restore loops within the same minute.
+        val lastRestoreSec = runCatching {
+            NoopPrefs.of(context).getLong("backup.lastRestoreAt", 0L)
+        }.getOrDefault(0L)
+        val nowSec = System.currentTimeMillis() / 1000L
+        if (lastRestoreSec > 0L && nowSec - lastRestoreSec < 90L) return AutoRestoreOutcome.Skipped
+
+        val liveDb = context.applicationContext.getDatabasePath(
+            com.noop.data.WhoopDatabase.DB_NAME,
+        )
+        val liveHolds = DataBackup.fileHoldsUserData(liveDb)
+        val snaps = runCatching { listSnapshotDocs(context, treeUri) }.getOrDefault(emptyList())
+        val newest = snaps.firstOrNull() ?: return AutoRestoreOutcome.Skipped
+        // Peek whether the backup has data without swapping yet — importFrom re-validates fully.
+        val staged = java.io.File(context.cacheDir, "auto-restore-peek.sqlite")
+        val header = runCatching {
+            context.contentResolver.openInputStream(newest.uri)?.use { input ->
+                val buf = ByteArray(16)
+                var off = 0
+                while (off < buf.size) {
+                    val n = input.read(buf, off, buf.size - off)
+                    if (n < 0) break
+                    off += n
+                }
+                buf.copyOf(off)
+            }
+        }.getOrNull() ?: return AutoRestoreOutcome.Skipped
+        if (header.size < 4) return AutoRestoreOutcome.Skipped
+        staged.delete()
+        val stage = runCatching {
+            DataBackup.stageBackupSqlite(
+                context.contentResolver.openInputStream(newest.uri),
+                header,
+                staged,
+            )
+        }.getOrDefault(DataBackup.StageResult.CANNOT_OPEN)
+        if (stage != DataBackup.StageResult.OK) {
+            staged.delete()
+            return AutoRestoreOutcome.Skipped
+        }
+        val backupHolds = DataBackup.fileHoldsUserData(staged)
+        staged.delete()
+        if (!shouldAutoRestore(
+                autoRestoreOn = true,
+                liveHoldsData = liveHolds,
+                backupHoldsData = backupHolds,
+            )
+        ) {
+            return AutoRestoreOutcome.Skipped
+        }
+        return when (val r = DataBackup.importFrom(context, newest.uri)) {
+            is DataBackup.ImportResult.NeedsRestart -> AutoRestoreOutcome.RestoredNeedsRelaunch
+            is DataBackup.ImportResult.Failed ->
+                AutoRestoreOutcome.Failed(r.message, mustRelaunch = r.mustRelaunch)
+        }
+    }
+
     // ── Folder destination I/O (SAF tree via DocumentsContract - no extra dep) ──
 
     /** Create + write one snapshot into the chosen [treeUri]; returns the new file Uri, or null on failure. */
@@ -330,6 +412,14 @@ object BackupSyncPrefs {
     /** Master enable for the daily auto-backup. Default OFF (every NOOP automation is opt-in). */
     fun autoEnabled(c: Context): Boolean = p(c).getBoolean("auto", false)
     fun setAutoEnabled(c: Context, on: Boolean) = p(c).edit().putBoolean("auto", on).apply()
+
+    /**
+     * On-open auto-restore from the backup folder when this phone has no data yet (reinstall / wipe).
+     * Default ON so a chosen folder with a good `.noopbak` seeds the empty store. Never overwrites
+     * a populated live DB (see [BackupSync.shouldAutoRestore]).
+     */
+    fun autoRestoreEnabled(c: Context): Boolean = p(c).getBoolean("auto_restore", true)
+    fun setAutoRestoreEnabled(c: Context, on: Boolean) = p(c).edit().putBoolean("auto_restore", on).apply()
 
     /** Time-of-day the daily backup runs, minutes since local midnight. Default [BackupSync.BACKUP_MINUTE_OF_DAY]
      *  (01:00). Clamped to a valid minute so a corrupt value can't schedule at nonsense o'clock. */

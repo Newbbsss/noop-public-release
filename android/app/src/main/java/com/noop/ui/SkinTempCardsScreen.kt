@@ -123,11 +123,9 @@ fun CycleAwarenessCard(
     result: CyclePhaseEngine.Result,
     onLogPeriod: (() -> Unit)? = null,
     onOpenDetail: (() -> Unit)? = null,
-    // #801: symmetric off-control. When supplied, the card shows a "Turn off" action so the user can
-    // disable cycle awareness from the SAME place they enabled it (Health), not only from Automations.
-    onTurnOff: (() -> Unit)? = null,
+    // Gilbert P0: master on/off is Settings-only — deep-link instead of in-place Turn off.
+    onManageInSettings: (() -> Unit)? = null,
 ) {
-    var confirmTurnOff by remember { mutableStateOf(false) }
     val hue = Palette.restColor
     NoopCard(tint = hue) {
         Column(verticalArrangement = Arrangement.spacedBy(Metrics.gap)) {
@@ -174,7 +172,7 @@ fun CycleAwarenessCard(
             }
 
             // Actions.
-            if (onLogPeriod != null || onOpenDetail != null || onTurnOff != null) {
+            if (onLogPeriod != null || onOpenDetail != null || onManageInSettings != null) {
                 Row(horizontalArrangement = Arrangement.spacedBy(Metrics.gap)) {
                     if (onLogPeriod != null) {
                         OutlinedButton(onClick = onLogPeriod) { Text("Log period start") }
@@ -185,9 +183,8 @@ fun CycleAwarenessCard(
                             colors = ButtonDefaults.outlinedButtonColors(contentColor = Palette.accent),
                         ) { Text("View detail") }
                     }
-                    // #801 + #247: confirm before turning cycle awareness off (separate from tab-hide).
-                    if (onTurnOff != null) {
-                        OutlinedButton(onClick = { confirmTurnOff = true }) { Text("Turn off") }
+                    if (onManageInSettings != null) {
+                        OutlinedButton(onClick = onManageInSettings) { Text("Settings") }
                     }
                 }
             }
@@ -199,42 +196,14 @@ fun CycleAwarenessCard(
             PrivacyNote()
         }
     }
-    if (confirmTurnOff && onTurnOff != null) {
-        AlertDialog(
-            onDismissRequest = { confirmTurnOff = false },
-            title = { Text(LifeChapterLacquer.CYCLE_AWARENESS_OFF_TITLE) },
-            text = {
-                Text(
-                    LifeChapterLacquer.CYCLE_AWARENESS_OFF_BODY,
-                    style = NoopType.body,
-                    color = Palette.textSecondary,
-                )
-            },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        confirmTurnOff = false
-                        onTurnOff()
-                    },
-                ) {
-                    Text("Turn off", color = Palette.statusWarning)
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { confirmTurnOff = false }) {
-                    Text("Keep on")
-                }
-            },
-        )
-    }
 }
 
 /**
- * Shown in place of the card when the user has NOT opted in. A single calm opt-in card restating
- * the privacy promise at the point of consent (manual-first; default OFF).
+ * Shown in place of the card when the user has NOT opted in. Deep-links to Settings for the
+ * master Period tracking switch (Gilbert P0 — no in-place Turn on).
  */
 @Composable
-fun CycleAwarenessOptInCard(onEnable: () -> Unit) {
+fun CycleAwarenessOptInCard(onOpenSettings: () -> Unit) {
     NoopCard(tint = Palette.restColor) {
         Column(verticalArrangement = Arrangement.spacedBy(Metrics.gap)) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -244,12 +213,12 @@ fun CycleAwarenessOptInCard(onEnable: () -> Unit) {
             Text(
                 "NOOP can read a coarse menstrual-cycle phase from your nightly skin temperature, " +
                     "entirely on your device. It is awareness only: not contraception, not a fertility " +
-                    "predictor, not a medical service.",
+                    "predictor, not a medical service. Turn Period tracking on in Settings → Health & wellness.",
                 style = NoopType.subhead,
                 color = Palette.textSecondary,
             )
             PrivacyNote()
-            OutlinedButton(onClick = onEnable) { Text("Turn on cycle awareness") }
+            OutlinedButton(onClick = onOpenSettings) { Text("Open Settings") }
         }
     }
 }

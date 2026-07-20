@@ -32,6 +32,7 @@ import com.noop.ble.BleProtocolMode
 import com.noop.ble.HrBroadcaster
 import com.noop.ble.LiveState
 import com.noop.ble.PuffinExperiment
+import com.noop.ble.WhoopBleClient
 import com.noop.ble.WhoopConnectionService
 import com.noop.ble.WhoopModel
 import androidx.health.connect.client.HealthConnectClient
@@ -55,9 +56,12 @@ import com.noop.widget.WidgetSnapshot
 import com.noop.widget.WidgetSnapshotStore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.isActive
@@ -91,8 +95,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     val repo: WhoopRepository get() = repository
 
     /** The registry's active strap id (the same id the read path resolves to). Public so the Test Centre
-     *  can read the right source for the CAPTURE-D data-volume snapshot. */
-    val activeStrapId: String get() = deviceId
+     *  can read the right source for the CAPTURE-D data-volume snapshot. Mutable: multi-bond promote
+     *  (worn MG over 5AM sibling) must update Sleep/HR unions without a process restart. */
+    val activeStrapId: String get() = _activeStrapId.value
 
     // MARK: - Devices screen (multi-source Phase 1B)
     //
@@ -115,9 +120,45 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      *  (a no-op for a single-WHOOP install). Mirrors macOS DevicesView's `registry.setActive`. */
     suspend fun setActiveDevice(id: String) {
         noopApp.deviceRegistry.setActive(id)
+        _activeStrapId.value = id
         noopApp.sourceCoordinator.onActiveDeviceChanged(id)
         refreshActiveDeviceName()
     }
+
+    /**
+     * Multi-bond Fold: promote a worn MG registry row, pin its BLE address when known, and reconnect
+     * so live data leaves an unworn 5AM sibling.
+     */
+    suspend fun preferWornMgDevice(device: com.noop.data.PairedDeviceRow) {
+        setActiveDevice(device.id)
+        val addr = device.peripheralId?.takeIf { it.isNotBlank() }
+        if (addr != null) {
+            NoopPrefs.setLastDevice(appContext, addr, WhoopModel.WHOOP5_MG)
+            ble.reconnectToAddress(addr, WhoopModel.WHOOP5_MG)
+        } else {
+            connect(promoteService = true)
+        }
+        _statusCue.emit("Switching to worn MG · ${displayName(device)} — buzz confirms")
+        // Soft confirm which physical band linked (multi-bond Fold). Do not block the UI caller.
+        viewModelScope.launch {
+            delay(2_500L)
+            if (ble.state.value.connected) {
+                runCatching { ble.buzzStrapOnce() }
+            }
+            delay(3_000L)
+            val liveName = ble.state.value.advertisingName.orEmpty()
+            when {
+                WhoopBleClient.isStaleUnwornSiblingName(liveName) ->
+                    _statusCue.emit("Live name still looks like 5AM — try Use worn MG again")
+                liveName.isNotBlank() ->
+                    _statusCue.emit("Live Bluetooth · $liveName")
+            }
+        }
+    }
+
+    /** One-shot UI cues (Use worn MG, etc.) — collected by [AppRoot] snackbar host. */
+    private val _statusCue = MutableSharedFlow<String>(extraBufferCapacity = 1)
+    val statusCue: SharedFlow<String> = _statusCue.asSharedFlow()
 
     /** The active band's display name (nickname, else collapsed brand+model), surfaced on the Live screen
      *  (MW-6). Null until the first registry read resolves; falls back to "WHOOP" in the UI when null. */
@@ -130,6 +171,59 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             val all = runCatching { noopApp.deviceRegistry.all() }.getOrDefault(emptyList())
             val active = all.firstOrNull { it.status == com.noop.data.DeviceStatus.active.name }
             _activeDeviceName.value = active?.let { displayName(it) }
+        }
+    }
+
+    /** Keep [activeStrapId] aligned with Room after promote-on-connect / external registry writes. */
+    private suspend fun syncActiveStrapIdFromRegistry() {
+        val active = runCatching { noopApp.deviceRegistry.activeDeviceId() }.getOrNull() ?: return
+        if (active != _activeStrapId.value) _activeStrapId.value = active
+        refreshActiveDeviceName()
+    }
+
+    /**
+     * If [NoopPrefs.lastDevice] points at a registry row that isn't active (common: worn MG pin while
+     * 5AM sibling stayed `active` / MG archived), promote that row so Devices + Sleep match the pin.
+     */
+    private suspend fun reconcileActiveWithPinnedStrap() {
+        val pin = NoopPrefs.lastDevice(appContext)?.first?.takeIf { it.isNotBlank() } ?: return
+        val match = runCatching {
+            noopApp.deviceRegistry.all().firstOrNull {
+                it.peripheralId.equals(pin, ignoreCase = true) ||
+                    it.id.equals("whoop-$pin", ignoreCase = true)
+            }
+        }.getOrNull() ?: return
+        val active = runCatching { noopApp.deviceRegistry.activeDeviceId() }.getOrNull()
+        if (match.id == active) {
+            syncActiveStrapIdFromRegistry()
+            return
+        }
+        setActiveDevice(match.id)
+    }
+
+    /**
+     * When live advertising is clearly MG (or any non-5AM WHOOP name) but the active row nickname still
+     * looks like an unworn 5AM sibling, rename so Devices lists MGB not 5AM.
+     */
+    private suspend fun alignActiveNicknameWithLiveBle(address: String, liveName: String) {
+        if (WhoopBleClient.isStaleUnwornSiblingName(liveName)) return
+        val active = runCatching {
+            noopApp.deviceRegistry.all().firstOrNull { it.status == com.noop.data.DeviceStatus.active.name }
+        }.getOrNull() ?: return
+        val addrOk = active.peripheralId.equals(address, ignoreCase = true) ||
+            active.id.equals("whoop-$address", ignoreCase = true)
+        if (!addrOk) return
+        val current = displayName(active)
+        if (!WhoopBleClient.isStaleUnwornSiblingName(current) &&
+            current.equals(liveName, ignoreCase = true)
+        ) {
+            return
+        }
+        if (WhoopBleClient.isStaleUnwornSiblingName(current) ||
+            !current.equals(liveName, ignoreCase = true)
+        ) {
+            runCatching { noopApp.deviceRegistry.rename(active.id, liveName) }
+            refreshActiveDeviceName()
         }
     }
 
@@ -304,10 +398,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     // store the Settings screen edits. Feeds the on-device scorer's HRmax/zones/calories.
     private val profileStore = ProfileStore.from(app.applicationContext)
 
-    /** The active strap source id (raw streams + imported history live under this). Resolved once at
-     *  startup from the device registry (see [NoopApplication.activeDeviceId]); falls back to the
-     *  legacy "my-whoop", so behaviour is unchanged today. */
-    private val deviceId = noopApp.activeDeviceId
+    /** The active strap source id (raw streams + imported history live under this). Seeded from the
+     *  registry at startup (see [NoopApplication.activeDeviceId]), then updated on setActive /
+     *  promote-on-connect so Sleep/HR never stay pinned to a stale 5AM sibling after MG links. */
+    private val _activeStrapId = MutableStateFlow(noopApp.activeDeviceId)
+    private val deviceId: String get() = _activeStrapId.value
 
     /** Live connection + biometric snapshot, surfaced straight from the BLE client. */
     val live: StateFlow<LiveState> = ble.state
@@ -475,6 +570,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     val restedChargeThreshold: StateFlow<Int> = _restedChargeThreshold.asStateFlow()
     private val _restedSleepNeedPercent = MutableStateFlow(phoneAlarmStore.restedSleepNeedPercent)
     val restedSleepNeedPercent: StateFlow<Int> = _restedSleepNeedPercent.asStateFlow()
+    /** Live physiology sleep need (minutes) — profile + prior Effort; Alarm/Today/Sleep share this. */
+    private val _liveSleepNeedMinutes = MutableStateFlow(phoneAlarmStore.restedSleepNeedMinutes)
+    val liveSleepNeedMinutes: StateFlow<Int> = _liveSleepNeedMinutes.asStateFlow()
     private val _customAlarms = MutableStateFlow(phoneAlarmStore.customAlarms)
     val customAlarms: StateFlow<List<com.noop.alarm.CustomAlarm>> = _customAlarms.asStateFlow()
     private val _mathChallengeEnabled = MutableStateFlow(phoneAlarmStore.mathChallengeEnabled)
@@ -504,6 +602,19 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      */
     private val _logicalDayKey = MutableStateFlow(logicalDayKeyNow())
     val logicalDayKey: StateFlow<String> = _logicalDayKey.asStateFlow()
+
+    /**
+     * Presentation "today" key: same as [logicalDayKey] once tonight's overnight bout exists (or
+     * after the new evening), but while still awake after calendar midnight it stays on the **prior
+     * calendar day** so Sleep / Journal / day-span charts read yesterday→now instead of an empty
+     * fresh today. Updated by [refreshAwakePresentationAnchor].
+     */
+    private val _presentationDayKey = MutableStateFlow(logicalDayKeyNow())
+    val presentationDayKey: StateFlow<String> = _presentationDayKey.asStateFlow()
+
+    /** True while [presentationDayKey] is holding the prior calendar day for the awake-past-midnight span. */
+    private val _extendsAwakePastMidnight = MutableStateFlow(false)
+    val extendsAwakePastMidnight: StateFlow<Boolean> = _extendsAwakePastMidnight.asStateFlow()
 
     /**
      * #849: Today's heavy history-wide reload guard. The Today screen runs a couple of expensive
@@ -554,8 +665,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         // illness watch. recentDaysMergedFlow caps each source to RECENT_DAYS_CAP most-recent days first, so
         // the merge stays bounded while every current surface (deepest Trends range, 7-day Fitness Age /
         // Vitality windows) keeps its data. Same oldest-first ordering as before.
+        // Eagerly: cold-open must not paint emptyList() → "Awaiting strap" while Room is one frame away.
+        // WhileSubscribed(5s) stopped the upstream after background and re-flashed empty on every resume.
         repository.recentDaysMergedFlow(deviceId)
-            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+            .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     /**
      * #78 hole-4: the app-foreground hook for the bond-loop salvage probe. Every activity resume runs
@@ -589,6 +702,27 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         // existing WHOOP flow below runs unchanged; it only acts when a non-WHOOP strap is the active
         // device. The Devices screen (next task) calls onActiveDeviceChanged after a setActive.
         noopApp.sourceCoordinator.start()
+        // Seed strap SoC snapshot from Room when prefs are empty (upgrade path) so cold-open
+        // never blanks battery after a version that didn't persist SharedPreferences yet.
+        viewModelScope.launch {
+            if (NoopPrefs.strapBatterySnapshot(appContext) != null) return@launch
+            val latest = runCatching { repository.latestBattery(deviceId) }.getOrNull() ?: return@launch
+            val soc = latest.soc ?: return@launch
+            val model = WhoopModel.resolveForEstimates(
+                selected = _selectedModel.value,
+                whoop5Detected = false,
+                persisted = NoopPrefs.selectedWhoopModel(appContext) ?: NoopPrefs.lastDevice(appContext)?.second,
+            )
+            NoopPrefs.setStrapBatterySnapshot(
+                appContext,
+                com.noop.analytics.StrapBatteryPredictor.Snapshot(
+                    pct = soc.coerceIn(0.0, 100.0),
+                    savedAtMs = latest.ts * 1000L, // Room battery ts is unix seconds
+                    charging = latest.charging == true,
+                    whoop5Family = model.isWhoop5Family,
+                ),
+            )
+        }
         // #78 hole-4: wire the app-foreground salvage probe (see salvageProbeLifecycleCallbacks above).
         noopApp.registerActivityLifecycleCallbacks(salvageProbeLifecycleCallbacks)
         // Logical-day ticker: catch the 04:00 rollover even when `recentDays` is quiet (no new rows).
@@ -651,14 +785,23 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             }
         }
         // Multi-WHOOP identity adoption: feed the connected strap's BLE address into the coordinator so the
-        // active WHOOP row adopts it on first connect (and a different-but-registered strap is logged, not
-        // overwritten). The Kotlin analogue of Swift's `connectedPeripheralUUID.removeDuplicates().sink`
-        // (SourceCoordinator.swift:111-114) — connectedPeripheralAddress is a StateFlow, which already only
-        // emits distinct values (operator fusion), so no distinctUntilChanged is needed. Inert on the
-        // single-WHOOP path: my-whoop simply learns its strap's address once.
+        // matching registry row is promoted when the live MAC is worn MG while 5AM is still marked active.
+        // Also re-sync [activeStrapId] after promote-on-connect (startup id is only a seed).
         viewModelScope.launch {
             ble.connectedPeripheralAddress
-                .collect { addr -> noopApp.sourceCoordinator.connectedPeripheralChanged(addr) }
+                .collect { addr ->
+                    noopApp.sourceCoordinator.connectedPeripheralChanged(addr)
+                    syncActiveStrapIdFromRegistry()
+                    // Prefer live BLE advertising name on the active row when registry still says 5AM.
+                    val liveName = ble.state.value.advertisingName?.takeIf { it.isNotBlank() }
+                    if (addr != null && liveName != null) {
+                        alignActiveNicknameWithLiveBle(addr, liveName)
+                    }
+                }
+        }
+        // Launch: pin (lastDevice) wins over a stale active 5AM sibling when the pin's registry row exists.
+        viewModelScope.launch {
+            reconcileActiveWithPinnedStrap()
         }
         // Re-arm the strap's firmware alarm once per process-alive day. The firmware alarm is a single
         // absolute instant with NO recurrence and was previously re-armed ONLY on the bond edge — so a
@@ -696,7 +839,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 // logical-day row, preserving the #144 anti-blank guard (no night yet ⇒ keep yesterday's).
                 val logicalKey = logicalDayKeyNow()       // ISO yyyy-MM-dd, local logical day
                 val localKey = java.time.LocalDate.now().toString()
-                _today.value = resolveTodayRow(days, logicalKey, localKey)
+                // Prefer awake-presentation key when set (yesterday→now while still up past midnight).
+                val presentationKey = _presentationDayKey.value.ifBlank { logicalKey }
+                _today.value = resolveTodayRow(days, presentationKey, localKey)
+                // Sleep bout may have landed with this days emit — refresh awake span.
+                refreshAwakePresentationAnchor()
                 val previousAlert = _healthAlert.value
                 _healthAlert.value =
                     if (_illnessWatchEnabled.value) IllnessWatch.evaluate(days) else null
@@ -753,7 +900,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     val anchorRow = widgetAnchorRow(days, logicalKey, localKey)
                     val prior = WidgetSnapshotStore.load(appContext)
                     val alarmStore = phoneAlarmStore
-                    val is24 = android.text.format.DateFormat.is24HourFormat(appContext)
+                    val is24 = NoopPrefs.use24HourClock(appContext)
                     val nextAlarm = com.noop.alarm.NextAlarmDisplay.soonestShortLabel(
                         phoneEnabled = alarmStore.enabled,
                         targetMinutes = alarmStore.targetMinutes,
@@ -772,7 +919,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                             // ≤0 strain is calm TRIMP, not a scored load — match Today honesty (8.6.155/156).
                             effortPct = anchorRow?.strain?.takeIf { it > 0.0 }?.roundToInt(),
                             heartRate = live.heartRate,
-                            batteryPct = live.batteryPct?.roundToInt(),
+                            batteryPct = resolveStrapBatteryDisplay(appContext, live)?.pctInt
+                                ?: live.batteryPct?.roundToInt(),
                             connected = live.connected,
                             updatedAtMs = System.currentTimeMillis(),
                             stressTipTenths = prior.stressTipTenths,
@@ -985,6 +1133,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     val n = IntelligenceEngine.backfillRecoveryWithSleep(
                         repo = repository,
                         importedDeviceId = deviceId,
+                        profile = currentProfile(),
                     )
                     if (n > 0) ble.externalLog("Charge backfill: refreshed recovery on $n day(s) with sleep")
                 }.onFailure { if (it is kotlin.coroutines.cancellation.CancellationException) throw it }
@@ -1004,6 +1153,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         // connection on — without it there's nothing keeping the link up to stream over, so a continuous
         // want would be meaningless. Pushed BEFORE autoReconnectOnLaunch so a launch reconnect arms it.
         ble.setKeepStreamForData(continuousHrvEffective())
+        // Experimental offload link levers (ryanbr #536/#537/#538) — default OFF; re-apply on launch.
+        ble.setConnectionPriorityManagement(NoopPrefs.fasterHistorySync(appContext))
+        ble.setFastLinkPhy(NoopPrefs.fastLinkPhy(appContext))
 
         // Reconnect to the strap we last bonded to, so the user doesn't have to tap Connect after an
         // app update / restart (#67). Self-gates on the keep-connected pref + a saved strap + permission.
@@ -1132,34 +1284,91 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     /**
      * Advance [logicalDayKey] / [_today] when the 04:00 logical day rolls. If shared browse was
      * still pinned on the prior logical "today", move it forward so Sleep shows the new wake-day
-     * (deep past browse from Today day-dots is left alone).
+     * (deep past browse from Today day-dots is left alone). Always refreshes the awake-past-midnight
+     * presentation anchor (sleep bout can start without a logical-key change).
      */
     private fun refreshLogicalDayAnchor() {
         val key = logicalDayKeyNow()
         val prev = _logicalDayKey.value
-        if (key == prev) return
-        _logicalDayKey.value = key
-        val localKey = java.time.LocalDate.now().toString()
+        if (key != prev) {
+            _logicalDayKey.value = key
+            val localKey = java.time.LocalDate.now().toString()
+            _today.value = resolveTodayRow(recentDays.value, key, localKey)
+            val browse = _browseDayKey.value
+            // Only auto-advance when browse was the prior logical "today" (or unset). Deep past
+            // browse from Sleep chevrons / Today day-dots is left alone; Sleep pins explicit ◀ /
+            // picker browse so stale-yesterday snap does not yank past nights (8.6.138).
+            if (browse == null || browse == prev) {
+                _browseDayKey.value = key
+            }
+            // Kick a light rescore so today's Charge/Effort land after the rollover without waiting
+            // for the 15-min backstop (quiet overnight had no new HR fingerprint to trigger it).
+            viewModelScope.launch {
+                runCatching {
+                    IntelligenceEngine.analyzeRecent(
+                        repo = repository,
+                        profile = currentProfile(),
+                        maxDays = 3,
+                        importedDeviceId = deviceId,
+                        maxHROverride = profileStore.hrMaxOverride.takeIf { it > 0 }?.toDouble(),
+                    )
+                }.onFailure { if (it is kotlin.coroutines.cancellation.CancellationException) throw it }
+            }
+        }
+        viewModelScope.launch { refreshAwakePresentationAnchor() }
+    }
+
+    /**
+     * While past local midnight and not yet asleep for tonight's overnight bout, keep
+     * [presentationDayKey] on the prior calendar day (yesterday→now). When a bout starts (banked
+     * session or live band-asleep), switch to normal [logicalDay] framing.
+     */
+    private suspend fun refreshAwakePresentationAnchor() {
+        val zone = java.time.ZoneId.systemDefault()
+        val now = java.time.ZonedDateTime.now(zone)
+        val cal = now.toLocalDate()
+        val lookFrom = cal.minusDays(1)
+            .atTime(AWAKE_SPAN_EVENING_HOUR, 0)
+            .atZone(zone)
+            .toEpochSecond() - 6L * 3_600L
+        val lookTo = now.toEpochSecond()
+        val sessions = runCatching {
+            repository.sleepSessionsMerged(deviceId, lookFrom, lookTo, limit = 48)
+        }.getOrDefault(emptyList())
+        var hasBout = hasOvernightBoutForWakeDay(
+            wakeDay = cal,
+            sessions = sessions.map { it.effectiveStartTs to it.endTs },
+            zone = zone,
+        )
+        if (!hasBout) {
+            // Live band asleep in the last ~10 min = overnight bout has begun (session may lag).
+            val recent = runCatching {
+                repository.sleepStateSamples(deviceId, lookTo - 600L, lookTo, limit = 32)
+            }.getOrDefault(emptyList())
+            if (recent.any { it.state == com.noop.analytics.SleepStager.bandStateAsleep }) {
+                hasBout = true
+            }
+        }
+        // Morning wake: Charge already banked on the calendar wake-day while session merge lags —
+        // clear the awake span so Today shows the new Charge and Yesterday keeps the prior day.
+        val localKey = cal.toString()
+        val wakeDayHasBankedNight = recentDays.value.any {
+            it.day == localKey && it.totalSleepMin != null
+        }
+        val prevPresentation = _presentationDayKey.value
+        val key = awakePresentationDayKey(now, hasBout, wakeDayHasBankedNight)
+        val extends = extendsAwakePastMidnight(now, hasBout, wakeDayHasBankedNight)
+        _presentationDayKey.value = key
+        _extendsAwakePastMidnight.value = extends
+        // Prefer presentation key for the dashboard "today" row while extending (anti-blank).
         _today.value = resolveTodayRow(recentDays.value, key, localKey)
         val browse = _browseDayKey.value
-        // Only auto-advance when browse was the prior logical "today" (or unset). Deep past
-        // browse from Sleep chevrons / Today day-dots is left alone; Sleep pins explicit ◀ /
-        // picker browse so stale-yesterday snap does not yank past nights (8.6.138).
-        if (browse == null || browse == prev) {
-            _browseDayKey.value = key
-        }
-        // Kick a light rescore so today's Charge/Effort land after the rollover without waiting
-        // for the 15-min backstop (quiet overnight had no new HR fingerprint to trigger it).
-        viewModelScope.launch {
-            runCatching {
-                IntelligenceEngine.analyzeRecent(
-                    repo = repository,
-                    profile = currentProfile(),
-                    maxDays = 3,
-                    importedDeviceId = deviceId,
-                    maxHROverride = profileStore.hrMaxOverride.takeIf { it > 0 }?.toDouble(),
-                )
-            }.onFailure { if (it is kotlin.coroutines.cancellation.CancellationException) throw it }
+        val logical = _logicalDayKey.value
+        when {
+            extends && (browse == null || browse == logical || browse == prevPresentation) ->
+                _browseDayKey.value = key
+            !extends && prevPresentation != key && (browse == null || browse == prevPresentation) ->
+                _browseDayKey.value = key
         }
     }
 
@@ -1871,6 +2080,18 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         ble.applyPowerSavingPrefs()
     }
 
+    /** Settings → Strap: experimental CONNECTION_PRIORITY_HIGH during history offload (ryanbr #536). */
+    fun setFasterHistorySync(enabled: Boolean) {
+        NoopPrefs.setFasterHistorySync(appContext, enabled)
+        ble.setConnectionPriorityManagement(enabled)
+    }
+
+    /** Settings → Strap: experimental LE 2M PHY during offload burst only (ryanbr #537+#538). */
+    fun setFastLinkPhy(enabled: Boolean) {
+        NoopPrefs.setFastLinkPhy(appContext, enabled)
+        ble.setFastLinkPhy(enabled)
+    }
+
     /**
      * Flip "Debug logging" (driven by Settings → Strap). Persists the preference and pushes it to the
      * live BLE client so it takes effect immediately. Default OFF: the strap log stays in the in-app
@@ -2035,7 +2256,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             NoopPrefs.setSleepAnalyzeWatermark(appContext, "")
             runCatching { rescoreAfterEdit() }
             runCatching {
-                IntelligenceEngine.backfillRecoveryWithSleep(repo = repository, importedDeviceId = deviceId)
+                IntelligenceEngine.backfillRecoveryWithSleep(
+                    repo = repository,
+                    importedDeviceId = deviceId,
+                    profile = currentProfile(),
+                )
             }
         }
         ok
@@ -2052,6 +2277,18 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     suspend fun ensureStrapSleepBanked(): Boolean = withContext(Dispatchers.IO) {
         val live = ble.state.value
         val now = System.currentTimeMillis() / 1000L
+        // Recover overnight BEFORE syncNow — hist is often already wiped (DEBUG pulled first), and a
+        // long backfill must not block importing a Download seed / restaging banked raw.
+        runCatching {
+            com.noop.data.OvernightSleepRecover.recoverIfNeeded(appContext, repository, deviceId)
+        }.onSuccess { recovered ->
+            if (recovered) {
+                android.util.Log.i("NoopSleep", "ensureStrapSleepBanked recovered overnight raw/seed")
+                runCatching { rescoreAfterEdit() }
+            }
+        }.onFailure {
+            android.util.Log.w("NoopSleep", "ensureStrapSleepBanked recover failed: ${it.message}")
+        }
         val latestHr = runCatching {
             repository.latestHrSampleTs(deviceId)
                 ?: repository.latestHrSampleTs("my-whoop")
@@ -2073,6 +2310,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             )
         }
         runCatching { rescoreAfterEdit() }
+        // Second pass after sync — new samples may allow a longer restage.
+        runCatching {
+            com.noop.data.OvernightSleepRecover.recoverIfNeeded(appContext, repository, deviceId)
+        }.onFailure {
+            android.util.Log.w("NoopSleep", "ensureStrapSleepBanked recover2 failed: ${it.message}")
+        }
         val after = runCatching {
             repository.latestHrSampleTs(deviceId) ?: repository.latestHrSampleTs("my-whoop")
         }.getOrNull()
@@ -2089,32 +2332,47 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      * late sleepers instead of inventing or giving up after a barren morning stamp.
      */
     private suspend fun hasBankedRecentNight(nowSeconds: Long = System.currentTimeMillis() / 1000L): Boolean {
+        // Require a night ending on TODAY's local wake day (or the logical day before 04:00).
+        // A Jul-17 night within 36h must NOT satisfy "last night banked" on Jul-18 morning — that
+        // left ensureStrapSleepBanked / overnight catch-up thinking they were done while Sat wake
+        // was still missing (Gilbert Fold 2026-07-18).
+        val today = java.time.LocalDate.now().toString()
+        val logical = logicalDayKeyNow()
+        val targetDays = setOf(today, logical)
         val from = nowSeconds - 40L * 3600L
-        // Include Health Connect — WHOOP-app nights often land only under HC when the strap
-        // was offline overnight; omitting it left catch-up spinning as "missing night".
         val ids = (
-            WhoopRepository.importedSourceIdsFor(deviceId) +
-                WhoopRepository.computedSourceIdsFor(deviceId) +
+            runCatching { repository.importedSourceIdsWithSiblings(deviceId) }.getOrDefault(
+                WhoopRepository.importedSourceIdsFor(deviceId),
+            ) +
+                runCatching { repository.computedSourceIdsWithSiblings(deviceId) }.getOrDefault(
+                    WhoopRepository.computedSourceIdsFor(deviceId),
+                ) +
                 listOf(deviceId, "my-whoop", WhoopRepository.HEALTH_CONNECT_SOURCE)
             ).distinct()
+        fun localDay(ts: Long): String =
+            java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US)
+                .format(java.util.Date(ts * 1000L))
         for (id in ids) {
             val sessions = runCatching {
                 repository.sleepSessions(id, from, nowSeconds, limit = 32)
             }.getOrDefault(emptyList())
             if (sessions.any { s ->
                     val dur = s.endTs - s.effectiveStartTs
-                    dur >= 90L * 60L && s.endTs >= nowSeconds - 36L * 3600L
+                    dur >= 90L * 60L && localDay(s.endTs) in targetDays
                 }
             ) {
                 return true
             }
-            val today = java.time.LocalDate.now().toString()
-            val yesterday = java.time.LocalDate.now().minusDays(1).toString()
             val rows = runCatching {
-                repository.dailyMetrics(id, yesterday, today)
+                repository.dailyMetrics(id, targetDays.minOrNull()!!, targetDays.maxOrNull()!!)
             }.getOrDefault(emptyList())
-            if (rows.any { (it.totalSleepMin ?: 0.0) >= 90.0 }) return true
+            if (rows.any { it.day in targetDays && (it.totalSleepMin ?: 0.0) >= 90.0 }) return true
         }
+        android.util.Log.i(
+            "NoopSleep",
+            "hasBankedRecentNight=false today=$today logical=$logical ids=${ids.size} " +
+                "checked=${ids.take(6)}",
+        )
         return false
     }
 
@@ -2398,15 +2656,29 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         com.noop.alarm.CustomAlarmScheduler.rescheduleAll(appContext, phoneAlarmStore)
     }
 
-    /** Push Charge + learned sleep need into the alarm store for overnight rested evaluation. */
+    /** Push Charge + physiology-blended sleep need into the alarm store for overnight rested evaluation. */
     private fun refreshRestedHintsFromDays() {
         val days = recentDays.value
-        val nights = days.mapNotNull { it.totalSleepMin?.takeIf { m -> m > 0.0 } }.takeLast(28)
+        val nights = days.mapNotNull {
+            RestScorer.canonicalAsleepMin(it)?.takeIf { m -> m > 0.0 }
+        }.takeLast(28)
         if (nights.size >= 3) {
-            phoneAlarmStore.restedSleepNeedMinutes = nights.average().roundToInt().coerceIn(300, 600)
+            val needMin = com.noop.analytics.liveSleepNeedMinutes(
+                days = days,
+                profile = currentProfile(),
+                anchorDay = days.lastOrNull()?.day,
+                takeLastNights = 28,
+            ).coerceIn(300, 600)
+            phoneAlarmStore.restedSleepNeedMinutes = needMin
+            _liveSleepNeedMinutes.value = needMin
         }
         val charge = days.lastOrNull()?.recovery?.roundToInt()
         if (charge != null && charge > 0) phoneAlarmStore.restedChargeHint = charge
+    }
+
+    /** Call from Settings profile save paths so need refreshes without waiting for a sync. */
+    fun notifyProfilePhysiologyChanged() {
+        refreshRestedHintsFromDays()
     }
 
     /** Enable/disable the evening wind-down nudge. Schedules the daily inexact reminder from the
@@ -2436,10 +2708,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         // Awareness only. Enabling turns the calendar store on; disabling must NOT wipe store.enabled
         // and must NOT force-hide the Cycle tab — Settings owns tab visibility via [setShowCycleTab].
         if (enabled) {
-            // First Health opt-in: surface the Cycle tab if the user never chose tab visibility.
-            if (!NoopPrefs.of(appContext).contains(NoopPrefs.KEY_SHOW_CYCLE_TAB)) {
-                setShowCycleTab(true)
-            }
+            // Always surface Cycle under More / quick actions when Period tracking turns on
+            // (Gilbert P0 — discoverable path; do not leave More filtered empty).
+            setShowCycleTab(true)
             runCatching {
                 val store = PeriodCalendarStore.from(appContext)
                 store.savePrefs(store.loadPrefs().copy(enabled = true))
@@ -2673,14 +2944,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /** Whether the device's locale formats time on a 24-hour clock — drives the Haptic Clock's hour
-     *  encoding so a double-tap buzzes the time the way the user reads it. Mirrors macOS
-     *  AppModel.localeUses24HourClock. */
-    private fun localeUses24HourClock(): Boolean {
-        val pattern = (java.text.DateFormat.getTimeInstance(java.text.DateFormat.SHORT) as? java.text.SimpleDateFormat)
-            ?.toPattern() ?: "h:mm a"
-        return !pattern.contains('a', ignoreCase = true)
-    }
+    /** App 12/24 preference — drives Haptic Clock hour encoding so a double-tap buzzes the
+     *  dial the user picked in Settings (default 12-hour). */
+    private fun localeUses24HourClock(): Boolean = NoopPrefs.use24HourClock(appContext)
 
     // --- HR-zone haptic coaching setters + behaviour. State (_zoneCoaching/_zoneCoachRecovery/lastZone)
     // is declared ABOVE the init block (see the note there) so the synchronous first emission is safe. ---

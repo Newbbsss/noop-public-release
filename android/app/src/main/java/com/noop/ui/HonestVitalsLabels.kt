@@ -50,18 +50,41 @@ object HonestVitalsLabels {
         )
     }
 
-    fun spo2Line(bankedPct: Double?): VitalLine {
-        if (bankedPct == null || bankedPct <= 0.0 || bankedPct > 100.0) {
+    fun spo2Line(
+        bankedPct: Double?,
+        spo2Red: Int? = null,
+        spo2Ir: Int? = null,
+        /** MG sleep-offload `@82` raw present (asleep + nonzero). Never shown as %. */
+        opticalAuxBanked: Boolean = false,
+    ): VitalLine {
+        if (bankedPct != null && bankedPct > 0.0 && bankedPct <= 100.0) {
             return VitalLine(
-                valueText = "—",
-                provenance = Provenance.BLANK,
-                caption = "Waits for banked overnight SpO₂",
+                valueText = "${kotlin.math.round(bankedPct).toInt()}%",
+                provenance = Provenance.MEASURED,
+                caption = "Banked on-device",
+            )
+        }
+        // Sleep-offload raw ADC (WHOOP 4.0 red/IR) — never invent a %. Honesty tile only.
+        if (spo2Red != null && spo2Ir != null) {
+            val adc = (spo2Red + spo2Ir) / 2
+            return VitalLine(
+                valueText = "$adc",
+                provenance = Provenance.ESTIMATE,
+                caption = "Overnight optical · ADC · not %",
+            )
+        }
+        // MG hist `@82` banked beside sleep_state — footprint only; digit would look like fake SpO₂.
+        if (opticalAuxBanked) {
+            return VitalLine(
+                valueText = "raw",
+                provenance = Provenance.ESTIMATE,
+                caption = "Overnight optical · MG · not %",
             )
         }
         return VitalLine(
-            valueText = "${kotlin.math.round(bankedPct).toInt()}%",
-            provenance = Provenance.MEASURED,
-            caption = "Banked on-device",
+            valueText = "—",
+            provenance = Provenance.BLANK,
+            caption = "No SpO₂ import · raw waits for sleep offload",
         )
     }
 

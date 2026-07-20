@@ -398,4 +398,24 @@ class DaytimeStressTest {
         assertTrue(r.scored.isNotEmpty())
         assertTrue("expected asleep on sleep-window buckets", r.scored.all { it.asleep })
     }
+
+    @Test
+    fun calmAnchorOffset_mapsRawZeroNearCalmFloor() {
+        // squash(raw) = 3/(1+e^(-(raw-2.00))); raw 0 → ~0.357 — Now calm floor, not daily mid 1.5.
+        val raw0 = 3.0 / (1.0 + kotlin.math.exp(-(0.0 - DaytimeStress.calmAnchorOffset)))
+        assertEquals(0.357, raw0, 0.02)
+        assertTrue(raw0 < 0.5)
+        assertTrue(raw0 < 1.0) // clearly below daily-load mid (~1.5 at raw 0 in StressModel)
+        assertEquals(2.00, DaytimeStress.calmAnchorOffset, 1e-9)
+    }
+
+    @Test
+    fun calmAnchor_keepsNeutralDaytimeNearLowBand() {
+        // All-day calm HR should land tip in LOW (<1), not MEDIUM mid.
+        val day = (6..20).flatMap { h -> hourHr(h, 58) }
+        val r = DaytimeStress.analyze(day, emptyList())
+        val tip = r.scored.lastOrNull { it.level != null }?.level
+        assertNotNull(tip)
+        assertTrue("calm day tip should be LOW-ish, got $tip", tip!! < 1.0)
+    }
 }

@@ -31,6 +31,8 @@ class NoopApplication : Application() {
         // Record any uncaught crash to a file so it rides along in the shareable strap log — a
         // device-specific crash (e.g. Insights #224/#267) is otherwise lost to an unreachable logcat.
         CrashCapture.install(this)
+        // Per-app language (Settings → Language) before first Activity composition.
+        com.noop.ui.LocalePrefs.load(this)
     }
 
     /** Process-wide Room-backed store. One instance shared by the UI and the background service. */

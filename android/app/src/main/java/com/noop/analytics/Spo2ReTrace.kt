@@ -27,16 +27,26 @@ object Spo2ReTrace {
     const val MAX_SAMPLES = 8
 
     /**
-     * One record's RE line: the mapped SpO2 channels + timestamp + layout version, then the FULL frame
-     * hex (no prefix cap - a v24 record is ~84 B and the unmapped tail is exactly where a banked SpO2
-     * would sit). Absent channels render "null" so a channel-less record still proves what it lacks.
-     * Takes already-extracted ints (ConnectionTrace's primitive style, matching the Swift signature);
-     * the caller reads them off its decoded record map.
+     * One record's RE line: the mapped SpO2 channels + timestamp + layout version, then sleep_state /
+     * aux_byte_82 (v18 research fields — raw, NEVER SpO2 %), then the FULL frame hex. Absent channels
+     * render "null" so a channel-less record still proves what it lacks. Takes already-extracted ints
+     * (ConnectionTrace's primitive style, matching the Swift signature); the caller reads them off its
+     * decoded record map.
      */
-    fun recordLine(frame: ByteArray, version: Int?, unix: Int?, red: Int?, ir: Int?, skinRaw: Int?): String {
+    fun recordLine(
+        frame: ByteArray,
+        version: Int?,
+        unix: Int?,
+        red: Int?,
+        ir: Int?,
+        skinRaw: Int?,
+        sleepState: Int? = null,
+        auxByte82: Int? = null,
+    ): String {
         val hex = frame.joinToString("") { String.format("%02x", it.toInt() and 0xFF) }
         fun f(v: Int?): String = v?.toString() ?: "null"
         return "spo2re v=${f(version)} unix=${f(unix)} red=${f(red)} ir=${f(ir)} " +
-            "skinRaw=${f(skinRaw)} len=${frame.size} raw=$hex"
+            "skinRaw=${f(skinRaw)} sleep_state=${f(sleepState)} aux82=${f(auxByte82)} " +
+            "len=${frame.size} raw=$hex"
     }
 }

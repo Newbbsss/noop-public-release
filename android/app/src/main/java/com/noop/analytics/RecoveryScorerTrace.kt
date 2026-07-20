@@ -36,6 +36,7 @@ object RecoveryScorerTrace {
         respBaseline: BaselineState?,
         sleepPerf: Double?,
         skinTempDev: Double? = null,
+        priorDayStrain: Double? = null,
     ): Pair<Double?, List<String>> {
         val lines = ArrayList<String>()
         val nilTerms = ArrayList<String>()
@@ -45,6 +46,7 @@ object RecoveryScorerTrace {
             hrv = hrv, rhr = rhr, resp = resp,
             hrvBaseline = hrvBaseline, rhrBaseline = rhrBaseline,
             respBaseline = respBaseline, sleepPerf = sleepPerf, skinTempDev = skinTempDev,
+            priorDayStrain = priorDayStrain,
         )
 
         // Cold-start gate: HRV baseline not usable -> recovery() returns null before any term is built.
@@ -126,6 +128,18 @@ object RecoveryScorerTrace {
             )
         } else {
             nilTerms.add("skinTempDev")
+        }
+
+        if (priorDayStrain != null) {
+            val frac = (priorDayStrain / 100.0).coerceIn(0.0, 1.5)
+            val z = -((frac - RecoveryScorer.priorStrainNeutral) / RecoveryScorer.priorStrainScale)
+            terms.add(z to RecoveryScorer.wPriorStrain)
+            lines.add(
+                "charge term priorStrain z=${r2(z)} w=${r2(RecoveryScorer.wPriorStrain)} " +
+                    "(effort=${r2(priorDayStrain)})",
+            )
+        } else {
+            nilTerms.add("priorDayStrain")
         }
 
         // The nil terms that dropped out and forced the weight renormalization (the killer line).

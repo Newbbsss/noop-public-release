@@ -153,9 +153,11 @@ fun ConnectionHelp(viewModel: AppViewModel, modifier: Modifier = Modifier) {
                 live.statusNote?.contains("bond", ignoreCase = true) == true
             ) {
                 Text(
-                    "Pairing rejected? Forget every WHOOP row in Bluetooth settings, take the sensor OFF the wrist, " +
-                        "tap the top firmly until only blue LEDs pulse, then pair in the official WHOOP app first. " +
-                        "A phone-side Forget cannot be reversed in software.",
+                    "Seeing “pairing rejected by WHOOP”? That usually means NOOP tried to re-pair while " +
+                        "a Bluetooth bond already exists, or the official WHOOP app is holding the link — " +
+                        "not that you must Forget the band. Force-stop official WHOOP, keep DEBUG closed, " +
+                        "then Connect in NOOP. Enable “Run alongside official WHOOP app” if you want both open " +
+                        "(live HR only).",
                     style = NoopType.footnote,
                     color = Palette.statusWarning,
                 )

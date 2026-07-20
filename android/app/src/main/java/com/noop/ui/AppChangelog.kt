@@ -25,7 +25,7 @@ object AppChangelog {
      * Bump this when you add a release below. The "What's New" sheet shows automatically when the
      * stored last-seen version is behind this. (Decoupled from the bundle version on purpose.)
      */
-    const val CURRENT_VERSION = "8.6.153"
+    const val CURRENT_VERSION = "8.6.236"
 
     data class Release(
         val version: String,
@@ -36,6 +36,472 @@ object AppChangelog {
 
     /** Newest first. */
     val releases: List<Release> = listOf(
+        Release(
+            version = "8.6.236",
+            title = "Light sleep bias Â· faster + Â· day span",
+            date = "2026-07-20",
+            items = listOf(
+                "Sleep staging (V1): Light-bias pack widens Deep/REM eligibility (HR-low ~48, still ~0.21, HRV-high ~58; early-deep adequacy 0.15) so sparse PPG nights invent less Light â€” never invents stages from empty gravity.",
+                "Hold-+ radial spokes pop sooner (gate ~0.30, ~100 ms, no delay) so Workout / Live / Devices / Nutrition appear faster while holding.",
+                "Still awake past midnight: Today stays on yesterdayâ†’now until an overnight bout (or banked wake-night) starts â€” Wake / Charge / Yesterday stay one day across Fri/Sat/Sun weekends too.",
+                "Plugged-in charging clears on CHARGING_OFF / pack removed (and WRIST_ON if the off event was missed) so the bolt does not stick after undock.",
+                "Day-span copy localized (Yesterday to now / journal awake-span help) in English, Spanish, French, and German.",
+            ),
+        ),
+        Release(
+            version = "8.6.235",
+            title = "Smarter sleep need Â· deeper Charge",
+            date = "2026-07-20",
+            items = listOf(
+                "Sleep need is physiology-first (age, BMI, waist, yesterdayâ€™s Effort) â€” short sleep habits can no longer lower the bar. Missing the goal costs more on Rest (power-curve duration).",
+                "Charge a bit cooler, and yesterdayâ€™s Effort now shapes todayâ€™s Charge (shown in What shaped it). V1 staging only; soft age/BMI priors when your profile is filled â€” no invented ECG/SpOâ‚‚.",
+            ),
+        ),
+        Release(
+            version = "8.6.234",
+            title = "V1 sleep only Â· Rest cooler",
+            date = "2026-07-20",
+            items = listOf(
+                "One sleep stager: Gilbert V1 only. Experimental V2 is off the product path (no Diagnostics toggle) â€” it was inventing Deep/REM.",
+                "Rest honesty scale 0.84 â†’ 0.78 so the sleep score isnâ€™t high on V1. Charge/Effort/Stress unchanged this bank.",
+            ),
+        ),
+        Release(
+            version = "8.6.233",
+            title = "Gilbert trustworthy scoring",
+            date = "2026-07-20",
+            items = listOf(
+                "Sleep staging: V1 is the default for every strap (MG and 4.0). Experimental V2 is research-only and forced off once on update â€” less invented Deep/REM on the trust path.",
+                "Rest (sleep score) honesty scale 0.90 â†’ 0.84 (~7% cooler). Charge logistic cooler too (z=0 â‰ˆ 52% instead of ~58%). Effort and Stress recipes unchanged.",
+                "Yes â€” Rest tracks sleep staging. Better nights still score higher; inflated Deep/REM no longer lifts Rest/Charge by default.",
+                "About + science docs: Gilbert on-device recipes â€” not a Ryan score fork.",
+            ),
+        ),
+        Release(
+            version = "8.6.232",
+            title = "Alarm AM/PM stays in bounds",
+            date = "2026-07-19",
+            items = listOf(
+                "Alarm Bedtime/Wake clocks: AM/PM is a smaller caption beside the digits (no more overflow/clip out of the half-width region). Time picker AM/PM toggle is tighter too. 24-hour unchanged.",
+            ),
+        ),
+        Release(
+            version = "8.6.231",
+            title = "Battery always on open",
+            date = "2026-07-19",
+            items = listOf(
+                "Strap battery never blanks on cold open or while disconnected â€” paints last saved pack % aged by a linear drain from generation rated life (WHOOP 5/MG ~12 days, WHOOP 4 ~4.5 days). Holds steady if last save was charging.",
+                "Live BLE SoC replaces the prediction only after the link is trusted (â‰¥2 fresh readings, or â‰¥20s with â‰¥1 reading). Distinct from recovery Charge score.",
+            ),
+        ),
+        Release(
+            version = "8.6.230",
+            title = "Alarm soft-window chrome",
+            date = "2026-07-19",
+            items = listOf(
+                "Alarm wake-window bar: earliest/deadline ticks sit on the track ends (no clustered â€œ3 dotsâ€ when the window is short). Bedtime/Wake clocks no longer ellipsize into â€œâ€¦â€.",
+            ),
+        ),
+        Release(
+            version = "8.6.229",
+            title = "Cold-open scores + body temp that stick",
+            date = "2026-07-19",
+            items = listOf(
+                "Today no longer flashes â€œAwaiting strapâ€ on open â€” last Charge / Effort / Rest / stress paint from a saved snapshot until Room loads, and days load eagerly.",
+                "Live stress keeps the last tip when the strap isnâ€™t connected yet; reconnect refreshes from daytime stress.",
+                "Body temperature (skin temp) survives re-analyze and updates: keep absolute nightly mean or prior deviation instead of wiping to blank.",
+            ),
+        ),
+        Release(
+            version = "8.6.228",
+            title = "Live session & datastream languages",
+            date = "2026-07-19",
+            items = listOf(
+                "Live Session header, workout End/stats, Strap/MG note, Manage devices, Start stream, ZONE, Live steps, Banked vitals, and Datastream tiles â€” EspaÃ±ol / FranÃ§ais / Deutsch.",
+            ),
+        ),
+        Release(
+            version = "8.6.227",
+            title = "Alarm Extras + Health Monitor languages",
+            date = "2026-07-19",
+            items = listOf(
+                "Alarm Extras / planÂ·window chrome: phone zoneÂ·DST, strap-buzz, sound/vibe, dual-buzz, taxonomy, SOFT WINDOW / EARLIEST / DEADLINE â€” EspaÃ±ol / FranÃ§ais / Deutsch.",
+                "Health Monitor scaffold, Sync, Vitality, Heart Rate, Stress tip, and Vital Signs history â€” es/fr/de.",
+            ),
+        ),
+        Release(
+            version = "8.6.226",
+            title = "Effort honesty + Settings, Sleep & Insights languages",
+            date = "2026-07-19",
+            items = listOf(
+                "Effort: never bank a locked 0; keep live calm 0.0; pending vessel shows Building moves instead of a fake zero. Today keeps last scores while syncing; tap as-of / last-sync text to sync (no new Sync button).",
+                "Settings Profile photo/Age/Display name/Sex/Weight/Height/Waist/Max HR/Steps, Units & time, Connections/Strap status â€” EspaÃ±ol / FranÃ§ais / Deutsch.",
+                "Sleep â€œWhat shaped Rest?â€ + sleep-debt ledger chrome, and Insights Activity Cost / Behaviour Effects / Metric Relationships â€” es/fr/de.",
+            ),
+        ),
+        Release(
+            version = "8.6.225",
+            title = "Nutrition, Sleep grid & Today Fuel languages",
+            date = "2026-07-19",
+            items = listOf(
+                "Nutrition Fuel chrome: tabs, hydration, FUEL/BMR hero, macros + sparklines, creatine reminder, quick-log chips, and Log meal/supplement dialogs â€” EspaÃ±ol / FranÃ§ais / Deutsch.",
+                "Sleep metric-grid tiles, Hours-vs-Needed legend, and NOOP-vs-phone compare strip â€” es/fr/de.",
+                "Today Charge overnight delta, syncing-history note, Fuel peek, and weight captions â€” es/fr/de.",
+            ),
+        ),
+        Release(
+            version = "8.6.224",
+            title = "Settings Cycle & updates languages",
+            date = "2026-07-19",
+            items = listOf(
+                "Settings Health & wellness / Period tracking, Turn off + Replay Cycle dialogs, Charge recalibrate confirm/toast, and Check for updates chrome â€” EspaÃ±ol / FranÃ§ais / Deutsch.",
+            ),
+        ),
+        Release(
+            version = "8.6.223",
+            title = "Today, Insights & Sleep languages",
+            date = "2026-07-19",
+            items = listOf(
+                "Today honesty chrome: past-day / sparse / scores-building, ScoreStateNote, wear-nights, Charge drivers & Readiness â€” EspaÃ±ol / FranÃ§ais / Deutsch.",
+                "Insights Personal Experiment + Behaviour Effects and Alarm Drowsy HR edges â€” es/fr/de.",
+                "Sleep naps / trends / session-dialog chrome (adjust/move/delete/undo + hours vs needed) â€” es/fr/de.",
+            ),
+        ),
+        Release(
+            version = "8.6.222",
+            title = "Charging readable + cycle & Appearance languages",
+            date = "2026-07-19",
+            items = listOf(
+                "Live charging: opaque hero + heavier milk/scroll so percent stays readable (mint ring hard-locked). Cycle phase/day/soft/cite follow EspaÃ±ol / FranÃ§ais / Deutsch.",
+                "Settings Appearance canvas: Day-cycle background, Sky behind cards, and Card transparency titles/blurbs â€” es/fr/de.",
+                "In-app Update check prefers public GitHub Releases. Overnight SpOâ‚‚ gather is append-only (does not wipe prior banks).",
+            ),
+        ),
+        Release(
+            version = "8.6.221",
+            title = "Custom alarms & Live lacquer languages",
+            date = "2026-07-19",
+            items = listOf(
+                "Custom alarms / strap firmware / Test buzz chrome plus Insights dose, Live trust+link/sync/battery, HRV instructions, Sleep marks/journal, and Alarm a11y â€” EspaÃ±ol / FranÃ§ais / Deutsch.",
+            ),
+        ),
+        Release(
+            version = "8.6.220",
+            title = "Insights dose, Live trust & Alarm a11y languages",
+            date = "2026-07-19",
+            items = listOf(
+                "Insights dose/movers/Activity Cost, Live Signal Trust + link/sync/battery chrome, HRV instructions, Sleep marks/journal, and Alarm a11y steppers follow EspaÃ±ol / FranÃ§ais / Deutsch â€” plus Coach setup and Today Key Metrics chrome since 219.",
+            ),
+        ),
+        Release(
+            version = "8.6.219",
+            title = "Alarm, Coach & Insights languages",
+            date = "2026-07-19",
+            items = listOf(
+                "Alarm help blurbs, Coach chat chrome, and Insights body copy follow EspaÃ±ol / FranÃ§ais / Deutsch with the rest of the app.",
+            ),
+        ),
+        Release(
+            version = "8.6.215",
+            title = "Language options visible",
+            date = "2026-07-18",
+            items = listOf(
+                "Settings â†’ Appearance & Language now lists System / English / EspaÃ±ol / FranÃ§ais / Deutsch as always-visible rows (the old dropdown opened empty on Fold).",
+            ),
+        ),
+        Release(
+            version = "8.6.214",
+            title = "12-hour Alarm/Today + SpOâ‚‚ honesty park",
+            date = "2026-07-18",
+            items = listOf(
+                "Alarm, TimeChip, and Today chart ticks follow Settings â†’ Units â†’ Time format (12-hour default). Settings section retitled Appearance & Language so the language row is findable. Hold-+ dial caption decluttered.",
+                "SpOâ‚‚ research park: hist grab-and-wipe PASS; v20 244-B = raw ADC PPG (not %); R22 armed overnight; EnterHighFreq negative. Still never invent SpOâ‚‚ % from @82 / open BLE.",
+                "createBond-on-reconnect still absent (213 root fix). Worn MG preferred over unworn 5AM sibling.",
+            ),
+        ),
+        Release(
+            version = "8.6.213",
+            title = "Stop re-pair loop (reuse OS bond)",
+            date = "2026-07-18",
+            items = listOf(
+                "Root fix: reconnect no longer calls createBond (Fold HCI showed createBond â†’ Clearing BLE Keys â†’ pairing rejected). NOOP reuses your saved MG bond/keys and defers when official WHOOP is open â€” you should not need to keep Forgetting/re-pairing.",
+            ),
+        ),
+        Release(
+            version = "8.6.212",
+            title = "MG createBond on reconnect",
+            date = "2026-07-18",
+            items = listOf(
+                "When a WHOOP MG connects over GATT but Android reports no bond (common after the official WHOOP app re-pairs), NOOP now asks Android to pair and escalates CLIENT_HELLO once the OS bond lands â€” instead of looping hello-no-response and pausing reconnect.",
+            ),
+        ),
+        Release(
+            version = "8.6.211",
+            title = "Spanish & French language",
+            date = "2026-07-18",
+            items = listOf(
+                "Settings â†’ Appearance â†’ Language: System, English, EspaÃ±ol, FranÃ§ais, or Deutsch â€” nav, More groups, and the first-run terms follow the pack.",
+            ),
+        ),
+        Release(
+            version = "8.6.210",
+            title = "Overnight recover finishes",
+            date = "2026-07-18",
+            items = listOf(
+                "Sleepâ€™s overnight recovery seed is given enough time to finish importing so last night isnâ€™t cancelled mid-load.",
+            ),
+        ),
+        Release(
+            version = "8.6.209",
+            title = "Overnight seed import fix",
+            date = "2026-07-18",
+            items = listOf(
+                "Recovery seed for last nightâ€™s sleep now loads from the APK (and private app storage) so MAIN can import it without scoped-storage permission failures.",
+            ),
+        ),
+        Release(
+            version = "8.6.208",
+            title = "Overnight sleep recover",
+            date = "2026-07-18",
+            items = listOf(
+                "When last nightâ€™s sleep is missing on MAIN but overnight HR/gravity were banked (or a recovery seed is present), NOOP restages and shows the night instead of stopping after yesterdayâ€™s wake.",
+                "Overnight catch-up no longer treats yesterdayâ€™s sleep as â€œlast night done.â€",
+                "Gravity / R-R unions include sibling WHOOP ids so MG overnight raw is visible after a 5AMâ†”MG swap.",
+            ),
+        ),
+        Release(
+            version = "8.6.207",
+            title = "Worn MG identity Â· sleep siblings",
+            date = "2026-07-18",
+            items = listOf(
+                "When the live band is your worn MG but Devices still listed the 5AM sibling as active, NOOP promotes the MG row (and Sleep can see nights banked under it).",
+                "Sleep tracker unions sibling WHOOP ids so last night isnâ€™t hidden when samples landed on the worn MG while 5AM was still marked active.",
+                "Use worn MG still finds an archived MG row; the active banner prefers the live Bluetooth name when the registry label is still 5AM.",
+            ),
+        ),
+        Release(
+            version = "8.6.206",
+            title = "Sleep wake Â· skin temp Â· UI",
+            date = "2026-07-18",
+            items = listOf(
+                "Early false-morning wake rejoins when you return to sleep (user report) â€” scored wake tracks the real morning, not a mid-bout arousal.",
+                "Sleeping HR shows avg and range on the Sleep chart; restorative captions mean deep + REM (no invented stages).",
+                "MG / 5.0 skin temp no longer reads ~166 Â°C on Deep Timeline (centidegree vs 4.0 ADC family fix).",
+                "Ryan-fork .noopbak backups can import again (schema reconcile).",
+                "Sleep hero drops the WHOOP APP badge; More label no longer reads â€œMore via Moreâ€; Today Quick Alarm glance polish.",
+            ),
+        ),
+        Release(
+            version = "8.6.204",
+            title = "Use worn MG confirm â†’ Devices",
+            date = "2026-07-17",
+            items = listOf(
+                "The Live Bluetooth confirmation snack after Use worn MG offers a Devices action so you can open the band list and check the live name.",
+            ),
+        ),
+        Release(
+            version = "8.6.203",
+            title = "Use worn MG confirm linger",
+            date = "2026-07-17",
+            items = listOf(
+                "The Live Bluetooth name confirmation after Use worn MG stays on screen longer so you can read which band linked.",
+            ),
+        ),
+        Release(
+            version = "8.6.202",
+            title = "Use worn MG retry opens Devices",
+            date = "2026-07-17",
+            items = listOf(
+                "Tapping Use worn MG on the 5AM retry snackbar also opens Devices so you can watch the live Bluetooth name settle.",
+            ),
+        ),
+        Release(
+            version = "8.6.201",
+            title = "Use worn MG retry action",
+            date = "2026-07-17",
+            items = listOf(
+                "When Use worn MG still lands on a 5AM sibling name, the retry snackbar offers a one-tap Use worn MG action.",
+            ),
+        ),
+        Release(
+            version = "8.6.200",
+            title = "Use worn MG live-name confirm",
+            date = "2026-07-17",
+            items = listOf(
+                "A few seconds after Use worn MG, NOOP confirms the live Bluetooth name when it no longer looks like an unworn 5AM sibling (and still nudges a retry when it does).",
+            ),
+        ),
+        Release(
+            version = "8.6.199",
+            title = "Use worn MG retry cue",
+            date = "2026-07-17",
+            items = listOf(
+                "If the live Bluetooth name still looks like an unworn 5AM sibling a few seconds after Use worn MG, NOOP nudges you to try again.",
+            ),
+        ),
+        Release(
+            version = "8.6.198",
+            title = "Use worn MG snappier",
+            date = "2026-07-17",
+            items = listOf(
+                "Use worn MG returns immediately with a buzz-confirms cue; the confirmation buzz still runs a moment later without freezing the tap.",
+            ),
+        ),
+        Release(
+            version = "8.6.197",
+            title = "Use worn MG buzz confirm",
+            date = "2026-07-17",
+            items = listOf(
+                "After Use worn MG switches bands, NOOP briefly buzzes the strap once it reconnects so you can feel which band is live.",
+            ),
+        ),
+        Release(
+            version = "8.6.196",
+            title = "More search Settings strap",
+            date = "2026-07-17",
+            items = listOf(
+                "More search finds Settings via strap / worn / MG / 5AM / battery / overnight / HRV, and the Settings row caption mentions Use worn MG.",
+            ),
+        ),
+        Release(
+            version = "8.6.195",
+            title = "Hold+ Use worn MG",
+            date = "2026-07-17",
+            items = listOf(
+                "When the live Bluetooth name looks like an unworn 5AM sibling, the hold-+ dial relabels Devices to Use worn MG and opens the same snackbar switch as Quick actions and the background notification.",
+            ),
+        ),
+        Release(
+            version = "8.6.194",
+            title = "Quick actions Use worn MG",
+            date = "2026-07-17",
+            items = listOf(
+                "When the live Bluetooth name looks like an unworn 5AM sibling, the + Quick actions menu offers Devices Â· Use worn MG and opens the same snackbar switch as the background notification.",
+            ),
+        ),
+        Release(
+            version = "8.6.193",
+            title = "More search worn MG",
+            date = "2026-07-17",
+            items = listOf(
+                "More search finds Devices via worn / MG / 5AM / sibling, and the Devices row caption mentions Use worn MG for multi-bond setups.",
+            ),
+        ),
+        Release(
+            version = "8.6.192",
+            title = "Today live BLE name",
+            date = "2026-07-17",
+            items = listOf(
+                "Todayâ€™s Use worn MG cue shows the live Bluetooth name, and the background notification points at the Use worn MG snackbar action.",
+            ),
+        ),
+        Release(
+            version = "8.6.191",
+            title = "Notification Use worn MG",
+            date = "2026-07-17",
+            items = listOf(
+                "Opening the 5AM sibling background notification still lands on Devices, and the snackbar can switch to your worn MG in one tap when a candidate is paired.",
+            ),
+        ),
+        Release(
+            version = "8.6.190",
+            title = "Live Bluetooth name",
+            date = "2026-07-17",
+            items = listOf(
+                "Settings, Devices, and Live show the live Bluetooth advertising name when it differs from the active registry strap â€” clearer multi-bond honesty before Use worn MG.",
+            ),
+        ),
+        Release(
+            version = "8.6.189",
+            title = "Worn MG confirmation",
+            date = "2026-07-17",
+            items = listOf(
+                "Use worn MG shows a short confirmation snackbar, and opening Devices from the 5AM sibling background notification tips you to Use worn MG below.",
+            ),
+        ),
+        Release(
+            version = "8.6.188",
+            title = "Today Use worn MG",
+            date = "2026-07-17",
+            items = listOf(
+                "Today shows Use worn MG when the live Bluetooth name looks like an unworn 5AM sibling â€” same one-tap fix as Live, Settings, and Devices.",
+            ),
+        ),
+        Release(
+            version = "8.6.187",
+            title = "Notification opens Devices",
+            date = "2026-07-17",
+            items = listOf(
+                "When the background connection notification warns about an unworn 5AM sibling, tapping it opens Devices so Use worn MG is one step away.",
+            ),
+        ),
+        Release(
+            version = "8.6.186",
+            title = "Background strap check",
+            date = "2026-07-17",
+            items = listOf(
+                "If the live Bluetooth name looks like an unworn 5AM sibling, the background connection notification says Connected Â· check strap and points you to Use worn MG â€” without waking the phone every heartbeat.",
+            ),
+        ),
+        Release(
+            version = "8.6.185",
+            title = "Live Use worn MG",
+            date = "2026-07-17",
+            items = listOf(
+                "Liveâ€™s active-band row matches Devices and Settings: when the live link looks like an unworn 5AM sibling and a worn MG is paired, tap Use worn MG to promote, pin, and reconnect.",
+            ),
+        ),
+        Release(
+            version = "8.6.184",
+            title = "Settings Use worn MG",
+            date = "2026-07-17",
+            items = listOf(
+                "Settings â†’ Strap matches Devices: when the live link looks like an unworn 5AM sibling and a worn MG is paired, tap Use worn MG to promote, pin, and reconnect.",
+            ),
+        ),
+        Release(
+            version = "8.6.183",
+            title = "Use worn MG (one tap)",
+            date = "2026-07-17",
+            items = listOf(
+                "When the live Bluetooth name looks like an unworn 5AM sibling and a worn MG is paired, Devices offers Use worn MG â€” promotes it, pins the address, and reconnects.",
+            ),
+        ),
+        Release(
+            version = "8.6.182",
+            title = "Devices multi-bond honesty",
+            date = "2026-07-17",
+            items = listOf(
+                "Devices shows the same unworn 5AM sibling warning as Settings when the live link looks like the spare strap â€” pick your worn MG when both are bonded.",
+                "A paired 5AM bandâ€™s capability footnote also says prefer the worn MG.",
+            ),
+        ),
+        Release(
+            version = "8.6.181",
+            title = "Overnight battery honesty",
+            date = "2026-07-17",
+            items = listOf(
+                "Keep NOOP alive overnight updates as soon as you return from the system dialog â€” no need to leave Settings.",
+                "If Continuous HRV is on without that overnight allow-list, Settings tells you Android may still Doze the app overnight.",
+            ),
+        ),
+        Release(
+            version = "8.6.180",
+            title = "Multi-bond honesty + overnight optical",
+            date = "2026-07-17",
+            items = listOf(
+                "If the live Bluetooth name looks like an unworn WHOOP 5AM sibling, Settings â†’ Strap tells you plainly â€” NOOP prefers your worn MG when both are bonded.",
+                "Overnight optical from sleep history stays honest: raw ADC or â€œraw Â· not %â€ â€” never a made-up SpOâ‚‚ percentage from open BLE.",
+            ),
+        ),
+        Release(
+            version = "8.6.179",
+            title = "Sleep offload optical (MG)",
+            date = "2026-07-17",
+            items = listOf(
+                "MG sleep history can bank overnight optical aux beside sleep state so you can see that overnight optical was captured â€” still not a blood-oxygen %.",
+            ),
+        ),
         Release(
             version = "8.6.153",
             title = "Dial smooth Â· Nutrition+Water Â· light paper Â· Settings edge",

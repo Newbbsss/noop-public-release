@@ -1,6 +1,5 @@
 package com.noop.ui
 
-import android.text.format.DateFormat
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -46,7 +45,7 @@ fun HapticClockPracticeDialog(
     announce: Boolean = false,
 ) {
     val context = LocalContext.current
-    val is24h = remember { DateFormat.is24HourFormat(context) }
+    val is24h = remember { NoopPrefs.use24HourClock(context) }
     val cal = remember { Calendar.getInstance() }
     val hour = cal.get(Calendar.HOUR_OF_DAY)
     val minute = cal.get(Calendar.MINUTE)

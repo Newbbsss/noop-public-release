@@ -1,4 +1,4 @@
-﻿package com.noop.ui
+package com.noop.ui
 
 import android.widget.Toast
 import androidx.compose.foundation.background
@@ -42,9 +42,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 
 /**
- * Settings â†’ About: browse GitHub Release APKs, download, install.
+ * Settings → About: browse GitHub Release APKs, download, install.
  * Downgrade (lower versionCode / older name) requires an Are you sure? confirm.
- * Copy stays GitHub-first â€” no Tailscale / AI Store branding.
+ * Copy stays GitHub-first — no Tailscale / AI Store branding.
  */
 @Composable
 fun VersionSelectSection() {
@@ -82,7 +82,7 @@ fun VersionSelectSection() {
         }
         busyVersion = rel.version
         progress = 0f
-        statusLine = "Downloading ${rel.version}â€¦"
+        statusLine = "Downloading ${rel.version}…"
         scope.launch {
             when (
                 val dl = ApkInstaller.download(
@@ -99,7 +99,7 @@ fun VersionSelectSection() {
                     if (mismatch != null) {
                         statusLine = mismatch
                     } else {
-                        statusLine = "Opening installerâ€¦"
+                        statusLine = "Opening installer…"
                         val ok = ApkInstaller.install(context, dl.file)
                         statusLine = if (ok) {
                             "Installer opened for ${rel.version}."
@@ -147,7 +147,7 @@ fun VersionSelectSection() {
                         expanded = listResult is UpdateCheck.ListResult.Ok
                         if (listResult is UpdateCheck.ListResult.Failed) {
                             statusLine =
-                                "Couldn't list versions. Retry Â· or open GitHub Releases."
+                                "Couldn't list versions. Retry · or open GitHub Releases."
                         }
                     }
                 },
@@ -165,7 +165,7 @@ fun VersionSelectSection() {
                         strokeWidth = 2.dp,
                         color = Palette.accent,
                     )
-                    Text("Loadingâ€¦", style = NoopType.captionNumber)
+                    Text("Loading…", style = NoopType.captionNumber)
                 } else if (expanded) {
                     Text("Hide versions", style = NoopType.captionNumber)
                 } else {
@@ -204,7 +204,7 @@ fun VersionSelectSection() {
                         }
                     }
                     Text(
-                        "From GitHub Releases Â· Newbbsss/noop-public-release.",
+                        "From GitHub Releases · Newbbsss/noop-public-release.",
                         style = NoopType.caption,
                         color = Palette.textTertiary,
                     )
@@ -307,7 +307,7 @@ private fun VersionRow(
         UpdateCheck.VersionRelation.OLDER -> Palette.statusWarning
     }
     val actionLabel = when {
-        busy -> "â€¦"
+        busy -> "…"
         relation == UpdateCheck.VersionRelation.SAME -> "Reinstall"
         relation == UpdateCheck.VersionRelation.OLDER -> "Downgrade"
         else -> "Install"
@@ -342,7 +342,7 @@ private fun VersionRow(
             }
             Text(
                 buildString {
-                    release.versionCode?.let { append("versionCode $it Â· ") }
+                    release.versionCode?.let { append("versionCode $it · ") }
                     append("GitHub APK")
                 },
                 style = NoopType.caption,

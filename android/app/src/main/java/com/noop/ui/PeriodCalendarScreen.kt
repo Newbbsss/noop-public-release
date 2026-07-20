@@ -67,8 +67,10 @@ import java.time.format.DateTimeFormatter
 import java.time.format.TextStyle
 import java.util.Calendar
 import java.util.Locale
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlin.math.abs
 
 /**
@@ -77,7 +79,10 @@ import kotlin.math.abs
  * Logs remain truth; never invents bleed days. Awareness only, not contraception.
  */
 @Composable
-fun PeriodCalendarScreen(vm: AppViewModel) {
+fun PeriodCalendarScreen(
+    vm: AppViewModel,
+    onOpenSettingsPeriodTracking: () -> Unit = {},
+) {
     val context = LocalContext.current
     val store = remember { PeriodCalendarStore.from(context) }
     var events by remember { mutableStateOf(store.loadEvents()) }
@@ -174,30 +179,46 @@ fun PeriodCalendarScreen(vm: AppViewModel) {
         recentDays.firstOrNull { it.day == selectedDay }
     }
 
+    val importScope = rememberCoroutineScope()
     val importLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument(),
     ) { uri ->
         if (uri == null) return@rememberLauncherForActivityResult
-        runCatching {
-            val name = runCatching {
-                context.contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)
-                    ?.use { c -> if (c.moveToFirst()) c.getString(0) else null }
-            }.getOrNull().orEmpty()
-            val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() } ?: ByteArray(0)
-            val result = com.noop.ingest.PcCalendarImport.parse(bytes, name)
-            if (result.events.isEmpty()) {
-                importStatus = result.message
-                return@runCatching
+        importScope.launch {
+            val outcome = withContext(Dispatchers.IO) {
+                runCatching {
+                    val name = runCatching {
+                        context.contentResolver.query(
+                            uri,
+                            arrayOf(android.provider.OpenableColumns.DISPLAY_NAME),
+                            null, null, null,
+                        )?.use { c -> if (c.moveToFirst()) c.getString(0) else null }
+                    }.getOrNull().orEmpty()
+                    val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                        ?: ByteArray(0)
+                    val result = com.noop.ingest.PcCalendarImport.parse(bytes, name)
+                    result to name
+                }
             }
-            store.mergeImport(result.events)
-            vm.setCycleTrackingEnabled(true)
-            store.savePrefs(store.loadPrefs().copy(enabled = true, onboardingComplete = true))
-            vm.refreshCycleFromPeriodLog()
-            refresh()
-            // SHIP #216 — import can skip first-run; leave a literacy note (not silent expert UI).
-            importStatus = result.message + " · Tip: tap a day → Log period start · Soft rose = forecast only."
-        }.onFailure {
-            importStatus = "Could not read that file. Use UTF-8 CSV (date,type,note) or a My Calendar .pc backup."
+            outcome.fold(
+                onSuccess = { (result, _) ->
+                    if (result.events.isEmpty()) {
+                        importStatus = result.message
+                        return@fold
+                    }
+                    store.mergeImport(result.events)
+                    vm.setCycleTrackingEnabled(true)
+                    store.savePrefs(store.loadPrefs().copy(enabled = true, onboardingComplete = true))
+                    vm.refreshCycleFromPeriodLog()
+                    refresh()
+                    importStatus = result.message +
+                        " · Tip: tap a day → Log period start · Soft rose = forecast only."
+                },
+                onFailure = {
+                    importStatus =
+                        "Could not read that file. Use UTF-8 CSV (date,type,note) or a My Calendar .pc backup."
+                },
+            )
         }
     }
 
@@ -366,43 +387,35 @@ fun PeriodCalendarScreen(vm: AppViewModel) {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text("Cycle is off", style = NoopType.headline, color = Palette.textPrimary)
                     Text(
-                        "Turn tracking on to log starts, see phase, and unlock forecast windows. " +
+                        "Turn tracking on in Settings → Health & wellness → Period tracking. " +
+                            "Then log starts, see phase, and unlock forecast windows. " +
                             "Predictions exist so you can plan pads ahead — not contraception.",
                         style = NoopType.subhead,
                         color = Palette.textSecondary,
                     )
                     WetBounceButton(
-                        label = "Turn on Cycle",
+                        label = "Open Settings",
                         modifier = Modifier.fillMaxWidth(),
                         tint = Palette.accent,
-                        onClick = {
-                            prefs = prefs.copy(enabled = true, onboardingComplete = false)
-                            store.savePrefs(prefs)
-                            vm.setCycleTrackingEnabled(true)
-                            refresh()
-                        },
+                        onClick = onOpenSettingsPeriodTracking,
                     )
                 }
             }
             return@LazyScreenScaffold
         }
 
-        item {
-            MasterToggleRow(
-                enabled = prefs.enabled,
-                whoopLearn = prefs.whoopLearningEnabled,
-                onToggle = { on ->
-                    prefs = prefs.copy(enabled = on)
-                    store.savePrefs(prefs)
-                    vm.setCycleTrackingEnabled(on)
-                    refresh()
-                },
-                onWhoopLearn = { on ->
-                    prefs = prefs.copy(whoopLearningEnabled = on)
-                    store.savePrefs(prefs)
-                    refresh()
-                },
-            )
+        // Strap clues only — master Period tracking on/off lives in Settings (Gilbert P0).
+        if (prefs.enabled) {
+            item {
+                StrapCluesRow(
+                    whoopLearn = prefs.whoopLearningEnabled,
+                    onWhoopLearn = { on ->
+                        prefs = prefs.copy(whoopLearningEnabled = on)
+                        store.savePrefs(prefs)
+                        refresh()
+                    },
+                )
+            }
         }
 
         // SHIP #222/#228 — empty before first start: clear CTA + sample log affordance.
@@ -605,34 +618,17 @@ fun PeriodCalendarScreen(vm: AppViewModel) {
 }
 
 @Composable
-private fun MasterToggleRow(
-    enabled: Boolean,
+private fun StrapCluesRow(
     whoopLearn: Boolean,
-    onToggle: (Boolean) -> Unit,
     onWhoopLearn: (Boolean) -> Unit,
 ) {
-    // Flat row — no nested card chrome on the sky.
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text("Tracking", style = NoopType.subhead, color = Palette.textPrimary)
-                Text(
-                    if (enabled) "Logging this cycle" else "Off",
-                    style = NoopType.footnote,
-                    color = Palette.textTertiary,
-                )
-            }
-            Switch(checked = enabled, onCheckedChange = onToggle)
+    // Flat row — no nested card chrome on the sky. Master Period tracking lives in Settings only.
+    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text("Strap clues", style = NoopType.subhead, color = Palette.textPrimary)
+            Text("Temp · RHR · HRV hints only", style = NoopType.footnote, color = Palette.textTertiary)
         }
-        if (enabled) {
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    Text("Strap clues", style = NoopType.subhead, color = Palette.textPrimary)
-                    Text("Temp · RHR · HRV hints only", style = NoopType.footnote, color = Palette.textTertiary)
-                }
-                Switch(checked = whoopLearn, onCheckedChange = onWhoopLearn)
-            }
-        }
+        Switch(checked = whoopLearn, onCheckedChange = onWhoopLearn)
     }
 }
 

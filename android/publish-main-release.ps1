@@ -1,4 +1,5 @@
 ﻿param(
+    # Stale default — resolved from android/app/build.gradle.kts when still "8.5.3-mg".
     [string]$VersionName = "8.5.3-mg",
     [int]$VersionCode = 0,
     [switch]$RefreshDependencies,
@@ -114,6 +115,26 @@ $env:ANDROID_HOME = $sdkMapped
 $env:PATH = "$javaHome\bin;" + $env:PATH
 
 $android = if (Test-Path -LiteralPath $androidMapped) { $androidMapped } else { $androidLong }
+$buildFileEarly = Join-Path $android "app\build.gradle.kts"
+# Prefer the tree's stamped version over the historic "8.5.3-mg" default (avoids rewriting gradle
+# to a stale name on -SkipBuild and then failing the APK metadata check).
+$gradleRaw = $null
+if (Test-Path -LiteralPath $buildFileEarly) {
+    $gradleRaw = Get-Content -LiteralPath $buildFileEarly -Raw
+}
+if ($VersionName -eq "8.5.3-mg" -and $null -ne $gradleRaw) {
+    if ($gradleRaw -match '(?m)^\s*versionName\s*=\s*"([^"]+)"') {
+        $VersionName = $Matches[1]
+        Write-Log "VersionName from build.gradle.kts: $VersionName"
+    }
+}
+if ($VersionCode -le 0 -and $null -ne $gradleRaw) {
+    if ($gradleRaw -match '(?m)^\s*versionCode\s*=\s*(\d+)') {
+        $VersionCode = [int]$Matches[1]
+        Write-Log "VersionCode from build.gradle.kts: $VersionCode"
+    }
+}
+
 $manifestPath = Join-Path $store "apps.json"
 if (-not (Test-Path -LiteralPath $manifestPath)) {
     throw "Store manifest missing: $manifestPath"
@@ -278,7 +299,7 @@ Ensure-ForkDebugSigned $dstVersioned
 $safeTagline = "WHOOP 3/4/5/MG health hub with fixed alarms and MG buzz"
 $safeDescription = "Your fork of NOOP: pairs with WHOOP straps over Bluetooth, keeps WHOOP MG live HR stable, supports WHOOP 3/4/MG strap buzz, and receives Apple Watch pushes over Tailscale without seeded demo data."
 $safeChangelog = @"
-Update ${VersionName} (${VersionCode}): Sleep today/yesterday P0 — barren HC mono-light stagesJSON no longer kills recent charts (usableTimedStages / isBarrenTimedStages). Bug report in More/Settings — screenshots + diagnostics zip → GitHub user-bug (no Tailscale). Live Session lead icon matches Health heart slot (TrackChanges + todaySiblingLeadIconDp). Dense bank merge: vessel fill/Rest captions · compare purpose · exact-alarm Sleep context. Agents: check user-bug issues every few wakes. iOS parity after Android solid. P0 buzz hardware + Mac IPA still open.
+Update ${VersionName} (${VersionCode}): User sleep early-wake rejoin (return-to-sleep after false morning cut) · Sleeping HR avg/range · restorative = deep+REM honesty (no invented stages) · MG/5.0 skin temp family fix (~166 °C display) · Ryan .noopbak schema accept · Sleep WHOOP APP badge off · More label fix · Today Quick Alarm polish. IPA gather/probe tools only. No fake SpO₂. Agents: user-bug first.
 "@.Trim()
 $existingTagline = [string]$noop.tagline
 $existingDescription = [string]$noop.description

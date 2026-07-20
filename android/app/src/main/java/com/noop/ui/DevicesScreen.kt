@@ -103,6 +103,12 @@ fun DevicesScreen(
     // Liquid sky backdrop gate — the SAME "Day-cycle background" preference the liquid Today honours (#698,
     // default ON). Off falls back to the flat dark canvas, so the setting governs every liquid screen alike.
     val context = LocalContext.current
+    val strapBatt = remember(
+        live.connected, live.batteryPct, live.charging,
+        live.batteryFreshCount, live.linkUpAtMs,
+    ) {
+        resolveStrapBatteryDisplay(context, live)
+    }
     val showDayCycleBackground = remember { NoopPrefs.showDayCycleBackground(context) }
 
     // The current device list, reloaded after each registry op. Null while the first read is in flight.
@@ -132,6 +138,20 @@ fun DevicesScreen(
     val currentActiveName =
         all.firstOrNull { it.status == DeviceStatus.active.name }?.let { displayName(it) }
             ?: "Your current strap"
+    // Include archived MG rows — Fold often archives worn MG while 5AM stays "active".
+    val wornMgCandidate = remember(all) {
+        all.firstOrNull { isWornMgDeviceCandidate(it) }
+    }
+    val liveLooksLike5AmSibling =
+        com.noop.ble.WhoopBleClient.isStaleUnwornSiblingName(live.advertisingName.orEmpty())
+    val liveBleName = live.advertisingName?.takeIf { it.isNotBlank() }
+    // Banner title: when registry still says 5AM but live LE is MGB, show the live name.
+    val bannerActiveName = when {
+        live.connected && liveBleName != null &&
+            com.noop.ble.WhoopBleClient.isStaleUnwornSiblingName(currentActiveName) &&
+            !com.noop.ble.WhoopBleClient.isStaleUnwornSiblingName(liveBleName) -> liveBleName
+        else -> currentActiveName
+    }
 
     // PERF (#707): lazy scaffold — each device card is virtualized via `items(...)` (each was a direct
     // child of the eager `spacedBy(20.dp)` column, so the LazyColumn's matching spacing is identical) and
@@ -139,7 +159,7 @@ fun DevicesScreen(
     // Conditional rows use `if (cond) { item/items }` so a hidden section adds no row.
     LazyScreenScaffold(
         title = "Devices",
-        subtitle = currentActiveName.let { name ->
+        subtitle = bannerActiveName.let { name ->
             if (devices == null) "Pair and manage the bands NOOP reads from."
             else "Active strap: $name · live data and commands use this band."
         },
@@ -160,19 +180,24 @@ fun DevicesScreen(
             return@LazyScreenScaffold
         }
 
-        // L12 / P2 #9 — active strap always obvious above the list (pairs with Settings → Strap).
+    // L12 / P2 #9 — active strap always obvious above the list (pairs with Settings → Strap).
         item(key = "active_strap_banner") {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            Column(
                 modifier = Modifier
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(14.dp))
                     .background(liquidHeroFillColor())
                     .border(0.5.dp, Color.White.copy(alpha = 0.11f), RoundedCornerShape(14.dp))
-                    .padding(horizontal = 14.dp, vertical = 12.dp)
+                    .padding(horizontal = 14.dp, vertical = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
                     .semantics {
-                        contentDescription = "Active strap $currentActiveName provides live data and commands"
+                        contentDescription = "Active strap $bannerActiveName provides live data and commands"
                     },
             ) {
                 Icon(
@@ -184,17 +209,56 @@ fun DevicesScreen(
                 Column(modifier = Modifier.weight(1f)) {
                     Overline("Commands & live data")
                     Text(
-                        currentActiveName,
+                        bannerActiveName,
                         style = NoopType.headline,
                         color = Palette.textPrimary,
                         maxLines = 1,
                     )
+                    if (live.connected && liveBleName != null &&
+                        !liveBleName.equals(bannerActiveName, ignoreCase = true)
+                    ) {
+                        Text(
+                            "Live Bluetooth name · $liveBleName",
+                            style = NoopType.footnote,
+                            color = Palette.textTertiary,
+                            maxLines = 1,
+                        )
+                    }
+                    // Multi-bond Fold: live LE name can be an unworn 5AM sibling while MG is worn.
+                    if (liveLooksLike5AmSibling) {
+                        Text(
+                            "Live link looks like an unworn 5AM sibling. Prefer your worn MG when both are bonded.",
+                            style = NoopType.footnote,
+                            color = Palette.textTertiary,
+                        )
+                    }
                 }
                 StatePill(
                     title = if (live.connected) "Live" else "Active",
                     tone = if (live.connected) StrandTone.Positive else StrandTone.Accent,
                     pulsing = live.connected,
                 )
+            }
+            if (liveLooksLike5AmSibling && wornMgCandidate != null) {
+                TextButton(
+                    onClick = {
+                        val mg = wornMgCandidate
+                        scope.launch {
+                            viewModel.preferWornMgDevice(mg)
+                            reload()
+                        }
+                    },
+                    modifier = Modifier.semantics {
+                        contentDescription = "Use worn MG ${displayName(wornMgCandidate)}"
+                    },
+                ) {
+                    Text(
+                        "Use worn MG · ${displayName(wornMgCandidate)}",
+                        style = NoopType.subhead,
+                        color = Palette.accent,
+                    )
+                }
+            }
             }
         }
 
@@ -205,9 +269,8 @@ fun DevicesScreen(
                 isActive = isActive,
                 isLiveConnected = isActive && live.connected,
                 rebootInProgress = isActive && live.rebootInProgress,
-                liveBatteryPct = if (isActive && live.connected)
-                    live.batteryPct?.let { Math.round(it).toInt() } else null,
-                liveCharging = isActive && live.connected && live.charging == true,
+                liveBatteryPct = if (isActive) strapBatt?.pctInt else null,
+                liveCharging = isActive && strapBatt?.charging == true,
                 liveFirmware = if (isActive && live.connected)
                     live.strapFirmware else null,
                 liveClockLine = if (isActive && live.connected) {
@@ -897,6 +960,16 @@ internal fun displayName(device: PairedDeviceRow): String {
     else "${device.brand} ${device.model}"
 }
 
+/** True when this registry row looks like a worn WHOOP MG (not an unworn 5AM sibling). */
+internal fun isWornMgDeviceCandidate(device: PairedDeviceRow): Boolean {
+    val hints = listOfNotNull(device.nickname, device.model, displayName(device))
+    if (hints.any { com.noop.ble.WhoopBleClient.isStaleUnwornSiblingName(it) }) return false
+    if (hints.any { it.contains("MGB", ignoreCase = true) }) return true
+    if (hints.any { Regex("""(?i)\bWHOOP\s*MG\b""").containsMatchIn(it) }) return true
+    val model = device.model.lowercase()
+    return model.contains("mg") && !model.contains("5am") && !model.contains("5.0")
+}
+
 /** SF-Symbol-equivalent icon: WHOOP keeps the band glyph; an FTMS machine reads as gym equipment;
  *  generic straps read as a heart-rate strap. */
 private fun deviceIcon(device: PairedDeviceRow): ImageVector = when {
@@ -922,6 +995,19 @@ private data class DeviceCapabilityProfile(
 )
 
 private fun deviceProfile(device: PairedDeviceRow): DeviceCapabilityProfile {
+    val profile = deviceProfileInner(device)
+    // Multi-bond: flag an unworn WHOOP 5AM sibling so the user picks MG when both are bonded.
+    val nameHints = listOfNotNull(device.nickname, device.model, displayName(device))
+    if (nameHints.any { com.noop.ble.WhoopBleClient.isStaleUnwornSiblingName(it) }) {
+        return profile.copy(
+            footnote = profile.footnote.trimEnd() +
+                " Unworn 5AM sibling — prefer your worn MG when both are bonded.",
+        )
+    }
+    return profile
+}
+
+private fun deviceProfileInner(device: PairedDeviceRow): DeviceCapabilityProfile {
     // FTMS gym machine: a live machine + (when reported) HR session, recorded via the existing
     // live-workout path. Effort-scored only when the machine actually reports heart rate.
     if (device.sourceKind == SourceKind.ftms.name) {

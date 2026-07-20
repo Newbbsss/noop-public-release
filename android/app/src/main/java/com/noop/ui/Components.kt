@@ -60,7 +60,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.res.stringResource
 import android.content.Context
+import com.noop.R
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.geometry.Offset
@@ -251,10 +253,10 @@ fun SyncingHistoryNote(chunks: Int, modifier: Modifier = Modifier) {
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        StatePill("Syncing strap history…", tone = StrandTone.Accent, pulsing = true)
+        StatePill(stringResource(R.string.today_syncing_history), tone = StrandTone.Accent, pulsing = true)
         if (chunks > 0) {
             Text(
-                "$chunks chunks pulled",
+                stringResource(R.string.today_chunks_pulled, chunks),
                 style = NoopType.footnote,
                 color = Palette.textSecondary,
             )

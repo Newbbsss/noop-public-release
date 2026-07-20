@@ -520,7 +520,6 @@ private fun ExportCard(vm: AppViewModel, onReport: () -> Unit) {
 private fun AdvancedCard(vm: AppViewModel, is5MG: Boolean) {
     val context = LocalContext.current
     val puffin = remember { PuffinExperiment.from(context) }
-    var v2 by remember { mutableStateOf(puffin.experimentalSleepV2) }
     // Re-hosted Continuous-HRV toggle, bound to the SAME NoopPrefs key (noop.continuousHrv) the Settings
     // card uses, so flipping it here or there is one and the same setting (mirrors the iOS Test Centre).
     var continuousHrv by remember { mutableStateOf(NoopPrefs.continuousHrv(context)) }
@@ -534,9 +533,7 @@ private fun AdvancedCard(vm: AppViewModel, is5MG: Boolean) {
         blurb = "Experimental probes, off by default. The fuller WHOOP 5/MG controls and the raw-sensor CSV export still live in Settings under Diagnostics.",
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            ToggleRowTC("Experimental sleep staging (V2)", v2) {
-                v2 = it; puffin.experimentalSleepV2 = it
-            }
+            // Sleep staging is Gilbert V1 only (8.6.234) — V2 toggle removed.
             // Same write path as Settings: vm.setContinuousHrv persists noop.continuousHrv and re-applies
             // keep-stream-for-data, so the live capture follows the toggle from either screen.
             ToggleRowTC("Continuous HRV capture", continuousHrv) {
@@ -549,11 +546,55 @@ private fun AdvancedCard(vm: AppViewModel, is5MG: Boolean) {
                 ToggleRowTC("Unlock WHOOP 5/MG deep data (R22)", deepData) {
                     deepData = it; puffin.isDeepDataEnabled = it
                 }
+                if (deepData) {
+                    NoopButton(
+                        text = "Send R22 enable sequence",
+                        leadingIcon = Icons.Filled.Bolt,
+                        kind = NoopButtonKind.Primary,
+                        fullWidth = true,
+                        onClick = { vm.ble.enableWhoop5DeepData() },
+                    )
+                }
                 ToggleRowTC("Broadcast heart rate (Garmin/ANT)", broadcast) {
                     broadcast = it; puffin.broadcastHr = it; vm.ble.setBroadcastHr(it)
                 }
                 ToggleRowTC("Record puffin frames to a file", capture) {
                     capture = it; puffin.isCaptureEnabled = it
+                }
+                // DEBUG-only SignalHunt / Lane 2 writer — bypasses MAIN WHOOP5 allowlist for 105–108 etc.
+                if (BuildConfig.DEBUG) {
+                    Text(
+                        "Signal hunt (DEBUG writer)",
+                        style = NoopType.subhead,
+                        color = Palette.textPrimary,
+                    )
+                    Text(
+                        "Bypasses MAIN allowlist for research cmds (105–108 IMU/optical, GET_FF 128, 153/154). " +
+                            "WITH RESPONSE · ≥80 ms · denylist DFU/firmware. ACK ≠ stream; never invents SpO₂%.",
+                        style = NoopType.caption,
+                        color = Palette.textTertiary,
+                    )
+                    NoopButton(
+                        text = "Signal hunt READ burst",
+                        leadingIcon = Icons.Filled.Sensors,
+                        kind = NoopButtonKind.Secondary,
+                        fullWidth = true,
+                        onClick = { vm.ble.fireSignalHuntReadBurst() },
+                    )
+                    NoopButton(
+                        text = "Signal hunt RESEARCH (105–108)",
+                        leadingIcon = Icons.Filled.Bolt,
+                        kind = NoopButtonKind.Secondary,
+                        fullWidth = true,
+                        onClick = { vm.ble.fireSignalHuntResearchBurst() },
+                    )
+                    NoopButton(
+                        text = "GET_FF name sweep (128)",
+                        leadingIcon = Icons.Filled.Flag,
+                        kind = NoopButtonKind.Secondary,
+                        fullWidth = true,
+                        onClick = { vm.ble.fireSignalHuntFfReadSweep() },
+                    )
                 }
             }
         }

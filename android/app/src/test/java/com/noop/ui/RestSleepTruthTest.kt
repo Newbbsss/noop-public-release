@@ -34,10 +34,19 @@ class RestSleepTruthTest {
     }
 
     @Test
-    fun sleepNeedMinutesUsesPersonalFloor() {
-        assertEquals(8 * 60, sleepNeedMinutesForAlarm(null))
-        assertEquals((7.5 * 60).toInt(), sleepNeedMinutesForAlarm(7.0 * 60)) // floors at 7.5h
+    fun sleepNeedMinutesUsesPhysiologyFloor() {
+        assertEquals(8 * 60, sleepNeedMinutesForAlarm(null as Double?))
+        // Short sleeper: adult physiology floor is 8h (not old max(7.5, mean))
+        assertEquals(8 * 60, sleepNeedMinutesForAlarm(7.0 * 60))
         assertEquals(8 * 60, sleepNeedMinutesForAlarm(8.0 * 60))
+        // NSF ≥65 band → 7.5h when profile age is threaded and habit is short
+        assertEquals(
+            (7.5 * 60).toInt(),
+            sleepNeedMinutesForAlarm(
+                asleepMinutes = listOf(6.0 * 60, 6.0 * 60, 6.0 * 60),
+                profile = com.noop.analytics.UserProfile(age = 70.0),
+            ),
+        )
     }
 
     @Test

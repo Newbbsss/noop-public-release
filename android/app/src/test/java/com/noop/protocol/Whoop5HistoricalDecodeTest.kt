@@ -52,15 +52,18 @@ class Whoop5HistoricalDecodeTest {
         assertTrue((p["dynamic_acceleration"] as Double) in 0.0..8.0)
     }
 
-    /** Mutate one absolute frame byte and re-stamp the CRC32 (over frame[8..len-4]) so it passes the gate. */
-    private fun mutateAndReCrc(index: Int, value: Int): ByteArray {
-        val f = bytes(wornV18); f[index] = value.toByte()
+    /** Mutate absolute frame bytes and re-stamp the CRC32 (over frame[8..len-4]) so it passes the gate. */
+    private fun mutateAndReCrc(vararg patches: Pair<Int, Int>): ByteArray {
+        val f = bytes(wornV18)
+        for ((index, value) in patches) f[index] = value.toByte()
         val end = f.size - 4
         val crc = Crc.crc32(f.copyOfRange(8, end))
         f[end] = (crc and 0xFF).toByte(); f[end + 1] = ((crc shr 8) and 0xFF).toByte()
         f[end + 2] = ((crc shr 16) and 0xFF).toByte(); f[end + 3] = ((crc shr 24) and 0xFF).toByte()
         return f
     }
+
+    private fun mutateAndReCrc(index: Int, value: Int): ByteArray = mutateAndReCrc(index to value)
 
     @Test
     fun decodesV18ActivityClassEnum() {
@@ -170,18 +173,26 @@ class Whoop5HistoricalDecodeTest {
     @Test
     fun sleepStateReachesStreamOnRealFixture() {
         val st = extractHistoricalStreams(listOf(bytes(wornV18)), 1780916150, 1780916150, DeviceFamily.WHOOP5)
-        assertEquals(listOf(com.noop.data.SleepStateRow(1780916150L, 0)), st.sleepState)
+        assertEquals(listOf(com.noop.data.SleepStateRow(1780916150L, 0, aux82 = 0)), st.sleepState)
     }
 
     // The non-zero codes come only from an in-memory byte override (we hold NO real sleeping-night capture),
     // so this proves the PLUMBING carries whatever the band reports. The CRC is re-stamped so the extractor's
     // CRC gate passes; it does NOT assert the code meanings against real data.
     @Test
+    fun sleepStateStreamCarriesAux82WithAsleep() {
+        // Force asleep nibble + nonzero @82 — plumbing only; never treat aux as SpO₂ %.
+        val frame = mutateAndReCrc(81 to 0x20, 82 to 0x90)
+        val st = extractHistoricalStreams(listOf(frame), 1780916150, 1780916150, DeviceFamily.WHOOP5)
+        assertEquals(listOf(com.noop.data.SleepStateRow(1780916150L, 2, aux82 = 0x90)), st.sleepState)
+    }
+
+    @Test
     fun sleepStateStreamCarriesEachNibble() {
         for ((raw, expected) in listOf(0x10 to 1, 0x20 to 2, 0x30 to 3)) {
             val frame = mutateAndReCrc(81, raw)
             val st = extractHistoricalStreams(listOf(frame), 1780916150, 1780916150, DeviceFamily.WHOOP5)
-            assertEquals(listOf(com.noop.data.SleepStateRow(1780916150L, expected)), st.sleepState)
+            assertEquals(listOf(com.noop.data.SleepStateRow(1780916150L, expected, aux82 = 0)), st.sleepState)
         }
     }
 

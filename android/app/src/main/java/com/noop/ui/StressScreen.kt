@@ -47,6 +47,7 @@ import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -54,6 +55,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.noop.R
 import com.noop.analytics.DaytimeStress
 import com.noop.analytics.HrvFreqDomain
 import com.noop.analytics.StressIndex
@@ -73,11 +75,11 @@ import kotlin.math.sqrt
 //   zRHR = (todayRHR − meanRHR) / sdRHR        // positive when RHR is UP
 //   zHRV = (meanHRV − todayHRV) / sdHRV        // positive when HRV is DOWN
 //   raw  = zRHR + zHRV                          // combined autonomic load
-//   stress = 3 / (1 + e^(−raw))                // 0 calm · 1.5 baseline · 3 high
+//   stress = 3 / (1 + e^(−(raw − calmAnchor))) // 0 calm · ~0.36–0.5 floor · 3 high
 //
-// Bands: 0–1 LOW · 1–2 MEDIUM · 2–3 HIGH. Everything is computed live from
-// `recentDays` (+ the stored series) so the math is fully inspectable — see the
-// "How this is computed" card at the bottom.
+// Bands: 0–1 LOW · 1–2 MEDIUM · 2–3 HIGH. Daily load uses resting HR/HRV z-scores;
+// intraday “Now” uses DaytimeStress (5-min buckets, night bias, calm floor). See the
+// "How this is computed" card + docs/STRESS_FACTORS_AND_LITERATURE.md.
 //
 // Source priority for today's value:
 //   1. A persisted daily `stress` value from the metricSeries store ("my-whoop").
@@ -286,7 +288,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.StressContent(
         StressInnerPage.Today -> {
             item(key = "stress_plain_def") {
                 Text(
-                    LifeChapterLacquer.STRESS_PLAIN_DEFINITION,
+                    stringResource(R.string.stress_plain_definition),
                     style = NoopType.subhead,
                     color = Palette.textSecondary,
                     modifier = Modifier.staggeredAppear(0),
@@ -517,14 +519,16 @@ private fun StressHeroCard(
             )
 
             if (lastLiveRefreshAt != null) {
-                val clock = remember(lastLiveRefreshAt) {
-                    java.text.SimpleDateFormat("HH:mm", Locale.getDefault())
+                val is24 = NoopPrefs.use24HourClock(LocalContext.current)
+                val clock = remember(lastLiveRefreshAt, is24) {
+                    val pattern = if (is24) "HH:mm" else "h:mm a"
+                    java.text.SimpleDateFormat(pattern, Locale.getDefault())
                         .format(java.util.Date(lastLiveRefreshAt))
                 }
                 Text(
                     when {
                         tipFrozenCharging -> "Tip held while charging · last $clock"
-                        liveConnected -> "Updated $clock"
+                        liveConnected -> stringResource(R.string.stress_updated_prefix, clock)
                         else -> "Idle · last $clock"
                     },
                     style = NoopType.footnote,
@@ -1516,11 +1520,10 @@ private fun StressMethodologyCard(model: StressModel, modifier: Modifier = Modif
             )
             Text(
                 "Daily load compares today's resting heart rate and HRV to your own 30-day " +
-                    "baseline. A higher-than-usual resting HR and a lower-than-usual HRV " +
-                    "both push that secondary score up. Intraday “Now” (the hero when banked) " +
-                    "maps quiet HR + RMSSD onto 0–3 with a WHOOP-like calm floor near 0.5 — " +
-                    "not 1.5 at baseline. Same evening tip can still differ from the WHOOP app " +
-                    "(different calm baselines — not a bug).",
+                    "baseline (logistic mid ≈ 1.5 when both sit at average). Intraday “Now” " +
+                    "(the hero when banked) maps quiet HR + RMSSD onto 0–3 with a WHOOP-like " +
+                    "calm floor near 0.5 — not 1.5. Same evening tip can still differ from the " +
+                    "WHOOP app (different calm baselines — not a bug).",
                 style = NoopType.subhead,
                 color = Palette.textSecondary,
             )

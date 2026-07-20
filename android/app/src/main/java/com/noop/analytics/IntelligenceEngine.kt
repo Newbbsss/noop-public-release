@@ -38,18 +38,10 @@ import kotlinx.coroutines.withContext
 object IntelligenceEngine {
 
     /**
-     * #319 (upstream 8.7.0): whether V2 staging should run for a night owned by [family]. V2 only ever
-     * runs on 5.0/MG; WHOOP 4.0 always uses V1 — its SPARSE motion (only ~1 in 5 records carries it)
-     * makes V2 both inflate the Rest restorative term AND manufacture deep/REM that DEFEATS the H9
-     * low-confidence guard, so a poor 4.0 night reads as a confident 85-100. An explicit toggle still
-     * enables/disables V2 on 5.0/MG. Pure; byte-parity twin of Swift
-     * `IntelligenceEngine.sleepStagerV2(enabled:family:)`.
-     *
-     * Gilbert Fable: [PuffinExperiment.experimentalSleepV2] defaults **true** so MG stops collapsing
-     * to all-light under V1; 4.0 still hard-gates off here.
+     * Product path is Gilbert V1 only (8.6.234). V2 invents Deep/REM and is retired from shipping;
+     * [enabled] / family ignored so a stale prefs toggle cannot re-enable it.
      */
-    internal fun sleepStagerV2ForFamily(enabled: Boolean, family: DeviceFamily): Boolean =
-        enabled && family != DeviceFamily.WHOOP4
+    internal fun sleepStagerV2ForFamily(enabled: Boolean, family: DeviceFamily): Boolean = false
 
     /**
      * Serialises [analyzeRecent] against itself. The pass is launched from four independent coroutines: the
@@ -367,22 +359,28 @@ object IntelligenceEngine {
             val dayStart = nowLocalMidnight - offset * SECONDS_PER_DAY
             val day = AnalyticsEngine.dayString(dayStart, tzOffsetSeconds)
             val prior = existing[day]
-            if (prior?.strain != null) continue
+            // Treat banked ≤0 as still-null: a calm-morning 0.0 lock must be healable once walks /
+            // cardio land (Fold MAIN 2026-07-19). Only skip days that already have real Effort.
+            if (prior?.strain != null && prior.strain!! > 0.0) continue
             val dayMidnight = midnightLocal(dayStart, tzOffsetSeconds)
             val dayEnd = minOf(dayMidnight + SECONDS_PER_DAY - 1, nowSeconds)
             // Union so a re-paired strap id still contributes (#908); STREAM_LIMIT matches analyzeDay.
             val dayHr = repo.hrSamplesUnion(importedDeviceId, dayMidnight, dayEnd, STREAM_LIMIT)
             if (dayHr.size < StrainScorer.minSparseReadings) continue
             val resting = prior?.restingHr?.toDouble() ?: StrainScorer.defaultRestingHR
-            val strain = StrainScorer.strain(
+            val trimp = StrainScorer.strain(
                 hr = dayHr,
                 maxHR = effMaxHR,
                 restingHR = resting,
                 sex = profile.sex,
-            ) ?: continue
+            )
+            // Apply steps/kcal floor so a long walk banks non-zero Effort even when HR stays below
+            // Edwards zone 1. Prefer banked day steps / kcal when present.
+            val strain = StrainScorer.withMovementFloor(trimp, prior?.steps, prior?.activeKcalEst)
+                ?: continue
             // Don't bank a calm-day 0.0 from overnight-only HR: that locks the row (strain != null)
-            // and reads as a fake "0.0 load" until a full re-score. Leave null so Today shows "—" /
-            // live Effort until there's real cardio TRIMP or the daily pass commits the day.
+            // and reads as a fake "0.0 load" until a full re-score. Leave null so Today shows pending /
+            // live Effort until there's real cardio TRIMP, a movement floor, or the daily pass commits.
             if (strain <= 0.0) continue
             updates.add(
                 (prior ?: DailyMetric(deviceId = computedId, day = day)).copy(
@@ -399,7 +397,7 @@ object IntelligenceEngine {
     /**
      * Continuous Charge heal alongside [backfillNullEffort]: when sleep lands / Rest updates but the
      * HR watermark skipped a full [analyzeRecent], recompute recovery from existing HRV+RHR+sleep
-     * on the computed row so Charge stays live with sleep score (Gilbert: ~20 pts behind WHOOP).
+     * on the computed row so Charge stays live with sleep score.
      * Never invents HRV/RHR — skips days missing those vitals. Returns days written.
      */
     suspend fun backfillRecoveryWithSleep(
@@ -407,9 +405,10 @@ object IntelligenceEngine {
         importedDeviceId: String = "my-whoop",
         maxDays: Int = 28,
         nowSeconds: Long = System.currentTimeMillis() / 1000L,
+        profile: UserProfile? = null,
     ): Int = withContext(Dispatchers.Default) {
         analyzeGate.withLock {
-            backfillRecoveryWithSleepOnCpu(repo, importedDeviceId, maxDays, nowSeconds)
+            backfillRecoveryWithSleepOnCpu(repo, importedDeviceId, maxDays, nowSeconds, profile)
         }
     }
 
@@ -418,6 +417,7 @@ object IntelligenceEngine {
         importedDeviceId: String,
         maxDays: Int,
         nowSeconds: Long,
+        profile: UserProfile? = null,
     ): Int {
         val computedId = importedDeviceId + "-noop"
         val tzOffsetSeconds =
@@ -428,7 +428,15 @@ object IntelligenceEngine {
         val needPoolMin = buildList {
             for (d in merged.values) d.totalSleepMin?.takeIf { it > 0.0 }?.let { add(it) }
         }
-        val (sleepNeedHours, _) = RestScorer.personalNeedHours(needPoolMin)
+        val todayStr = AnalyticsEngine.dayString(nowLocalMidnight, tzOffsetSeconds)
+        val yStrain = ActivityCostEngine.shiftDay(todayStr, -1)?.let { y ->
+            merged[y]?.strain ?: computed[y]?.strain
+        }
+        val (sleepNeedHours, _) = RestScorer.personalNeedHours(
+            asleepMinutes = needPoolMin,
+            profile = profile,
+            priorDayStrain = yStrain,
+        )
         val sleepConsistency = VitalityEngine.sleepConsistency(needPoolMin.map { it / 60.0 })
         val hrvCfg = Baselines.metricCfg["hrv"] ?: return 0
         val rhrCfg = Baselines.metricCfg["resting_hr"] ?: return 0
@@ -460,11 +468,15 @@ object IntelligenceEngine {
                 consistency = sleepConsistency,
                 sleepNeedHours = sleepNeedHours,
             )
+            val priorStrain = ActivityCostEngine.shiftDay(day, -1)?.let { y ->
+                merged[y]?.strain ?: computed[y]?.strain
+            }
             val recovery = recomputeRecovery(
                 daily = row,
                 baselines = baselines,
                 sleepNeedHours = sleepNeedHours,
                 consistency = sleepConsistency,
+                priorDayStrain = priorStrain,
             ) ?: continue
             val prior = computed[day]
             val priorRec = prior?.recovery
@@ -576,14 +588,25 @@ object IntelligenceEngine {
         // re-score in pass 2. Collected oldest-first to match foldHistory's replay order.
         // foldHistory winsorizes outliers. days() is oldest-first (Swift ascending).
         val hist = repo.days(importedDeviceId)
-        // Fable Rest #24: personal sleep need + consistency from banked nights (imported + prior
-        // computed). Same ≥7.5 h floor as Sleep UI; empty → 8 h default. Threaded into analyzeDay,
-        // restFromDaily, and the series backfill so Rest duration isn't stuck on the cold-start 8 h.
+        // Floor `now` to LOCAL midnight early so sleep-need / strain lookup share one calendar.
+        val nowLocalMidnight = midnightLocal(nowSeconds, tzOffsetSeconds)
+        // Fable Rest #24 + 8.6.235 physiology need: personal sleep need + consistency from banked nights.
         val needPoolMin = buildList {
             for (d in hist) d.totalSleepMin?.takeIf { it > 0.0 }?.let { add(it) }
             for (d in repo.days(computedId)) d.totalSleepMin?.takeIf { it > 0.0 }?.let { add(it) }
         }
-        val (sleepNeedHours, sleepNeedNights) = RestScorer.personalNeedHours(needPoolMin)
+        val strainByDay = LinkedHashMap<String, Double>()
+        for (d in hist) d.strain?.let { strainByDay[d.day] = it }
+        for (d in repo.days(computedId)) {
+            if (d.strain != null) strainByDay[d.day] = d.strain!!
+        }
+        val todayStr = AnalyticsEngine.dayString(nowLocalMidnight, tzOffsetSeconds)
+        val yStrainNeed = ActivityCostEngine.shiftDay(todayStr, -1)?.let { strainByDay[it] }
+        val (sleepNeedHours, sleepNeedNights) = RestScorer.personalNeedHours(
+            asleepMinutes = needPoolMin,
+            profile = profile,
+            priorDayStrain = yStrainNeed,
+        )
         val sleepConsistency = VitalityEngine.sleepConsistency(
             needPoolMin.map { it / 60.0 },
         )
@@ -617,11 +640,7 @@ object IntelligenceEngine {
         // resp baseline the recovery composite's wResp=0.05 term scores against.
         val nightlyRespByDay = LinkedHashMap<String, Double?>()
 
-        // Floor `now` to LOCAL midnight (#277) so each `dayStart` lands on a local-day boundary and the
-        // day keys are LOCAL calendar days, consistent with the dashboard's local "today" lookup. A
-        // west-of-UTC user's evening crosses midnight UTC; bucketing by UTC put it in the next UTC day,
-        // which the local read never found (Toronto/UTC-4 report).
-        val nowLocalMidnight = midnightLocal(nowSeconds, tzOffsetSeconds)
+        // nowLocalMidnight already floored above (sleep-need + day loop share one calendar).
 
         // ── Learned habitual midsleep (#547) ──────────────────────────────────
         // Compute the user's habitual midsleep ONCE per run from the trailing sleep history so the
@@ -730,9 +749,14 @@ object IntelligenceEngine {
             // or an unbanded window → the guard falls back to the HR bar and no per-session state is persisted.
             // Fall back to the prior pass's persisted per-session state when the raw stream is absent (an older
             // DB banded before the v15 stream landed), so a legacy install keeps the H7 confirm. Mirrors Swift.
-            var bandSleepState = repo.sleepStateSamples(owner, from, to).map { it.ts to it.state }
+            var bandSleepRows = repo.sleepStateSamples(owner, from, to)
+            var bandSleepState = bandSleepRows.map { it.ts to it.state }
             if (bandSleepState.isEmpty()) {
                 bandSleepState = bandSleepStateSamples(repo, computedId, from, to)
+                bandSleepRows = emptyList()
+            }
+            val opticalAuxOvernight = bandSleepRows.any { row ->
+                row.state == 2 && row.aux82 != null && row.aux82 != 0
             }
 
             val res = AnalyticsEngine.analyzeDay(
@@ -758,6 +782,7 @@ object IntelligenceEngine {
                 sleepConsistency = sleepConsistency,
                 habitualMidsleepSec = habitualMidsleepSec,
                 bandSleepState = bandSleepState,
+                opticalAuxOvernight = opticalAuxOvernight,
                 // #690: thread the V2 toggle into the NORMAL staging path so it affects detected nights,
                 // not just the userEdited self-heal restage. The Context-aware caller (AppViewModel/
                 // WhoopBleClient) supplied it from PuffinExperiment.from(context).experimentalSleepV2.
@@ -971,13 +996,20 @@ object IntelligenceEngine {
             // persists. Previously Charge read daily.skinTempDevC from pass 1 (normally null), then the
             // fresh deviation was calculated only for storage; the advertised skin-temperature driver
             // therefore had no effect until a later replay, and could disappear again on a full rebuild.
+            // Prefer fresh deviation; else keep absolute nightly mean (Health shows either); else
+            // preserve the row's prior skinTempDevC so re-analyze / APK updates don't blank body temp
+            // when raw samples exist but baseline isn't usable yet (DEBUG Fold: 67k skin samples, 0 daily).
             val skinTempDevC = recomputeSkinTempDev(res.nightlySkinTempC, baselinesForDay.skinTemp)
+                ?: res.nightlySkinTempC
+                ?: daily.skinTempDevC
             daily = daily.copy(skinTempDevC = skinTempDevC)
+            val priorStrain = ActivityCostEngine.shiftDay(daily.day, -1)?.let { strainByDay[it] }
             val recovery = recomputeRecovery(
                 daily = daily,
                 baselines = baselinesForDay,
                 sleepNeedHours = sleepNeedHours,
                 consistency = sleepConsistency,
+                priorDayStrain = priorStrain,
             )
             // Charge term-breakdown trace (Test Centre Group G): only when the Recovery test mode is on
             // (recoveryTraceSink non-null). Emits which term moved Charge and which was nil and forced the
@@ -1305,7 +1337,8 @@ object IntelligenceEngine {
         // Gilbert 2026-07-17: Today Steps are **band-sourced only**. Phone/HC pedometer is a
         // calibration *reference* (fit personal k), never the displayed day total and never a
         // reason to skip writing `steps_est`. WHOOP 5/MG prefer @57 via analyzeDay; this block
-        // fills WHOOP 4 / sparse-counter days from strap gravity motion volume.
+        // fills WHOOP 4 / sparse-counter days from strap gravity motion volume, densified by
+        // banked 1244-B IMU offload windows when present (cadence estimate or accel-energy boost).
         val stepsCalDays = 60
         val calOldest = AnalyticsEngine.dayString(
             nowLocalMidnight - (stepsCalDays - 1) * SECONDS_PER_DAY, tzOffsetSeconds)
@@ -1319,36 +1352,51 @@ object IntelligenceEngine {
             if (s != null && s > 0 && !refStepsByDay.containsKey(r.day)) refStepsByDay[r.day] = s.toDouble()
         }
         val motionByDay = HashMap<String, Double>()
+        val imuCadenceStepsByDay = HashMap<String, Int>()
         for (off in 0 until stepsCalDays) {
             val dayMid = midnightLocal(nowLocalMidnight - off * SECONDS_PER_DAY, tzOffsetSeconds)
             val dayEnd = dayMid + SECONDS_PER_DAY - 1
             val dayKey = AnalyticsEngine.dayString(dayMid, tzOffsetSeconds)
             val owner = resolveDayOwner(repo, ownerSource, candidatePriorities, dayKey, dayMid, dayEnd, importedDeviceId)
             val grav = repo.gravitySamples(owner, dayMid, dayEnd, STREAM_LIMIT)
-            val m = StepsEstimateEngine.dayMotionIntensity(grav)
+            val imuWindows = repo.imuActivitySamples(owner, dayMid, dayEnd, STREAM_LIMIT)
+            val imuEst = ImuStepsEstimator.dayEstimate(imuWindows)
+            imuEst.steps?.let { imuCadenceStepsByDay[dayKey] = it }
+            val gravMotion = StepsEstimateEngine.dayMotionIntensity(grav)
+            val m = gravMotion + imuEst.motionBoost
             if (m > 0) motionByDay[dayKey] = m
         }
         val calPoints = motionByDay.mapNotNull { (day, motion) ->
             refStepsByDay[day]?.let { StepsEstimateEngine.CalibrationPoint(motion = motion, steps = it) }
         }
         val stepsCal = StepsEstimateEngine.calibrate(calPoints, manualOverride = manualStepCoefficient)
-        if (stepsCal != null) {
-            // Always upsert band-motion estimates when gravity exists — even if phone also counted
+        if (stepsCal != null || imuCadenceStepsByDay.isNotEmpty()) {
+            // Always upsert band-motion / IMU estimates when signal exists — even if phone also counted
             // that day (phone is compare/fit only; Today never prefers HC over band).
+            // Do NOT copy estimate onto DailyMetric.steps (iOS parity) — that made Today caption say "band"
+            // for estimate-only days. Digit comes from preferSteps(strap @57, steps_est).
             val estRows = ArrayList<MetricSeriesRow>()
+            val sourceRows = ArrayList<MetricSeriesRow>()
             for (dm in dailies) {
-                val motion = motionByDay[dm.day] ?: continue
-                val est = StepsEstimateEngine.estimate(motion, stepsCal) ?: continue
-                estRows.add(MetricSeriesRow(deviceId = computedId, day = dm.day, key = "steps_est", value = est.toDouble()))
-                // Surface estimate on daily only when no @57 strap counter was scored — still ESTIMATE.
-                if (dm.steps == null && est > 0) {
-                    repo.upsertDailyMetrics(
-                        listOf(dm.copy(steps = est)),
-                    )
+                val imuCadence = imuCadenceStepsByDay[dm.day]
+                val motion = motionByDay[dm.day]
+                val motionEst = if (stepsCal != null && motion != null) {
+                    StepsEstimateEngine.estimate(motion, stepsCal)
+                } else {
+                    null
                 }
+                val merged = ImuStepsEstimator.mergeDayEstimate(imuCadence, motionEst) ?: continue
+                val est = merged.steps
+                estRows.add(MetricSeriesRow(deviceId = computedId, day = dm.day, key = "steps_est", value = est.toDouble()))
+                // Encode source as a tiny series flag: 1 = IMU cadence won merge, 0 = band motion volume.
+                val flag = if (merged.fromCadence) 1.0 else 0.0
+                sourceRows.add(
+                    MetricSeriesRow(deviceId = computedId, day = dm.day, key = "steps_est_imu", value = flag),
+                )
             }
             if (estRows.isNotEmpty()) repo.upsertMetricSeries(estRows)
-            persistStepsCalibration(stepsCal)
+            if (sourceRows.isNotEmpty()) repo.upsertMetricSeries(sourceRows)
+            if (stepsCal != null) persistStepsCalibration(stepsCal)
         }
         // Steps test mode: emit the WHOOP-4 motion-volume calibration trace (per-day points + the fitted /
         // manual / withheld calibration state) and a per-day estimate line, tagged .steps. Only when the mode
@@ -1548,6 +1596,7 @@ object IntelligenceEngine {
         baselines: ProfileBaselines,
         sleepNeedHours: Double? = null,
         consistency: Double? = null,
+        priorDayStrain: Double? = null,
     ): Double? {
         val hrvVal = daily.avgHrv ?: return null
         val rhrVal = daily.restingHr ?: return null
@@ -1571,6 +1620,7 @@ object IntelligenceEngine {
             respBaseline = baselines.resp,
             sleepPerf = restQuality,
             skinTempDev = daily.skinTempDevC,
+            priorDayStrain = priorDayStrain,
         )
     }
 

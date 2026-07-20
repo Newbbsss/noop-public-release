@@ -61,7 +61,8 @@ object Whoop5RawImu {
     /** Decode a raw-IMU buffer, or null if it isn't one. Gates on the exact length + the two in-packet
      *  sample counts (=100) rather than the type byte, so it can't misfire on a same-type non-IMU frame. */
     fun decode(f: ByteArray): Whoop5ImuFrame? {
-        if (f.size < bufferLength) return null
+        // Exact length (not ≥): same-type 2140-B optical buffers must not prefix-match as IMU (#546).
+        if (f.size != bufferLength) return null
         if (u16(f, countAOff) != sampleCount || u16(f, countBOff) != sampleCount) return null
         if (gzOff + 2 * sampleCount > f.size) return null
         val baseTs = u32(f, tsOff)   // full u32 (matches Swift `Int(u32(...))` on 64-bit — no truncation)

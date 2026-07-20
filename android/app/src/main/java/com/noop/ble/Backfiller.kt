@@ -389,6 +389,8 @@ class Backfiller(
                             red = d["spo2_red"] as? Int,
                             ir = d["spo2_ir"] as? Int,
                             skinRaw = d["skin_temp_raw"] as? Int,
+                            sleepState = d["sleep_state"] as? Int,
+                            auxByte82 = d["aux_byte_82"] as? Int,
                         ),
                     )
                     spo2Dumped++

@@ -236,7 +236,13 @@ fun decodeHistorical(frame: ByteArray, family: DeviceFamily = DeviceFamily.WHOOP
     // Full DSP block (V24/V12 only). Each read is guarded; absent fields are simply not emitted.
     layout.spo2RedOff?.let { off -> frame.histU16(off)?.let { out["spo2_red"] = it } }
     layout.spo2IrOff?.let { off -> frame.histU16(off)?.let { out["spo2_ir"] = it } }
-    layout.skinTempRawOff?.let { off -> frame.histU16(off)?.let { out["skin_temp_raw"] = it } }
+    // #938: WHOOP 4.0 @72 is a raw ADC — gate with the dual-scale plausible filter so garbage
+    // offsets never bank. 5/MG uses the /100 gate below in decodeWhoop5Historical.
+    layout.skinTempRawOff?.let { off ->
+        frame.histU16(off)?.let { raw ->
+            if (isPlausibleSkinTempRaw(raw)) out["skin_temp_raw"] = raw
+        }
+    }
     layout.respRateRawOff?.let { off -> frame.histU16(off)?.let { out["resp_rate_raw"] = it } }
     layout.gravityXOff?.let { off -> frame.histF32(off)?.let { out["gravity_x"] = it } }
     layout.gravityYOff?.let { off -> frame.histF32(off)?.let { out["gravity_y"] = it } }
@@ -272,6 +278,9 @@ fun decodeHistorical(frame: ByteArray, family: DeviceFamily = DeviceFamily.WHOOP
 private fun decodeWhoop5Historical(frame: ByteArray): Map<String, Any?>? {
     if (frame.histU8(8) != PacketType.HISTORICAL_DATA.rawValue) return null
     val version = frame.histU8(9) ?: return null
+    // Banking gate: only v18 per-second rollups enter extractHistoricalStreams / Room.
+    // Layout v20 (2140 B optical) is decoded separately by Whoop5RawOptical for research —
+    // never as SpO₂ / wavelength / Today vitals (see docs/agent/research/V20_PORT_DECISION.md).
     if (version != 18) return null
 
     val out = LinkedHashMap<String, Any?>()
@@ -629,12 +638,11 @@ fun extractHistoricalStreams(
                 p.intOrNull("step_motion_counter")?.let { c ->
                     steps.add(StepRow(ts, c, activityClass = p.intOrNull("activity_class")))
                 }
-                // Band sleep_state (#175): the strap's OWN @81 high-nibble state (0 wake/1 still/2 asleep/3
-                // up), decoded but DROPPED here until now, so the whole band-state chain (persist → the H7
-                // re-onset confirm guard → Deep Timeline track) had no source. Carried VERBATIM including 0
-                // (a real wake reading, not "absent"): only 5/MG v18 records emit the key, so a WHOOP 4.0
-                // simply adds nothing.
-                p.intOrNull("sleep_state")?.let { st -> sleepState.add(SleepStateRow(ts, st)) }
+                // Band sleep_state (#175) + MG `@82` optical aux (persist raw; NEVER SpO₂ %).
+                // Carried VERBATIM including state 0. aux82 rides the same v18 second when present.
+                p.intOrNull("sleep_state")?.let { st ->
+                    sleepState.add(SleepStateRow(ts, st, aux82 = p.intOrNull("aux_byte_82")))
+                }
                 p.intOrNull("resp_rate_raw")?.let { raw -> resp.add(RespRow(ts, raw)) }
                 p.doubleOrNull("gravity_x")?.let { gx ->
                     gravity.add(

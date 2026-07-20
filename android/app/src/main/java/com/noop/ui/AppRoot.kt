@@ -130,6 +130,7 @@ import androidx.compose.runtime.setValue
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.noop.R
 import com.noop.analytics.FusionSource
+import com.noop.ble.WhoopBleClient
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.layout.onSizeChanged
@@ -380,6 +381,10 @@ fun AppRoot(viewModel: AppViewModel = viewModel()) {
     }
 
     val cycleNavVisible by viewModel.showCycleTab.collectAsStateWithLifecycle()
+    val cycleTrackingOn by viewModel.cycleTrackingEnabled.collectAsStateWithLifecycle()
+    // Gilbert P0 — Cycle must ALWAYS be findable under More (male default profile used to hide it).
+    // Sex-gate never removes the entry; Settings → Health & wellness owns the on/off master toggle.
+    val cycleEligibleInMore = true
     // Do NOT kick PeriodCalendar when the Cycle tab is hidden — Settings promises Cycle stays
     // under More → For your body. Tab visibility only; route remains valid via More / Health.
     // Full-screen charging (AirPods-style) + ding — any tab, not only Live.
@@ -390,6 +395,59 @@ fun AppRoot(viewModel: AppViewModel = viewModel()) {
     val userDisconnected by viewModel.userInitiatedDisconnect.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
     val snackScope = rememberCoroutineScope()
+    // Use worn MG confirmation / retry cues (retry snack offers one-tap Use worn MG).
+    LaunchedEffect(Unit) {
+        viewModel.statusCue.collect { msg ->
+            val retry = msg.contains("try Use worn MG again", ignoreCase = true)
+            val success = msg.startsWith("Live Bluetooth", ignoreCase = true)
+            val mg = if (retry) {
+                runCatching { viewModel.pairedDevices() }.getOrDefault(emptyList())
+                    .firstOrNull { isWornMgDeviceCandidate(it) }
+            } else {
+                null
+            }
+            val result = snackbarHostState.showSnackbar(
+                message = msg,
+                actionLabel = when {
+                    mg != null -> "Use worn MG"
+                    success -> "Devices"
+                    else -> null
+                },
+                duration = if (retry || success) SnackbarDuration.Long else SnackbarDuration.Short,
+                withDismissAction = true,
+            )
+            if (result == SnackbarResult.ActionPerformed) {
+                if (mg != null) {
+                    viewModel.preferWornMgDevice(mg)
+                    nav.navigatePush(Destination.Devices.route)
+                } else if (success) {
+                    nav.navigatePush(Destination.Devices.route)
+                }
+            }
+        }
+    }
+    // FGS 5AM sibling honesty → Devices + snackbar with optional Use worn MG action.
+    val openDevicesOnce = SessionUiFlags.openDevicesOnce
+    LaunchedEffect(openDevicesOnce) {
+        if (!openDevicesOnce) return@LaunchedEffect
+        SessionUiFlags.openDevicesOnce = false
+        nav.navigatePush(Destination.Devices.route)
+        val mg = runCatching { viewModel.pairedDevices() }.getOrDefault(emptyList())
+            .firstOrNull { isWornMgDeviceCandidate(it) }
+        val result = snackbarHostState.showSnackbar(
+            message = if (mg != null) {
+                "Live link may be an unworn 5AM sibling"
+            } else {
+                "Use worn MG below if this is the unworn sibling"
+            },
+            actionLabel = if (mg != null) "Use worn MG" else null,
+            duration = SnackbarDuration.Long,
+            withDismissAction = true,
+        )
+        if (result == SnackbarResult.ActionPerformed && mg != null) {
+            viewModel.preferWornMgDevice(mg)
+        }
+    }
     var wasConnected by remember { mutableStateOf(live.connected) }
     // SHIP #276 — BLE flaps must not stack duplicate "Strap paused" snacks after reconnect churn.
     var lastDropSnackAtMs by remember { mutableStateOf(0L) }
@@ -735,6 +793,10 @@ fun AppRoot(viewModel: AppViewModel = viewModel()) {
                         onOpenLabBook = { nav.navigatePush(Destination.LabBook.route) },
                         onOpenFusedRecord = { nav.navigatePush(Destination.FusedRecord.route) },
                         onOpenPeriodCalendar = { nav.navigateTopLevel(Destination.PeriodCalendar.route) },
+                        onOpenSettingsPeriodTracking = {
+                            SessionUiFlags.settingsFocusPeriodTracking = true
+                            nav.navigatePush(Destination.Settings.route)
+                        },
                     )
                 }
                 composable(Destination.Hydration.route) { HydrationScreen(viewModel) }
@@ -760,7 +822,15 @@ fun AppRoot(viewModel: AppViewModel = viewModel()) {
                 // --- v5 pillar screens (Wave 3 wiring) ---
                 composable(Destination.InsightsHub.route) { InsightsHubScreen(viewModel) }
                 composable(Destination.LabBook.route) { LabBookScreen(viewModel) }
-                composable(Destination.PeriodCalendar.route) { PeriodCalendarScreen(viewModel) }
+                composable(Destination.PeriodCalendar.route) {
+                    PeriodCalendarScreen(
+                        viewModel,
+                        onOpenSettingsPeriodTracking = {
+                            SessionUiFlags.settingsFocusPeriodTracking = true
+                            nav.navigatePush(Destination.Settings.route)
+                        },
+                    )
+                }
                 composable(Destination.Rhythm.route) {
                     // EXPERIMENTAL: self-gates on its own consent clickwrap (default OFF). The night
                     // summary + per-window Poincaré results land with the rhythm capture pipeline; until
@@ -836,7 +906,8 @@ fun AppRoot(viewModel: AppViewModel = viewModel()) {
                             if (route == Destination.SmartAlarm.route) nav.openSleepAlarmTab()
                             else nav.navigatePush(route)
                         },
-                        showCycle = cycleNavVisible,
+                        showCycle = cycleEligibleInMore,
+                        cycleTrackingOn = cycleTrackingOn,
                     )
                 }
             }
@@ -858,6 +929,7 @@ fun AppRoot(viewModel: AppViewModel = viewModel()) {
             GlassBottomBar(
                 current = current,
                 showPeriodCalendarTab = cycleNavVisible,
+                liveLooksLike5AmSibling = WhoopBleClient.isStaleUnwornSiblingName(live.advertisingName.orEmpty()),
                 onTabSelected = { dest ->
                     if (dest.route != currentRoute) nav.navigateTopLevel(dest.route)
                 },
@@ -886,7 +958,7 @@ fun AppRoot(viewModel: AppViewModel = viewModel()) {
                                     runCatching {
                                         com.noop.analytics.HydrationStore.log(viewModel.repo, 250)
                                     }
-                                    Toast.makeText(context, "Sip +250 ml", Toast.LENGTH_SHORT).show()
+                                    Toast.makeText(context, context.getString(R.string.hydration_sip_button), Toast.LENGTH_SHORT).show()
                                 }
                             }
                         }
@@ -974,31 +1046,45 @@ private val moreBodyPinDestinations = listOf(
 /** SHIP #115/#254 — quiet aliases so Alarm / Themes / Sources / Cycle / etc. find their rows. */
 private fun moreSearchAliases(dest: Destination): List<String> = when (dest) {
     Destination.SmartAlarm -> listOf("alarm", "wake", "smart alarm")
-    Destination.Settings -> listOf("themes", "appearance", "theme")
+    Destination.PeriodCalendar -> listOf(
+        "cycle", "period", "period tracking", "p.c.", "pc", "menstrual", "menses",
+        "cycle on", "cycle off", "turn on cycle",
+    )
+    Destination.Settings -> listOf(
+        "themes", "appearance", "theme", "cycle", "period", "period tracking", "health",
+        "strap", "worn", "mg", "5am", "sibling", "battery", "overnight", "hrv",
+    )
+    Destination.BackupSync -> listOf("backup", "export", "restore", "auto-restore")
     Destination.BugReport -> listOf("bug", "report", "feedback", "crash", "screenshot")
     Destination.FriendsNetwork -> listOf(
         "friends", "invite", "tailscale", "tailnet", "share", "charge", "effort",
     )
     Destination.DataSources -> listOf("sources", "whoop", "hc", "health connect", "import")
-    Destination.PeriodCalendar -> listOf("cycle", "period", "p.c.", "pc")
     Destination.Stress -> listOf("stress")
-    Destination.Devices -> listOf("devices", "strap", "pair", "ble")
-    Destination.BackupSync -> listOf("backup", "export")
+    Destination.Devices -> listOf("devices", "strap", "pair", "ble", "worn", "mg", "5am", "sibling", "unworn")
     Destination.Notifications -> listOf("notifications", "alerts")
     else -> emptyList()
 }
-
-/** Title + secondary + aliases for case-insensitive More search matching. */
-private fun moreSearchHaystack(dest: Destination, title: String): String = buildString {
+private fun moreSearchHaystack(dest: Destination, title: String, context: android.content.Context): String = buildString {
     append(title)
-    moreRowSecondary(dest)?.let { append(' '); append(it) }
+    val secondary = when (dest) {
+        Destination.Coach -> context.getString(R.string.more_sec_coach)
+        Destination.Insights -> context.getString(R.string.more_sec_insights)
+        Destination.InsightsHub -> context.getString(R.string.more_sec_insights_hub)
+        else -> moreRowSecondary(dest)
+    }
+    secondary?.let { append(' '); append(it) }
     moreSearchAliases(dest).forEach { append(' '); append(it) }
 }
 
 /** The full grouped destination list as a navigated page (the iOS More tab's twin). */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun MoreScreen(onNavigate: (String) -> Unit, showCycle: Boolean = true) {
+private fun MoreScreen(
+    onNavigate: (String) -> Unit,
+    showCycle: Boolean = true,
+    cycleTrackingOn: Boolean = true,
+) {
     // S2 parity: each group's open/closed state, seeded from `defaultExpanded` (Insights + Body open,
     // Data + App collapsed). PERSISTED (#860 item 2): the user's open/closed choice must survive leaving
     // and re-entering the More page (and relaunch), not reset to the seed every visit. Backed by
@@ -1015,27 +1101,26 @@ private fun MoreScreen(onNavigate: (String) -> Unit, showCycle: Boolean = true) 
     var query by remember { mutableStateOf("") }
     val queryTrimmed = query.trim()
     val searching = queryTrimmed.isNotEmpty()
-    val visiblePins = remember(showCycle) {
-        moreBodyPinDestinations.filter { showCycle || it != Destination.PeriodCalendar }
+    val visiblePins = remember {
+        moreBodyPinDestinations
     }
     // SmartAlarm is registered in NavHost but omitted from drawerGroups (Sleep → Alarm). Include it
     // in the search corpus so alarm / wake / smart alarm still surface a navigable row.
-    val moreSearchCorpus = remember(showCycle) {
+    val moreSearchCorpus = remember {
         (visiblePins + drawerGroups.flatMap { it.items } + Destination.SmartAlarm)
             .distinct()
-            .filter { showCycle || it != Destination.PeriodCalendar }
     }
     val searchMatches = remember(queryTrimmed) {
         if (queryTrimmed.isEmpty()) emptyList()
         else moreSearchCorpus.filter { dest ->
             val title = context.getString(dest.titleRes)
-            moreSearchHaystack(dest, title).contains(queryTrimmed, ignoreCase = true)
+            moreSearchHaystack(dest, title, context).contains(queryTrimmed, ignoreCase = true)
         }
     }
     // Impeccable: liquid sky + short destination copy so Cycle / Lab Book / training are first-class.
     LazyScreenScaffold(
-        title = LifeChapterLacquer.MORE_TITLE,
-        subtitle = LifeChapterLacquer.MORE_SUBTITLE,
+        title = stringResource(R.string.nav_more),
+        subtitle = stringResource(R.string.more_subtitle),
         topBackground = { LiquidScreenSky() },
     ) {
         // Debug builds: Test Centre is the only charging-preview door (no duplicate More card).
@@ -1051,13 +1136,14 @@ private fun MoreScreen(onNavigate: (String) -> Unit, showCycle: Boolean = true) 
             }
         }
         item {
+            val searchPlaceholder = stringResource(R.string.more_search_placeholder)
             OutlinedTextField(
                 value = query,
                 onValueChange = { query = it },
                 singleLine = true,
                 placeholder = {
                     Text(
-                        LifeChapterLacquer.MORE_SEARCH_PLACEHOLDER,
+                        searchPlaceholder,
                         style = NoopType.footnote,
                         color = Palette.textTertiary,
                     )
@@ -1094,7 +1180,7 @@ private fun MoreScreen(onNavigate: (String) -> Unit, showCycle: Boolean = true) 
                 modifier = Modifier
                     .fillMaxWidth()
                     .semantics {
-                        contentDescription = LifeChapterLacquer.MORE_SEARCH_PLACEHOLDER
+                        contentDescription = searchPlaceholder
                     },
             )
         }
@@ -1111,7 +1197,11 @@ private fun MoreScreen(onNavigate: (String) -> Unit, showCycle: Boolean = true) 
                     NoopCard(padding = 0.dp) {
                         Column(modifier = Modifier.fillMaxWidth()) {
                             searchMatches.forEachIndexed { i, dest ->
-                                MoreRow(dest = dest, onClick = { onNavigate(dest.route) })
+                                MoreRow(
+                                    dest = dest,
+                                    onClick = { onNavigate(dest.route) },
+                                    cycleTrackingOn = cycleTrackingOn,
+                                )
                                 if (i < searchMatches.lastIndex) {
                                     HorizontalDivider(
                                         color = Palette.hairline,
@@ -1128,9 +1218,13 @@ private fun MoreScreen(onNavigate: (String) -> Unit, showCycle: Boolean = true) 
             item {
                 NoopCard(tint = Palette.restColor) {
                     Column(modifier = Modifier.fillMaxWidth()) {
-                        Text(LifeChapterLacquer.MORE_BODY_PIN_TITLE, style = NoopType.headline, color = Palette.textPrimary)
                         Text(
-                            LifeChapterLacquer.MORE_BODY_PIN_BLURB,
+                            stringResource(R.string.more_body_pin_title),
+                            style = NoopType.headline,
+                            color = Palette.textPrimary,
+                        )
+                        Text(
+                            stringResource(R.string.more_body_pin_blurb),
                             style = NoopType.footnote,
                             color = Palette.textTertiary,
                         )
@@ -1141,7 +1235,11 @@ private fun MoreScreen(onNavigate: (String) -> Unit, showCycle: Boolean = true) 
                 NoopCard(padding = 0.dp) {
                     Column(modifier = Modifier.fillMaxWidth()) {
                         visiblePins.forEachIndexed { i, dest ->
-                            MoreRow(dest = dest, onClick = { onNavigate(dest.route) })
+                            MoreRow(
+                                dest = dest,
+                                onClick = { onNavigate(dest.route) },
+                                cycleTrackingOn = cycleTrackingOn,
+                            )
                             if (i < visiblePins.lastIndex) {
                                 HorizontalDivider(
                                     color = Palette.hairline,
@@ -1154,7 +1252,7 @@ private fun MoreScreen(onNavigate: (String) -> Unit, showCycle: Boolean = true) 
             }
             // Mirror the iOS More page groups (collapsible).
             drawerGroups.forEach { group ->
-                val groupItems = group.items.filter { showCycle || it != Destination.PeriodCalendar }
+                val groupItems = group.items
                 if (groupItems.isEmpty()) return@forEach
                 val isOpen = expanded[group.header] ?: group.defaultExpanded
                 item {
@@ -1172,7 +1270,11 @@ private fun MoreScreen(onNavigate: (String) -> Unit, showCycle: Boolean = true) 
                             NoopCard(padding = 0.dp) {
                                 Column(modifier = Modifier.fillMaxWidth()) {
                                     groupItems.forEachIndexed { i, dest ->
-                                        MoreRow(dest = dest, onClick = { onNavigate(dest.route) })
+                                        MoreRow(
+                                            dest = dest,
+                                            onClick = { onNavigate(dest.route) },
+                                            cycleTrackingOn = cycleTrackingOn,
+                                        )
                                         if (i < groupItems.lastIndex) {
                                             HorizontalDivider(
                                                 color = Palette.hairline,
@@ -1226,8 +1328,17 @@ private fun MoreGroupHeader(title: String, expanded: Boolean, onToggle: () -> Un
 /** One tappable destination row in the More page — accent icon + title + trailing chevron in a
  *  comfortable tap target, mirroring the iOS MoreRow. */
 @Composable
-private fun MoreRow(dest: Destination, onClick: () -> Unit) {
-    val secondary = moreRowSecondary(dest)
+private fun MoreRow(
+    dest: Destination,
+    onClick: () -> Unit,
+    cycleTrackingOn: Boolean = true,
+) {
+    val secondary = when (dest) {
+        Destination.Coach -> stringResource(R.string.more_sec_coach)
+        Destination.Insights -> stringResource(R.string.more_sec_insights)
+        Destination.InsightsHub -> stringResource(R.string.more_sec_insights_hub)
+        else -> moreRowSecondary(dest, cycleTrackingOn)
+    }
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -1254,7 +1365,7 @@ private fun MoreRow(dest: Destination, onClick: () -> Unit) {
 }
 
 /** Quiet one-liners for More destinations (Fable 200 #106). Null = title only. */
-private fun moreRowSecondary(dest: Destination): String? = when (dest) {
+private fun moreRowSecondary(dest: Destination, cycleTrackingOn: Boolean = true): String? = when (dest) {
     Destination.Live -> "Strap HR · pair and stream"
     Destination.Workouts -> "Sessions, Effort, strength"
     Destination.Sleep -> "Nights, Rest, alarm tools"
@@ -1269,19 +1380,21 @@ private fun moreRowSecondary(dest: Destination): String? = when (dest) {
     Destination.Nutrition -> "Meals · Fuel · Sip"
     Destination.VitalSigns -> "Browse vitals by day"
     Destination.LabBook -> "Cuff BP · open from Health"
-    Destination.PeriodCalendar -> "Cycle · period calendar"
+    Destination.PeriodCalendar ->
+        if (cycleTrackingOn) "Cycle · period calendar"
+        else "Off · enable in Settings → Health & wellness"
     Destination.Stress -> "Daytime tip and load"
     Destination.Breathe -> "Guided breath"
     Destination.Intervals -> "Zones and effort blocks"
     Destination.Rhythm -> "Experimental night windows"
     Destination.SmartAlarm -> "Sleep → Alarm · phone + strap"
-    Destination.Devices -> "Pair and manage straps"
+    Destination.Devices -> "Pair straps · Use worn MG when multi-bond"
     Destination.DataSources -> "WHOOP · HC · imports"
     Destination.AppleHealth -> "Imported Apple Health export"
     Destination.FusedRecord -> "Merged day record"
     Destination.BackupSync -> "On-device backup"
     Destination.Automations -> "Buzz · shortcuts · routines"
-    Destination.Settings -> "Units, themes, Cycle"
+    Destination.Settings -> "Strap, themes, Cycle · Use worn MG"
     Destination.BugReport -> "Photos + diagnostics · GitHub"
     Destination.FriendsNetwork -> "Invite · private pipe · Charge/Effort"
     Destination.Notifications -> "Alerts you allow"
@@ -1345,6 +1458,8 @@ private fun GlassBottomBar(
     onTabReselected: (Destination) -> Unit,
     /** When true, Cycle is offered from + quick actions / Today — never the bottom bar. */
     showPeriodCalendarTab: Boolean = false,
+    /** Multi-bond Fold: live LE looks like unworn 5AM sibling — Quick actions Devices cue. */
+    liveLooksLike5AmSibling: Boolean = false,
     onLogWorkout: () -> Unit = {},
     onStrengthTrainer: () -> Unit = {},
     onOpenSettings: () -> Unit = {},
@@ -1422,15 +1537,15 @@ private fun GlassBottomBar(
                     .padding(horizontal = 20.dp, vertical = 12.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                Text("Quick actions", style = NoopType.headline, color = Palette.textPrimary)
+                Text(stringResource(R.string.plus_sheet_title), style = NoopType.headline, color = Palette.textPrimary)
                 Text(
-                    "Tap + menu. Hold + dial: Workout · Live HR · Nutrition · Devices · Water. Journal is secondary in the menu.",
+                    stringResource(R.string.plus_sheet_blurb),
                     style = NoopType.footnote,
                     color = Palette.textSecondary,
                 )
                 if (showPeriodCalendarTab) {
                     WetBounceButton(
-                        label = "Cycle",
+                        label = stringResource(R.string.nav_period_calendar),
                         modifier = Modifier.fillMaxWidth(),
                         tint = Palette.restColor,
                         onClick = {
@@ -1440,7 +1555,7 @@ private fun GlassBottomBar(
                     )
                 }
                 WetBounceButton(
-                    label = "Next look",
+                    label = stringResource(R.string.plus_next_look),
                     modifier = Modifier.fillMaxWidth(),
                     tint = Palette.accent,
                     onClick = {
@@ -1448,11 +1563,15 @@ private fun GlassBottomBar(
                         val i = packs.indexOfFirst { it.id == ThemePackPrefs.packId }.coerceAtLeast(0)
                         val next = packs[(i + 1) % packs.size]
                         ThemePackPrefs.set(context, next)
-                        Toast.makeText(context, "Look · ${next.label}", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(
+                            context,
+                            context.getString(R.string.plus_look_toast, next.localizedLabel(context)),
+                            Toast.LENGTH_SHORT,
+                        ).show()
                     },
                 )
                 WetBounceButton(
-                    label = "Live HR · strap (keeps BLE awake)",
+                    label = stringResource(R.string.plus_live_hr),
                     modifier = Modifier.fillMaxWidth(),
                     tint = Palette.chargeColor,
                     onClick = {
@@ -1461,16 +1580,25 @@ private fun GlassBottomBar(
                     },
                 )
                 WetBounceButton(
-                    label = "Devices · reconnect",
+                    label = if (liveLooksLike5AmSibling) {
+                        stringResource(R.string.plus_devices_worn_mg)
+                    } else {
+                        stringResource(R.string.plus_devices_reconnect)
+                    },
                     modifier = Modifier.fillMaxWidth(),
-                    tint = Palette.textSecondary,
+                    tint = if (liveLooksLike5AmSibling) Palette.accent else Palette.textSecondary,
                     onClick = {
                         showPlusSheet = false
-                        onQuickRoute(Destination.Devices.route)
+                        if (liveLooksLike5AmSibling) {
+                            // Triggers Devices + Use worn MG snackbar action (same path as FGS tap).
+                            SessionUiFlags.openDevicesOnce = true
+                        } else {
+                            onQuickRoute(Destination.Devices.route)
+                        }
                     },
                 )
                 WetBounceButton(
-                    label = "Log workout · manual",
+                    label = stringResource(R.string.plus_log_workout),
                     modifier = Modifier.fillMaxWidth(),
                     tint = Palette.effortColor,
                     onClick = {
@@ -1479,7 +1607,7 @@ private fun GlassBottomBar(
                     },
                 )
                 WetBounceButton(
-                    label = "Updates",
+                    label = stringResource(R.string.plus_updates),
                     modifier = Modifier.fillMaxWidth(),
                     tint = Palette.accent,
                     onClick = {
@@ -1488,7 +1616,7 @@ private fun GlassBottomBar(
                     },
                 )
                 WetBounceButton(
-                    label = "Nutrition · meals",
+                    label = stringResource(R.string.plus_nutrition),
                     modifier = Modifier.fillMaxWidth(),
                     tint = Palette.chargeColor,
                     onClick = {
@@ -1497,7 +1625,7 @@ private fun GlassBottomBar(
                     },
                 )
                 WetBounceButton(
-                    label = "Sip +250 ml",
+                    label = stringResource(R.string.hydration_sip_button),
                     modifier = Modifier.fillMaxWidth(),
                     tint = Palette.metricCyan,
                     onClick = {
@@ -1506,7 +1634,7 @@ private fun GlassBottomBar(
                     },
                 )
                 WetBounceButton(
-                    label = "Journal · reflections",
+                    label = stringResource(R.string.plus_journal),
                     modifier = Modifier.fillMaxWidth(),
                     tint = Palette.textSecondary,
                     onClick = {
@@ -1515,7 +1643,7 @@ private fun GlassBottomBar(
                     },
                 )
                 WetBounceButton(
-                    label = "Breathe",
+                    label = stringResource(R.string.nav_breathe),
                     modifier = Modifier.fillMaxWidth(),
                     tint = Palette.restColor,
                     onClick = {
@@ -1524,7 +1652,7 @@ private fun GlassBottomBar(
                     },
                 )
                 WetBounceButton(
-                    label = "Settings",
+                    label = stringResource(R.string.nav_settings),
                     modifier = Modifier.fillMaxWidth(),
                     tint = Palette.textSecondary,
                     onClick = {
@@ -1711,11 +1839,19 @@ private fun GlassBottomBar(
                             PlusRadialAction("Workout", Icons.Filled.FitnessCenter, Destination.Workouts.route),
                             PlusRadialAction("Live HR · BLE", Icons.Filled.MonitorHeart, Destination.Live.route),
                             PlusRadialAction("Nutrition", Icons.Filled.Restaurant, Destination.Nutrition.route),
-                            PlusRadialAction("Devices", Icons.Filled.Sensors, Destination.Devices.route),
+                            PlusRadialAction(
+                                if (liveLooksLike5AmSibling) "Use worn MG" else "Devices",
+                                Icons.Filled.Sensors,
+                                Destination.Devices.route,
+                            ),
                             PlusRadialAction("Water", Icons.Filled.WaterDrop, HYDRATION_SIP_ROUTE),
                         ),
                         onRadialSelect = { action ->
-                            onQuickRoute(action.route)
+                            if (action.route == Destination.Devices.route && liveLooksLike5AmSibling) {
+                                SessionUiFlags.openDevicesOnce = true
+                            } else {
+                                onQuickRoute(action.route)
+                            }
                         },
                         onHoldArmed = dismissHoldCoach,
                         drawIdleGlow = false,
@@ -2161,14 +2297,14 @@ private fun CenterPlusButton(
                         radialActions.zip(radialOffsetsDp).forEachIndexed { i, (action, off) ->
                             val selected = highlighted == i
                             val pop by animateFloatAsState(
-                                // Pre-152 fluid: spokes trail bloom settle (#120), not a 90ms instant snap.
-                                // Gate ~0.55 (was 0.92) keeps the dial responsive without feeling snappy.
-                                targetValue = if (holding && holdBloom > 0.55f) 1f else 0f,
+                                // Quicker spoke pop: earlier gate + short appear (was 0.55 / 220+80ms).
+                                // Dismiss stays ~140; Reduce Motion still tween(0).
+                                targetValue = if (holding && holdBloom > 0.30f) 1f else 0f,
                                 animationSpec = when {
                                     reduced -> tween(0)
-                                    holding && holdBloom > 0.55f -> tween(
-                                        durationMillis = 220,
-                                        delayMillis = 80,
+                                    holding && holdBloom > 0.30f -> tween(
+                                        durationMillis = 100,
+                                        delayMillis = 0,
                                         easing = NoopMotion.EaseOutQuint,
                                     )
                                     else -> tween(140, easing = NoopMotion.EaseOutQuint)
@@ -2464,17 +2600,8 @@ private fun BarSlot(
                 color = labelTint,
                 maxLines = 1,
             )
-            // Overflow cue beside the label — quiet ash, not gold (#397: don't compete with + aura).
-            // Underline stays suppressed when this is on (#225).
-            if (overflowDot) {
-                // SHIP #14 — visible “via More” breadcrumb (dot alone was invisible to sighted users).
-                Text(
-                    "via More",
-                    style = NoopType.caption.copy(fontSize = 9.sp, letterSpacing = 0.sp),
-                    color = barOverflowCueColor(),
-                    maxLines = 1,
-                )
-            }
+            // Overflow stays TalkBack-only ("Opened from More"). Never append "via More" beside
+            // the More label — that read as "More via More".
         }
         }
         // Gold underline when active; suppress when overflowDot so dot + underline don't fight.

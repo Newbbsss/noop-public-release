@@ -80,6 +80,37 @@ enum class DeviceFamily {
         }
 
     companion object {
+        /**
+         * Resolve a device-registry `model` label to the strap family that wrote its rows (#171 / #938).
+         *
+         * The registry holds several historical spellings for the same hardware: the Add-Device wizard
+         * stores bare "3.0" / "4.0" / "5.0" / "MG", other paths match the full picker labels
+         * ("WHOOP 4.0" / "WHOOP 5.0 / MG"), and the legacy seeded "my-whoop" row stores just "WHOOP".
+         * Matching any single spelling silently misses the others — Deep Timeline used to compare
+         * against [com.noop.ble.WhoopModel.displayName] only, so every wizard row fell through to the
+         * WHOOP4 ADC map and painted 5/MG centidegrees as ~160 °C.
+         *
+         * "WHOOP" predates the wizard and was written identically for 4.0 and 5/MG installs, so it
+         * carries no family information; it keeps the prior WHOOP5 fallback, as do null/unknown
+         * labels (non-WHOOP imports whose skin temp is already °C) — only a positively-identified
+         * 3.x/4.x changes scale. Mirrors Swift `DeviceFamily.forRegistryModel` + the Android
+         * [com.noop.analytics.RegistryDayOwnerSource] content match.
+         */
+        fun forRegistryModel(model: String?): DeviceFamily {
+            val m = model?.trim().orEmpty()
+            if (m.isEmpty()) return WHOOP5
+            when (m) {
+                "4.0", "3.0", "WHOOP 4.0", "WHOOP 3.0" -> return WHOOP4
+                "5.0", "MG", "5.0 MG", "WHOOP 5.0 / MG", "WHOOP 5.0" -> return WHOOP5
+                "WHOOP" -> return WHOOP5
+            }
+            val lower = m.lowercase()
+            val looksWhoop = lower.contains("whoop")
+            return if (looksWhoop && !lower.contains("5") && !lower.contains("mg") &&
+                (lower.contains("4") || lower.contains("3"))
+            ) WHOOP4 else WHOOP5
+        }
+
         /** Whoop 5.0 CLIENT_HELLO bytes (16 bytes). Exposed as a named constant for test/debug use. */
         val WHOOP5_CLIENT_HELLO: ByteArray = byteArrayOf(
             0xAA.toByte(), 0x01, 0x08, 0x00, 0x00, 0x01, 0xE6.toByte(), 0x71,

@@ -47,23 +47,23 @@ class PuffinExperiment(private val prefs: SharedPreferences) {
         set(v) = prefs.edit().putBoolean(KEY_BROADCAST_HR, v).apply()
 
     /** True if the user opted in to "Experimental sleep staging (V2)": detected nights are re-staged with
-     *  [com.noop.analytics.SleepStagerV2] (the transparent cardiorespiratory recipe, reimplemented from
-     *  contributor PR #600) instead of the default V1 [com.noop.analytics.SleepStager]. Pure analysis switch
-     *  — it changes ONLY which staging engine runs over an already-detected sleep window; detection, scoring
-     *  and the default V1 path are untouched. Model-agnostic (works on WHOOP 4 and 5).
-     *  **Fable:** defaults true (and one-shot migrates older false installs) so MG uses
-     *  DREAMT-retuned V2 (#348) instead of all-light V1; WHOOP 4.0 stays hard-gated off in
-     *  [IntelligenceEngine.sleepStagerV2ForFamily]. User can still turn it off in Settings.
-     *  Mirrors the macOS `PuffinExperiment.experimentalSleepV2Key`. */
+     *  [com.noop.analytics.SleepStagerV2] (transparent cardiorespiratory recipe) instead of the default
+     *  Gilbert V1 [com.noop.analytics.SleepStager]. Pure analysis switch — changes ONLY which staging
+     *  engine runs over an already-detected sleep window. **Trust path defaults OFF** for every strap
+     *  family (MG and non-MG); V2 is research-only and can invent Deep/REM. WHOOP 4.0 stays hard-gated
+     *  off in [IntelligenceEngine.sleepStagerV2ForFamily] even if this is on.
+     *  One-shot [KEY_V2_TRUST_DEFAULT_APPLIED] forces OFF once so prior Fable installs that were
+     *  migrated on leave the trust path without a manual Diagnostics tap; later user toggles stick. */
     var experimentalSleepV2: Boolean
         get() {
-            if (!prefs.getBoolean(KEY_V2_FABLE_DEFAULT_APPLIED, false)) {
+            if (!prefs.getBoolean(KEY_V2_TRUST_DEFAULT_APPLIED, false)) {
                 prefs.edit()
-                    .putBoolean(KEY_EXPERIMENTAL_SLEEP_V2, true)
-                    .putBoolean(KEY_V2_FABLE_DEFAULT_APPLIED, true)
+                    .putBoolean(KEY_EXPERIMENTAL_SLEEP_V2, false)
+                    .putBoolean(KEY_V2_TRUST_DEFAULT_APPLIED, true)
+                    .putBoolean(KEY_V2_FABLE_DEFAULT_APPLIED, true) // retire old force-on marker
                     .apply()
             }
-            return prefs.getBoolean(KEY_EXPERIMENTAL_SLEEP_V2, true)
+            return prefs.getBoolean(KEY_EXPERIMENTAL_SLEEP_V2, false)
         }
         set(v) = prefs.edit().putBoolean(KEY_EXPERIMENTAL_SLEEP_V2, v).apply()
 
@@ -86,8 +86,11 @@ class PuffinExperiment(private val prefs: SharedPreferences) {
         /** "Experimental sleep staging (V2)" opt-in (mirrors macOS `PuffinExperiment.experimentalSleepV2Key`). */
         const val KEY_EXPERIMENTAL_SLEEP_V2 = "noopExperimentalSleepV2"
 
-        /** One-shot: enable V2 for existing Fable installs that still have the old default-false. */
+        /** Retired: prior Fable one-shot that forced V2 on. Kept so we can mark it applied. */
         private const val KEY_V2_FABLE_DEFAULT_APPLIED = "noopExperimentalSleepV2_fable76"
+
+        /** One-shot: force V2 off for Gilbert trustworthy scoring (8.6.233+). */
+        private const val KEY_V2_TRUST_DEFAULT_APPLIED = "noopExperimentalSleepV2_trust233"
 
         fun from(context: Context): PuffinExperiment =
             PuffinExperiment(context.getSharedPreferences(PREFS, Context.MODE_PRIVATE))

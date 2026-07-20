@@ -466,4 +466,85 @@ class BackfillContinuationTest {
             ),
         )
     }
+
+    // ── #1020 dataRange*Unix straddle-artifact clamp (real Fold MG captures, 2026-07-18) ────────────
+    // The long-form range reply carries (unix u32, value u32) record pairs on an 8-byte grid ONE BYTE
+    // OFF the aligned 7+4k scan grid, so the raw scan latched ts_high24 + the next field's low byte as
+    // garbage ≈2028–2030 "newest" words (pairing-log false alarms: 28238h / 12319h / 12312h / 18864h
+    // "ahead", suppressing periodic backfill + raising the future-clock banner while the strap RTC was
+    // wall-clock-exact). The wall+48 h bound must reject every one of those straddles; a garbage PAST
+    // word or null is acceptable (never poisons clock-trust / the #547 window), a garbage FUTURE one
+    // never is. Real captures below are byte-for-byte from the Fold pairing log / logcat.
+
+    /** Real capture that produced "newest 2029-10-06 17:59 · 28238h ahead" (three 0x706A5Bxx straddles
+     *  at offsets 55/63/71; true record words 0x6A5B2DBC/0x6A5B2F23 = 2026-07-18 sit one byte off-grid). */
+    private val rangeLongForm28238h =
+        "aa014c00010032d1242e2289010180130000331300004b1300003313000008000000000002006801000098fe1d0030aa6b691e65" +
+            "0000bc2d5b6a707d0000bc2d5b6a707d0000232f5b6a707d000000004aa61349"
+
+    /** Real capture that produced "12312h ahead": both in-window aligned words are future straddles. */
+    private val rangeLongForm12312h =
+        "aa014c00010032d1247e220e010140760000187600002c7600001876000008000000000002001e010000d4fe1d0076277169a3" +
+            "1000006da55b6a000000006da55b6a0000000089a65b6a7a1400000000c084c105"
+
+    /** Real 32-byte periodic range poll (2026-07-18 23:58:26 UTC): no in-window aligned word at all. */
+    private val rangeShortPoll =
+        "aa011800010022e1280222135c6ac2354001e003000000000000010091c33e75"
+
+    /** Wall clock matching the capture day (2026-07-18 ~22:26 UTC). */
+    private val captureWallNow = 1_784_500_000L
+
+    private fun hexBytes(s: String): ByteArray =
+        ByteArray(s.length / 2) { ((s[it * 2].digitToInt(16) shl 4) or s[it * 2 + 1].digitToInt(16)).toByte() }
+
+    @Test
+    fun dataRangeNewestUnix_neverLatchesFutureStraddle_realCaptures() {
+        val maxPlausible = captureWallNow + 48L * 3600L
+        // The 2029 poison (1886018349 / 1886018351) must be gone; only the harmless past word survives.
+        val newest1 = WhoopBleClient.dataRangeNewestUnix(hexBytes(rangeLongForm28238h), captureWallNow)
+        assertTrue(newest1 == null || newest1 <= maxPlausible)
+        assertFalse(newest1 == 1_886_018_349L || newest1 == 1_886_018_351L)
+        // Every aligned in-window word here was a future straddle ⇒ unknown, never future-dated.
+        assertEquals(null, WhoopBleClient.dataRangeNewestUnix(hexBytes(rangeLongForm12312h), captureWallNow))
+        assertEquals(null, WhoopBleClient.dataRangeNewestUnix(hexBytes(rangeShortPoll), captureWallNow))
+    }
+
+    @Test
+    fun dataRangeOldestUnix_sameFutureBound_realCaptures() {
+        val maxPlausible = captureWallNow + 48L * 3600L
+        val frame = hexBytes(rangeLongForm28238h)
+        val oldest = WhoopBleClient.dataRangeOldestUnix(frame, captureWallNow)
+        val newest = WhoopBleClient.dataRangeNewestUnix(frame, captureWallNow)
+        assertTrue(oldest == null || oldest <= maxPlausible)
+        assertEquals(null, WhoopBleClient.dataRangeOldestUnix(hexBytes(rangeLongForm12312h), captureWallNow))
+        // Single surviving candidate ⇒ oldest == newest ⇒ the call site leaves the #547 session
+        // window half-formed (falls back to absolute-only) instead of closing it against real records.
+        assertEquals(newest, oldest)
+    }
+
+    @Test
+    fun dataRangeUnix_genuineWordStillDecoded() {
+        // Synthetic body: sane u32 at aligned offset 11, plus a garbage future word at offset 15.
+        val frame = ByteArray(23)
+        frame[6] = 0x22
+        val sane = captureWallNow - 3_600L
+        for (k in 0..3) frame[11 + k] = ((sane shr (8 * k)) and 0xFF).toByte()
+        val future = captureWallNow + 49L * 3600L
+        for (k in 0..3) frame[15 + k] = ((future shr (8 * k)) and 0xFF).toByte()
+        assertEquals(sane, WhoopBleClient.dataRangeNewestUnix(frame, captureWallNow))
+        assertEquals(sane, WhoopBleClient.dataRangeOldestUnix(frame, captureWallNow))
+    }
+
+    @Test
+    fun dataRangeUnix_skewBoundary() {
+        // Exactly wall+48 h is a candidate (isFutureDatedNewest treats it as plausible skew too);
+        // one second past is not.
+        val atCap = captureWallNow + 48L * 3600L
+        val pastCap = atCap + 1L
+        val f = { v: Long ->
+            ByteArray(15).also { b -> for (k in 0..3) b[11 + k] = ((v shr (8 * k)) and 0xFF).toByte() }
+        }
+        assertEquals(atCap, WhoopBleClient.dataRangeNewestUnix(f(atCap), captureWallNow))
+        assertEquals(null, WhoopBleClient.dataRangeNewestUnix(f(pastCap), captureWallNow))
+    }
 }

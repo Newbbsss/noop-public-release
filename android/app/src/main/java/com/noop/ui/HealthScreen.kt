@@ -52,6 +52,7 @@ import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -63,6 +64,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.repeatOnLifecycle
+import com.noop.R
 import com.noop.analytics.Baselines
 import com.noop.analytics.HrvAnalyzer
 import com.noop.analytics.IllnessSignalEngine
@@ -104,6 +106,7 @@ fun HealthScreen(
     onOpenLabBook: () -> Unit = {},
     onOpenFusedRecord: () -> Unit = {},
     onOpenPeriodCalendar: () -> Unit = {},
+    onOpenSettingsPeriodTracking: () -> Unit = {},
 ) {
     val context = LocalContext.current
     val profile = remember { ProfileStore.from(context.applicationContext) }
@@ -144,8 +147,8 @@ fun HealthScreen(
     val showDayCycleBackground = remember { NoopPrefs.showDayCycleBackground(context) }
 
     LazyScreenScaffold(
-        title = "Health Monitor",
-        subtitle = "Live heart rate + banked vital signs.",
+        title = stringResource(R.string.health_monitor_title),
+        subtitle = stringResource(R.string.health_monitor_subtitle),
         topBackground = if (showDayCycleBackground) { { LiquidScreenSky(fillHeight = true) } } else null,
         fullBleedBackground = showDayCycleBackground,
     ) {
@@ -164,8 +167,8 @@ fun HealthScreen(
             item { Spacer(Modifier.height(Metrics.selectorTopUp)) }
             item {
                 VitalsSection(
-                    title = "Vital Signs",
-                    overline = "Banked · latest day",
+                    title = stringResource(R.string.health_vitals_title),
+                    overline = stringResource(R.string.health_vitals_overline),
                     trailing = null,
                     vitals = latestVitals(days, UnitPrefs.temperature(LocalContext.current)),
                     onVitalClick = onVitalClick,
@@ -190,10 +193,8 @@ fun HealthScreen(
                     // helper). Cycle phase is read from the menstrual skin-temperature shift, so the
                     // invitation is NOT offered for male profiles. Matches iOS SkinTempSection.cycleOptInApplies.
                     cycleOptInApplies = cycleOptInApplies(profile.sex),
-                    onEnableCycle = { vm.setCycleTrackingEnabled(true) },
-                    // #801: symmetric off-control. Cycle awareness could be turned ON here but only OFF from
-                    // Automations; let the user turn it off in-place where they turned it on.
-                    onTurnOffCycle = { vm.setCycleTrackingEnabled(false) },
+                    // Gilbert P0: master Period tracking on/off is Settings-only — deep-link, never toggle here.
+                    onOpenSettingsPeriodTracking = onOpenSettingsPeriodTracking,
                     onOpenPeriodCalendar = onOpenPeriodCalendar,
                 )
             }
@@ -237,11 +238,16 @@ private fun SyncStatusSection(vm: AppViewModel, onSyncNow: () -> Unit) {
     val live by vm.live.collectAsStateWithLifecycle()
     // The strap link is usable for a manual offload kick (matches WhoopBleClient.syncNow's own gate).
     val canSync = live.connected && live.bonded && !live.backfilling
+    val syncTrailing = when {
+        !live.connected -> stringResource(R.string.live_link_offline)
+        live.bonded -> stringResource(R.string.live_link_connected)
+        else -> stringResource(R.string.health_sync_pairing)
+    }
     Column(verticalArrangement = Arrangement.spacedBy(Metrics.gap)) {
         SectionHeader(
-            "Sync",
-            overline = "Strap history",
-            trailing = if (live.connected) (if (live.bonded) "Connected" else "Pairing…") else "Offline",
+            stringResource(R.string.health_sync_title),
+            overline = stringResource(R.string.health_sync_overline),
+            trailing = syncTrailing,
         )
 
         NoopCard(tint = Palette.chargeColor) {
@@ -251,7 +257,7 @@ private fun SyncStatusSection(vm: AppViewModel, onSyncNow: () -> Unit) {
                 when {
                     live.backfilling -> SyncingHistoryNote(chunks = live.syncChunksThisSession)
                     !live.connected -> StatePill(
-                        title = "No strap connected",
+                        title = stringResource(R.string.health_sync_no_strap),
                         tone = StrandTone.Neutral,
                         showsDot = false,
                     )
@@ -259,7 +265,10 @@ private fun SyncStatusSection(vm: AppViewModel, onSyncNow: () -> Unit) {
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(Metrics.space8),
                     ) {
-                        StatePill(title = "History synced", tone = StrandTone.Positive)
+                        StatePill(
+                            title = stringResource(R.string.health_sync_history_synced),
+                            tone = StrandTone.Positive,
+                        )
                         Text(
                             relativeAgo(live.lastSyncAt!!),
                             style = NoopType.footnote,
@@ -267,7 +276,11 @@ private fun SyncStatusSection(vm: AppViewModel, onSyncNow: () -> Unit) {
                         )
                     }
                     else -> StatePill(
-                        title = if (live.bonded) "Ready to sync" else "Pairing…",
+                        title = if (live.bonded) {
+                            stringResource(R.string.health_sync_ready)
+                        } else {
+                            stringResource(R.string.health_sync_pairing)
+                        },
                         tone = StrandTone.Accent,
                         showsDot = true,
                         pulsing = !live.bonded,
@@ -279,27 +292,29 @@ private fun SyncStatusSection(vm: AppViewModel, onSyncNow: () -> Unit) {
                 // HealthView.swift's `NoopButton(..., kind: .secondary, fullWidth: true)`. Disabled unless
                 // connected+bonded and not already syncing; the gated BLE entry point is a safe no-op
                 // otherwise. (Total pending records are unknowable from the protocol, so no progress %.)
+                val syncA11y = when {
+                    canSync -> stringResource(R.string.health_sync_a11y_ready)
+                    live.backfilling -> stringResource(R.string.health_sync_a11y_busy)
+                    else -> stringResource(R.string.health_sync_a11y_offline)
+                }
                 NoopButton(
-                    text = if (live.backfilling) "Syncing…" else "Sync now",
+                    text = if (live.backfilling) {
+                        stringResource(R.string.health_syncing)
+                    } else {
+                        stringResource(R.string.health_sync_now)
+                    },
                     leadingIcon = Icons.Filled.Sync,
                     kind = NoopButtonKind.Secondary,
                     fullWidth = true,
                     enabled = canSync,
                     modifier = Modifier.semantics {
-                        contentDescription = if (canSync) {
-                            "Sync now. Pulls your strap's stored history immediately, without waiting " +
-                                "for the next automatic sync."
-                        } else if (live.backfilling) {
-                            "Sync now. A sync is already in progress."
-                        } else {
-                            "Sync now. Connect your strap first."
-                        }
+                        contentDescription = syncA11y
                     },
                     onClick = onSyncNow,
                 )
 
                 Text(
-                    syncHelperText(live),
+                    syncHelperTextLocalized(live),
                     style = NoopType.footnote,
                     color = Palette.textTertiary,
                 )
@@ -310,13 +325,12 @@ private fun SyncStatusSection(vm: AppViewModel, onSyncNow: () -> Unit) {
 
 /** The helper line below the Sync-now button: explains the current state (syncing / offline / pairing /
  *  ready), copy-matched to HealthView.swift's SyncStatusSection.helperText. */
-private fun syncHelperText(live: LiveState): String = when {
-    // SHIP #259 — sync is never silent: name the state on the helper line.
-    live.backfilling -> "Syncing now · pulling stored history (oldest first). Keep the strap nearby."
-    !live.connected -> "Connect your strap to sync its stored history. Until then, only imported data " +
-        "shows here."
-    !live.bonded -> "Finishing the pairing handshake. Sync now becomes available once the strap is paired."
-    else -> "Ready · Sync now pulls stored history right away (not silent — you’ll see Syncing…)."
+@Composable
+private fun syncHelperTextLocalized(live: LiveState): String = when {
+    live.backfilling -> stringResource(R.string.health_sync_help_busy)
+    !live.connected -> stringResource(R.string.health_sync_help_offline)
+    !live.bonded -> stringResource(R.string.health_sync_help_pairing)
+    else -> stringResource(R.string.health_sync_help_ready)
 }
 
 // MARK: - Records & sources (Swift parity) — discoverable deep-links into the on-device records
@@ -333,25 +347,28 @@ private fun RecordsAndSourcesSection(
     onOpenFusedRecord: () -> Unit,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(Metrics.gap)) {
-        SectionHeader("Records & sources", overline = "On this phone")
+        SectionHeader(
+            stringResource(R.string.health_records_title),
+            overline = stringResource(R.string.health_records_overline),
+        )
         Text(
             // SHIP #180 — Lab Book vs Health vs Insights: one job each.
-            "Lab Book = your cuff/bloods · Health = strap vitals · Insights = journal experiments.",
+            stringResource(R.string.health_records_caption),
             style = NoopType.caption,
             color = Palette.textTertiary,
         )
         RecordRow(
             icon = Icons.AutoMirrored.Filled.MenuBook,
             tint = Palette.metricCyan,
-            title = "Lab Book",
-            subtitle = "Your bloods, BP and body numbers. Kept private here.",
+            title = stringResource(R.string.nav_lab_book),
+            subtitle = stringResource(R.string.health_lab_book_blurb),
             onClick = onOpenLabBook,
         )
         RecordRow(
             icon = Icons.AutoMirrored.Filled.CompareArrows,
             tint = Palette.accent,
-            title = "Your Data, Fused",
-            subtitle = "The best-sourced number per metric, across your bands.",
+            title = stringResource(R.string.health_fused_title),
+            subtitle = stringResource(R.string.health_fused_blurb),
             onClick = onOpenFusedRecord,
         )
     }
@@ -433,9 +450,7 @@ private fun SkinTempSuiteSection(
     cycleEnabled: Boolean,
     // #801: whether the cycle-awareness opt-in invitation is offered for this profile (sex-gated).
     cycleOptInApplies: Boolean,
-    onEnableCycle: () -> Unit,
-    // #801: symmetric off-control, surfaced on the live card.
-    onTurnOffCycle: () -> Unit,
+    onOpenSettingsPeriodTracking: () -> Unit,
     onOpenPeriodCalendar: () -> Unit = {},
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(Metrics.gap)) {
@@ -448,20 +463,19 @@ private fun SkinTempSuiteSection(
             }
         }
 
-        // Cycle awareness (#801): when ON, the live result carries a symmetric off-control. When OFF, the
-        // opt-in invitation is shown ONLY for profiles it can apply to (sex-gated); a male profile that
-        // previously enabled it still sees its existing card, only the invitation is gated.
+        // Cycle awareness: live card when tracking is on; otherwise invite via Settings deep-link
+        // (Gilbert P0 — master Period tracking on/off is Settings-only, not toggled here).
         if (cycleEnabled) {
             signals?.cycle?.let {
                 CycleAwarenessCard(
                     result = it,
                     onLogPeriod = onOpenPeriodCalendar,
                     onOpenDetail = onOpenPeriodCalendar,
-                    onTurnOff = onTurnOffCycle,
+                    onManageInSettings = onOpenSettingsPeriodTracking,
                 )
             }
         } else if (cycleOptInApplies) {
-            CycleAwarenessOptInCard(onEnable = onEnableCycle)
+            CycleAwarenessOptInCard(onOpenSettings = onOpenSettingsPeriodTracking)
         }
 
         // Body clock: only when the engine produced an estimate (no faked card while the input pipe is empty).
@@ -470,7 +484,8 @@ private fun SkinTempSuiteSection(
         Text(
             "Cycle phase, body-clock and illness heads-up are approximations computed on your device from " +
                 "your own nightly temperature, heart rate and HRV: observations about your own numbers, " +
-                "never a diagnosis. They never leave this phone.",
+                "never a diagnosis. They never leave this phone. Turn Period tracking on or off in " +
+                "Settings → Health & wellness.",
             style = NoopType.footnote,
             color = Palette.textTertiary,
         )
@@ -850,12 +865,19 @@ private fun VitalityHero(
     val sorted = contributions.sortedBy { it.lnHazard }
     val best = sorted.firstOrNull()
     val worst = sorted.lastOrNull()
+    val ageDeltaCaption = when {
+        delta == 0 -> stringResource(R.string.health_about_your_age)
+        younger && kotlin.math.abs(delta) == 1 -> stringResource(R.string.health_year_younger, 1)
+        younger -> stringResource(R.string.health_years_younger, kotlin.math.abs(delta))
+        kotlin.math.abs(delta) == 1 -> stringResource(R.string.health_year_older, 1)
+        else -> stringResource(R.string.health_years_older, kotlin.math.abs(delta))
+    }
     // The frosted liquid hero-card wrapper floats the vessel + white count-up over the sky (the pilot).
     LiquidHeroCard {
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
                 Column(modifier = Modifier.weight(1f)) {
-                    Overline("Vitality")
+                    Overline(stringResource(R.string.health_vitality_overline))
                     // The Vitality 0–100 rides a filling LiquidVessel on the charge world, the count-up
                     // number rolled up over it (white, tabular) — the Today HeroScoreVessel idiom. Same
                     // value + fraction (vitality / 100) as the bare headline this replaced.
@@ -865,10 +887,14 @@ private fun VitalityHero(
                         tint = Palette.chargeColor,
                         diameter = 96.dp,
                     )
-                    Text("out of 100", style = NoopType.footnote, color = Palette.textTertiary)
+                    Text(
+                        stringResource(R.string.health_out_of_100),
+                        style = NoopType.footnote,
+                        color = Palette.textTertiary,
+                    )
                 }
                 Column(horizontalAlignment = Alignment.End) {
-                    Overline("Body Age")
+                    Overline(stringResource(R.string.health_body_age_overline))
                     CountUpText(
                         value = bodyAge,
                         format = { it.roundToInt().toString() },
@@ -876,8 +902,7 @@ private fun VitalityHero(
                         color = Palette.textPrimary,
                     )
                     Text(
-                        if (delta == 0) "about your age"
-                        else "${kotlin.math.abs(delta)} ${yearWord(delta)} ${if (younger) "younger" else "older"}",
+                        ageDeltaCaption,
                         style = NoopType.footnote,
                         color = if (delta == 0) Palette.textSecondary
                         else if (younger) Palette.statusPositive else Palette.statusWarning,
@@ -885,17 +910,45 @@ private fun VitalityHero(
                 }
             }
             if (best != null && best.lnHazard < 0) {
-                Text("Helping most: ${best.label}", style = NoopType.footnote, color = Palette.statusPositive)
+                Text(
+                    stringResource(
+                        R.string.health_helping_most,
+                        vitalityContributionLabelLocalized(best.key, best.label),
+                    ),
+                    style = NoopType.footnote,
+                    color = Palette.statusPositive,
+                )
             }
             if (worst != null && worst.lnHazard > 0) {
-                Text("Holding you back: ${worst.label}", style = NoopType.footnote, color = Palette.statusWarning)
+                Text(
+                    stringResource(
+                        R.string.health_holding_back,
+                        vitalityContributionLabelLocalized(worst.key, worst.label),
+                    ),
+                    style = NoopType.footnote,
+                    color = Palette.statusWarning,
+                )
             }
             Text(
-                "A wellness estimate from your habits, not a clinical biological age.",
+                stringResource(R.string.health_vitality_disclaimer),
                 style = NoopType.footnote, color = Palette.textTertiary,
             )
         }
     }
+}
+
+@Composable
+private fun vitalityContributionLabelLocalized(key: String, fallback: String): String {
+    val resId = when (key) {
+        "rhr" -> R.string.health_contrib_rhr
+        "vo2max" -> R.string.health_contrib_vo2
+        "sleep" -> R.string.health_contrib_sleep
+        "consistency" -> R.string.health_contrib_consistency
+        "hrv" -> R.string.health_contrib_hrv
+        "steps" -> R.string.health_contrib_steps
+        else -> null
+    }
+    return if (resId != null) stringResource(resId) else fallback
 }
 
 // MARK: - Liquid hero-card wrapper + hero vessel (the pilot idiom)
@@ -1187,8 +1240,8 @@ fun VitalSignsScreen(vm: AppViewModel, onVitalClick: (String) -> Unit = {}) {
     }
 
     ScreenScaffold(
-        title = "Vital Signs",
-        subtitle = "Historical vitals from your cached daily metrics.",
+        title = stringResource(R.string.health_vitals_title),
+        subtitle = stringResource(R.string.health_vitals_history_subtitle),
     ) {
         RecentDaySelectorBar(selectedOffset = selectedDayOffset, onSelect = { selectedDayOffset = it })
         if (selectedMetric == null || vitals.all { it.value == null }) {
@@ -1198,7 +1251,7 @@ fun VitalSignsScreen(vm: AppViewModel, onVitalClick: (String) -> Unit = {}) {
             )
         } else {
             VitalsSection(
-                title = "Vital Signs",
+                title = stringResource(R.string.health_vitals_title),
                 overline = selectedDayLabel(selectedDayOffset),
                 trailing = "as of ${selectedMetric.day}",
                 vitals = vitals,
@@ -1339,11 +1392,17 @@ private fun HeartRateSection(vm: AppViewModel, hrMax: Int) {
     }
     val series = hrSeries(hrHistory, live, displayHr)
     val zoneColor = Palette.hrZoneColor(zone)
+    val hrChartA11y = stringResource(
+        R.string.health_hr_a11y_bpm,
+        displayHr ?: 0,
+        zone,
+    )
+    val hrChartEmptyA11y = stringResource(R.string.health_hr_a11y_empty)
 
     Column(verticalArrangement = Arrangement.spacedBy(Metrics.gap)) {
         SectionHeader(
-            title = "Heart Rate",
-            overline = "Live",
+            title = stringResource(R.string.live_trust_hr),
+            overline = stringResource(R.string.health_hr_live),
             trailing = if (derived) LifeChapterLacquer.RR_DERIVED_TRAILING else null,
         )
 
@@ -1373,12 +1432,17 @@ private fun HeartRateSection(vm: AppViewModel, hrMax: Int) {
                     verticalAlignment = Alignment.Top,
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
-                        Text("Heart Rate", style = NoopType.headline, color = Palette.textPrimary)
+                        Text(
+                            stringResource(R.string.live_trust_hr),
+                            style = NoopType.headline,
+                            color = Palette.textPrimary,
+                        )
                         Text(
                             text = when {
                                 derived -> rrEstimatedHrCaption()
-                                hasLiveHr && live.streamingLiveHR -> "Streaming live"
-                                hasLiveHr -> "Live"
+                                hasLiveHr && live.streamingLiveHR ->
+                                    stringResource(R.string.health_hr_streaming_live)
+                                hasLiveHr -> stringResource(R.string.health_hr_live)
                                 live.streamingLiveHR -> LifeChapterLacquer.HEALTH_AWAITING_SAMPLE
                                 else -> LifeChapterLacquer.HEALTH_AWAITING_STRAP
                             },
@@ -1401,9 +1465,10 @@ private fun HeartRateSection(vm: AppViewModel, hrMax: Int) {
                         .height(Metrics.chartHeight)
                         .semantics {
                             contentDescription = if (hasLiveHr) {
-                                "Live heart rate over time, $displayHr beats per minute, zone $zone"
+                                // Resolved below outside semantics lambda — see hrChartA11y.
+                                hrChartA11y
                             } else {
-                                "Live heart rate over time, no data"
+                                hrChartEmptyA11y
                             }
                         },
                 ) {
@@ -1479,6 +1544,7 @@ private fun HeartRateSection(vm: AppViewModel, hrMax: Int) {
                     )
                     Text(
                         opticalLockCaption(
+                            context = LocalContext.current,
                             type40Frames = live.type40FramesThisSession,
                             type40WithRr = live.type40WithRrThisSession,
                             lockPct = live.type40RrLockPct,
@@ -1543,9 +1609,13 @@ private fun HealthStressStrip(vm: AppViewModel) {
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                Text("STRESS", style = NoopType.overline, color = Palette.textSecondary)
+                Text(stringResource(R.string.domain_stress), style = NoopType.overline, color = Palette.textSecondary)
                 if (live.connected) {
-                    Text("Live", style = NoopType.caption, color = Palette.statusPositive)
+                    Text(
+                        stringResource(R.string.health_hr_live),
+                        style = NoopType.caption,
+                        color = Palette.statusPositive,
+                    )
                 }
                 Spacer(Modifier.weight(1f))
                 Text(
@@ -1553,13 +1623,17 @@ private fun HealthStressStrip(vm: AppViewModel) {
                     style = NoopType.number(15f),
                     color = stress?.let { Palette.stressColor } ?: Palette.textTertiary,
                 )
-                Text("/ 3", style = NoopType.footnote, color = Palette.textTertiary)
+                Text(
+                    stringResource(R.string.health_stress_scale),
+                    style = NoopType.footnote,
+                    color = Palette.textTertiary,
+                )
             }
             Text(
                 if (stress != null) {
                     LifeChapterLacquer.STRESS_PLAIN_DEFINITION
                 } else {
-                    "No tip yet — wear the strap while awake, or sync a scored day."
+                    stringResource(R.string.health_stress_no_tip)
                 },
                 style = NoopType.caption,
                 color = Palette.textTertiary,
@@ -1851,6 +1925,8 @@ private data class Vital(
     val readingDay: String? = null,
     val asOfLabel: String? = null,
     val rangeCaption: String? = null,
+    /** Metric-specific empty line (ryanbr #549) — say WHY, not bare "No data". */
+    val missingCaption: String,
     /** Personal-baseline banding (population fallback until 14 trusted nights). */
     val banding: VitalBands.Result,
     /** The metric's category colour (used only when in range). */
@@ -1874,14 +1950,10 @@ private data class Vital(
      *  The wording says which yardstick judged it: your baseline vs typical ranges. */
     val stateCaption: String = when {
         // Raw SpO₂ is a device-dependent ADC, not a clinical value — never claim an in/out-of-range
-        // judgment. Show a plain "uncalibrated" note when a value decoded; teaching empty otherwise. (#93/#201)
-        key == "spo2raw" ->
-            if (banding.band == VitalBands.Band.NO_DATA) "Needs scored night · Sync" else "Uncalibrated"
-        // #205 — resp is sleep-window only; never a generic "No data" blank.
-        key == "resp" && banding.band == VitalBands.Band.NO_DATA ->
-            "Sleep-window only · after a night"
-        // #201 — teaching empty when banked vitals are blank (not bare "No data").
-        banding.band == VitalBands.Band.NO_DATA -> "Needs scored night · Sync"
+        // judgment. Show a plain "uncalibrated" note when a value decoded. (#93)
+        key == "spo2raw" && banding.band != VitalBands.Band.NO_DATA -> "Uncalibrated"
+        // #549 — empty tiles say WHY (capability / not banked), not bare "No data".
+        banding.band == VitalBands.Band.NO_DATA -> missingCaption
         banding.basis == VitalBands.Basis.PERSONAL ->
             if (banding.band == VitalBands.Band.IN_RANGE) "In your range" else "Off your baseline"
         else ->
@@ -1988,6 +2060,7 @@ private fun vitalsFor(
     return listOf(
         Vital(
             key = "resp", label = "Resp Rate", unit = "rpm",
+            missingCaption = "Sleep-window only · after a night",
             value = d?.respRateBpm, format = { String.format("%.1f", it) },
             deltaText = deltaText(d?.respRateBpm, previous { it.respRateBpm }),
             readingDay = todayKey,
@@ -1999,6 +2072,7 @@ private fun vitalsFor(
         ),
         Vital(
             key = "spo2", label = "Blood O₂", unit = "%",
+            missingCaption = "No SpO₂ import or Health value",
             value = d?.spo2Pct, format = { String.format("%.0f", it) },
             deltaText = deltaText(d?.spo2Pct, previous { it.spo2Pct }, decimals = 0),
             readingDay = todayKey,
@@ -2017,6 +2091,10 @@ private fun vitalsFor(
             // full u16 span just keeps the tile cyan (never "off range"); `stateCaption` labels it
             // uncalibrated, so we never assert an in/out-of-range clinical judgment on raw sensor data.
             key = "spo2raw", label = "Raw SpO₂", unit = "ADC",
+            missingCaption = when {
+                d?.spo2OpticalAux == true -> "Overnight optical · MG · not % (no red/IR ADC)"
+                else -> "No raw SpO₂ from sleep offload"
+            },
             value = d?.let(spo2RawMean), format = { String.format("%.0f", it) },
             deltaText = deltaText(d?.let(spo2RawMean), previous(spo2RawMean), decimals = 0),
             readingDay = todayKey,
@@ -2028,6 +2106,7 @@ private fun vitalsFor(
         ),
         Vital(
             key = "rhr", label = "Resting HR", unit = "bpm",
+            missingCaption = "Needs scored night · Sync",
             value = d?.restingHr?.toDouble(), format = { it.roundToInt().toString() },
             deltaText = deltaText(d?.restingHr?.toDouble(), previous { it.restingHr?.toDouble() }, decimals = 0),
             readingDay = todayKey,
@@ -2042,6 +2121,7 @@ private fun vitalsFor(
         ),
         Vital(
             key = "hrv", label = "HRV", unit = "ms",
+            missingCaption = "Needs scored night · Sync",
             value = d?.avgHrv, format = { it.roundToInt().toString() },
             deltaText = deltaText(d?.avgHrv, previous { it.avgHrv }, decimals = 0),
             readingDay = todayKey,
@@ -2056,6 +2136,7 @@ private fun vitalsFor(
             // SHIP #206 — family label: MG/5 deviation vs absolute import, never mixed.
             label = if (skinIsAbsolute) "Skin Temp · absolute" else "Skin Temp · vs baseline",
             unit = skinUnitLabel,
+            missingCaption = "No nightly skin-temp value",
             value = skin, format = skinFormat,
             deltaText = deltaText(skin, previousSkin),
             readingDay = todayKey,

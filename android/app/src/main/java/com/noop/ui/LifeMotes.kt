@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import com.noop.R
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.CornerRadius
@@ -41,8 +42,8 @@ object LifeChapterLacquer {
     const val BORDER_ALPHA = 0.22f
     /** Today Cycle / Fuel / Sip chapter row min height. */
     const val CHAPTER_MIN_HEIGHT_DP = 52
-    /** Today Quick Alarm moons quieter than Alarm glance. */
-    const val TODAY_MOON_INTENSITY = 0.82f
+    /** Today Quick Alarm moons — closer to Alarm glance (still quieter). */
+    const val TODAY_MOON_INTENSITY = 0.92f
     const val ALARM_MOON_INTENSITY = 1.0f
     const val FUEL_PEEK_INTENSITY = 0.72f
     /** Nutrition meals hero (louder than Today Fuel peek). */
@@ -58,7 +59,7 @@ object LifeChapterLacquer {
     const val SIP_BURST_MS = 640
     /** Frost wash on Alarm glance vs Today Quick Alarm. */
     const val ALARM_GLANCE_WASH = 1.05f
-    const val TODAY_ALARM_WASH = 0.95f
+    const val TODAY_ALARM_WASH = 1.02f
     /** Optical-lock hairline fill (token alpha only). */
     const val OPTICAL_LOCK_FILL = 0.55f
     const val OPTICAL_LOCK_TRACK = 0.18f
@@ -91,8 +92,8 @@ object LifeChapterLacquer {
     const val ARM_SETTLE_MS = 280
     /** Glance bedtime / wake clocks (Alarm page — dual-region Bedtime | Wake). */
     const val ALARM_GLANCE_CLOCK_SP = 34f
-    /** Today Quick dual-region clocks. */
-    const val TODAY_ALARM_CLOCK_SP = 26f
+    /** Today Quick dual-region clocks — closer to glance for bedtime imagination. */
+    const val TODAY_ALARM_CLOCK_SP = 30f
     /** Dual-region divider alpha (Bedtime | Wake). */
     const val ALARM_DUAL_DIVIDER_ALPHA = 0.22f
     /** Status pill — Armed / Off / May drift (shared). */
@@ -327,7 +328,7 @@ object LifeChapterLacquer {
     const val STRESS_PLAIN_DEFINITION =
         "Stress here means how activated your body looks vs your usual calm — not mood or anxiety."
     /** Settings toast after hiding the Cycle bottom tab (#213). */
-    const val CYCLE_TAB_HIDDEN_TOAST = "Cycle is under More → For your body"
+    const val CYCLE_TAB_HIDDEN_TOAST = "Cycle off · Settings → Health & wellness → Period tracking, or More → For your body → Cycle"
     /** Health Cycle awareness turn-off confirm (#247). */
     const val CYCLE_AWARENESS_OFF_TITLE = "Turn off cycle awareness?"
     const val CYCLE_AWARENESS_OFF_BODY =
@@ -537,7 +538,7 @@ object LifeChapterLacquer {
     const val APPLE_HEALTH_OPEN_DATA_SOURCES = "Open Data Sources"
 }
 
-/** Settings Strap status pill verb (Fable 200 #103). */
+/** Settings Strap status pill verb (Fable 200 #103). EN lacquer for JVM tests. */
 fun settingsStrapStatusTitle(bonded: Boolean, connected: Boolean): String = when {
     bonded && connected -> LifeChapterLacquer.SETTINGS_STRAP_STREAMING
     connected -> LifeChapterLacquer.SETTINGS_STRAP_SYNCING
@@ -545,9 +546,22 @@ fun settingsStrapStatusTitle(bonded: Boolean, connected: Boolean): String = when
     else -> LifeChapterLacquer.SETTINGS_STRAP_AWAITING
 }
 
+/** Settings Strap status pill verb — locale-aware UI. */
+fun settingsStrapStatusTitleLocalized(
+    context: android.content.Context,
+    bonded: Boolean,
+    connected: Boolean,
+): String = when {
+    bonded && connected -> context.getString(R.string.settings_strap_streaming)
+    connected -> context.getString(R.string.settings_strap_syncing)
+    bonded -> context.getString(R.string.settings_strap_ready)
+    else -> context.getString(R.string.settings_strap_awaiting)
+}
+
 /**
  * Settings Strap detail — scan wins over bond/connect.
  * [alongsideWhoopApp] appends open-HR honesty when fully paired (no private-bond claim).
+ * EN lacquer for JVM tests.
  */
 fun settingsStrapStatusDetail(
     bonded: Boolean,
@@ -569,6 +583,28 @@ fun settingsStrapStatusDetail(
     }
 }
 
+/** Settings Strap detail — locale-aware UI. */
+fun settingsStrapStatusDetailLocalized(
+    context: android.content.Context,
+    bonded: Boolean,
+    connected: Boolean,
+    scanning: Boolean,
+    alongsideWhoopApp: Boolean = false,
+): String {
+    val base = when {
+        scanning -> context.getString(R.string.settings_strap_scanning)
+        bonded && connected -> context.getString(R.string.settings_strap_paired)
+        connected -> context.getString(R.string.settings_strap_handshake)
+        bonded -> context.getString(R.string.settings_strap_bonded_idle)
+        else -> context.getString(R.string.settings_strap_none)
+    }
+    return if (alongsideWhoopApp && bonded && connected && !scanning) {
+        "$base ${context.getString(R.string.settings_strap_alongside_note)}"
+    } else {
+        base
+    }
+}
+
 /** Power-saving armed/easing line — honest when SoC unknown or charging. */
 fun settingsPowerSavingStatus(
     easingNow: Boolean,
@@ -584,7 +620,16 @@ fun settingsPowerSavingStatus(
         "Armed · eases when strap ≤${thresholdPct}% and not charging"
 }
 
-/** Sleep stage display name from lacquer (awake/light/deep/rem keys). */
+/** Sleep stage display name from string resources (awake/light/deep/rem keys). */
+fun sleepStageLabel(ctx: android.content.Context, key: String): String = when (key.lowercase()) {
+    "awake" -> ctx.getString(R.string.sleep_stage_awake)
+    "light" -> ctx.getString(R.string.sleep_stage_light)
+    "deep" -> ctx.getString(R.string.sleep_stage_deep)
+    "rem" -> ctx.getString(R.string.sleep_stage_rem)
+    else -> key.replaceFirstChar { it.uppercase() }
+}
+
+/** @deprecated Prefer [sleepStageLabel] with Context for locale. English fallback for non-UI. */
 fun sleepStageLabel(key: String): String = when (key.lowercase()) {
     "awake" -> LifeChapterLacquer.SLEEP_STAGE_AWAKE
     "light" -> LifeChapterLacquer.SLEEP_STAGE_LIGHT
@@ -617,79 +662,96 @@ fun liveHrOverline(charging: Boolean): String =
     else LifeChapterLacquer.LIVE_TRUST_HR_TITLE
 
 /** Live short link pill for bond/scan/offline chrome. */
-fun liveShortLinkLabel(bonded: Boolean, connected: Boolean, scanning: Boolean): String = when {
-    bonded -> "Bonded"
-    connected -> LifeChapterLacquer.LIVE_LINK_CONNECTED
-    scanning -> LifeChapterLacquer.LIVE_LINK_SCANNING
-    else -> LifeChapterLacquer.LIVE_LINK_OFFLINE
+fun liveShortLinkLabel(
+    context: android.content.Context,
+    bonded: Boolean,
+    connected: Boolean,
+    scanning: Boolean,
+): String = when {
+    bonded -> context.getString(R.string.live_link_bonded)
+    connected -> context.getString(R.string.live_link_connected)
+    scanning -> context.getString(R.string.live_link_scanning)
+    else -> context.getString(R.string.live_link_offline)
 }
 
 /** Custom-alarms card title with optional on-count. */
-fun alarmCustomAlarmsTitle(enabledCount: Int, total: Int): String = buildString {
-    append("Custom alarms")
-    if (total > 0) {
-        append(" · ")
-        append(if (enabledCount == total) "$enabledCount on" else "$enabledCount of $total on")
-    }
+fun alarmCustomAlarmsTitle(
+    context: android.content.Context,
+    enabledCount: Int,
+    total: Int,
+): String = when {
+    total <= 0 -> context.getString(R.string.alarm_custom_title)
+    enabledCount == total -> context.getString(R.string.alarm_custom_title_all_on, enabledCount)
+    else -> context.getString(R.string.alarm_custom_title_partial_on, enabledCount, total)
 }
 
 /** Custom-alarms card footnote — soft window vs customs vs strap. */
-fun alarmCustomAlarmsHelp(): String =
-    "Soft wake window finds a lighter moment · customs are exact phone times · strap buzz is separate. " +
-        "One soft window + optional custom times — not many competing masters."
+fun alarmCustomAlarmsHelp(context: android.content.Context): String =
+    context.getString(R.string.alarm_custom_help)
 
 /** Exact-alarm permission warn when enabled customs cannot fire. */
-fun alarmCustomExactOffCaption(): String =
-    "Exact-alarm access is off, so enabled custom alarms cannot fire. Open system settings to restore them."
+fun alarmCustomExactOffCaption(context: android.content.Context): String =
+    context.getString(R.string.alarm_custom_exact_off)
 
 /** Empty custom-alarms body. */
-fun alarmCustomEmptyCaption(): String =
-    "No customs yet. Soft window covers nights in; add one for a hard weekend or travel time."
+fun alarmCustomEmptyCaption(context: android.content.Context): String =
+    context.getString(R.string.alarm_custom_empty)
 
 /** At-capacity custom-alarms footnote. */
-fun alarmCustomLimitCaption(max: Int): String = "Limit $max custom alarms"
+fun alarmCustomLimitCaption(context: android.content.Context, max: Int): String =
+    context.getString(R.string.alarm_custom_limit, max)
 
 /** Default label for a newly added custom alarm. */
-fun alarmDefaultCustomLabel(index: Int): String = "Alarm $index"
+fun alarmDefaultCustomLabel(context: android.content.Context, index: Int): String =
+    context.getString(R.string.alarm_custom_default_label, index)
 
 /** Remove-custom confirm title. */
-fun alarmRemoveConfirmTitle(label: String): String = "Remove $label?"
+fun alarmRemoveConfirmTitle(context: android.content.Context, label: String): String =
+    context.getString(R.string.alarm_custom_remove_title, label)
 
 /** Remove-custom confirm body. */
-fun alarmRemoveConfirmBody(): String =
-    "This deletes the fixed phone alarm. Soft wake window is unchanged."
+fun alarmRemoveConfirmBody(context: android.content.Context): String =
+    context.getString(R.string.alarm_custom_remove_body)
 
 /** Strap-firmware toggle help (vs soft-window companion buzz). */
-fun alarmStrapFirmwareHelp(): String =
-    "Standalone firmware alarm on the strap (works with NOOP closed). Different from “${LifeChapterLacquer.ALARM_BUZZ_STRAP_LABEL}” above, which only follows the phone soft window while NOOP is open."
+fun alarmStrapFirmwareHelp(context: android.content.Context): String =
+    context.getString(
+        R.string.alarm_strap_firmware_help,
+        LifeChapterLacquer.ALARM_BUZZ_STRAP_LABEL,
+    )
 
 /** Tip while strap firmware wake is off. */
-fun alarmStrapFirmwareOffTip(): String =
-    "Turn on to set weekdays and per-day wake times on the strap."
+fun alarmStrapFirmwareOffTip(context: android.content.Context): String =
+    context.getString(R.string.alarm_strap_firmware_off_tip)
 
 /** Strap firmware Wake-at TimeChip a11y. */
-fun alarmStrapWakeTimeA11y(): String = "Strap alarm wake time"
+fun alarmStrapWakeTimeA11y(context: android.content.Context): String =
+    context.getString(R.string.alarm_strap_wake_time_a11y)
 
 /** Strap firmware armed / connect honesty (4.0 vs 5/MG). */
-fun alarmStrapArmedCaption(whoop5: Boolean, bonded: Boolean): String = when {
-    whoop5 && bonded ->
-        "Armed on the strap itself with the acknowledged 5/MG command. Keep the phone alarm on as backup for anything you truly can't miss."
-    whoop5 ->
-        "Connect your strap to arm this; it's set on the strap's own firmware alarm. Keep the phone alarm on as backup."
-    bonded ->
-        "Armed on the strap itself, so it can buzz at your wake time even if your phone is asleep or NOOP is closed. Sends the exact alarm command the official app sends, confirmed buzzing on a real WHOOP 4.0 (community wire capture + on-device test, #535). Keep a backup alarm for anything you truly can't miss."
-    else ->
-        "Connect your strap to arm this; it's set on the strap's own firmware alarm. Confirmed working on WHOOP 4.0; still experimental on 5.0 and MG. Keep a backup alarm for anything you truly can't miss."
-}
+fun alarmStrapArmedCaption(
+    context: android.content.Context,
+    whoop5: Boolean,
+    bonded: Boolean,
+): String = context.getString(
+    when {
+        whoop5 && bonded -> R.string.alarm_strap_armed_whoop5_bonded
+        whoop5 -> R.string.alarm_strap_armed_whoop5_unbonded
+        bonded -> R.string.alarm_strap_armed_whoop4_bonded
+        else -> R.string.alarm_strap_armed_whoop4_unbonded
+    },
+)
 
 /** ExplanationCard body under How smart wake. */
-fun alarmHowSmartWakeBody(): String =
-    "Inside the window, a rise from the lowest stable heart-rate readings may cue an early wake. " +
-        "That is a coarse HR cue, not sleep-stage detection. If the strap is not streaming, only the " +
-        "guaranteed end-of-window alarm fires."
+fun alarmHowSmartWakeBody(context: android.content.Context): String =
+    context.getString(R.string.alarm_how_smart_wake_body)
 
-/** Sleep WindowCard wake TimeChip a11y. */
+/** Sleep WindowCard wake TimeChip a11y. EN lacquer for JVM. */
 fun alarmWakeUpTimeA11y(): String = "Wake up time"
+
+/** Sleep WindowCard wake TimeChip a11y — locale-aware UI. */
+fun alarmWakeUpTimeA11yLocalized(context: android.content.Context): String =
+    context.getString(R.string.today_wake_up_time)
 
 /** HrvSnapshot methodology overline. */
 fun hrvHowMeasuredOverline(): String = "How this is measured"
@@ -706,31 +768,32 @@ fun hrvNeedsRrStreamCaption(): String =
         "then come back."
 
 /** Live Signal Trust when encrypted + R-R locked. */
-fun liveRrLockedTrustSummary(): String =
-    "Encrypted stream · live R-R locked · deep controls available."
+fun liveRrLockedTrustSummary(context: android.content.Context): String =
+    context.getString(R.string.live_rr_locked_trust)
 
 /** Live connection-mode detail when R-R locked. */
-fun liveRrLockedModeDetail(): String = "Full strap stream · R-R locked."
+fun liveRrLockedModeDetail(context: android.content.Context): String =
+    context.getString(R.string.live_rr_locked_mode)
 
 /** Live Signal Trust while encrypted but still awaiting optical R-R lock. */
-fun liveEncryptedAwaitTrustSummary(lockPct: Int?): String =
-    "Encrypted stream · ${opticalLockTrustBrief(lockPct)} · deep controls available."
+fun liveEncryptedAwaitTrustSummary(context: android.content.Context, lockPct: Int?): String =
+    context.getString(R.string.live_encrypted_await_trust, opticalLockTrustBrief(context, lockPct))
 
 /** Live Signal Trust while HR streams before R-R lock (MG often 30–60s). */
-fun liveHrFlowingTrustSummary(lockPct: Int?): String =
-    "Live HR flowing · ${opticalLockTrustBrief(lockPct)} (often 30–60s on MG)."
+fun liveHrFlowingTrustSummary(context: android.content.Context, lockPct: Int?): String =
+    context.getString(R.string.live_hr_flowing_trust, opticalLockTrustBrief(context, lockPct))
 
 /** Live connection-mode detail while encrypted but still awaiting R-R. */
-fun liveEncryptedAwaitModeDetail(lockPct: Int?): String =
-    "Full strap stream · ${opticalLockTrustBrief(lockPct)}…"
+fun liveEncryptedAwaitModeDetail(context: android.content.Context, lockPct: Int?): String =
+    context.getString(R.string.live_encrypted_await_mode, opticalLockTrustBrief(context, lockPct))
 
 /** Live connection-mode detail while HR is live during optical wait. */
-fun liveHrOpticalModeDetail(lockPct: Int?): String =
-    "Heart rate live · ${opticalLockTrustBrief(lockPct)}."
+fun liveHrOpticalModeDetail(context: android.content.Context, lockPct: Int?): String =
+    context.getString(R.string.live_hr_optical_mode, opticalLockTrustBrief(context, lockPct))
 
 /** Live Signal Trust while HR flows without encrypted bond. */
-fun livePartialBondTrustSummary(): String =
-    "Live heart rate is flowing; full strap controls need an encrypted bond."
+fun livePartialBondTrustSummary(context: android.content.Context): String =
+    context.getString(R.string.live_partial_bond_trust)
 
 /** Live Signal Trust while radio is up but stream not trusted yet. */
 fun liveAwaitingStreamTrustSummary(): String =
@@ -747,18 +810,22 @@ fun stressBankingQuietHrProgress(samples: Int, need: Int = 75): String {
 }
 
 /** Live connection-mode detail while HR stream is trusted/active. */
-fun liveHrActiveModeDetail(): String = "Heart rate stream is active."
+fun liveHrActiveModeDetail(context: android.content.Context): String =
+    context.getString(R.string.live_hr_active_mode)
 
 /** Live connection-mode detail while radio is up but untrusted. */
-fun liveRadioUntrustedModeDetail(): String =
-    "Radio connected, stream not yet trusted."
+fun liveRadioUntrustedModeDetail(context: android.content.Context): String =
+    context.getString(R.string.live_radio_untrusted_mode)
 
 /** Live connection-mode detail while offline. */
-fun liveNoStreamModeDetail(): String = "No live stream."
+fun liveNoStreamModeDetail(context: android.content.Context): String =
+    context.getString(R.string.live_no_stream_mode)
 
 /** Signal Trust connection detail when bond is not full (ring vs open HR). */
-fun liveConnectionBondDetail(ringStreaming: Boolean): String =
-    if (ringStreaming) "Live stream, no WHOOP bond" else "Standard HR is not a full bond"
+fun liveConnectionBondDetail(context: android.content.Context, ringStreaming: Boolean): String =
+    context.getString(
+        if (ringStreaming) R.string.live_connection_bond_ring else R.string.live_connection_bond_standard,
+    )
 
 /** Buzz-strap / OEM copy: name the connected generation. */
 fun alarmStrapGenerationName(whoop5: Boolean): String =
@@ -769,35 +836,65 @@ fun hrvMsRmssdUnit(): String =
     "${LifeChapterLacquer.HRV_MS_UNIT} ${LifeChapterLacquer.RMSSD_CHIP_LABEL}"
 
 /** HrvSnapshot dial sub-line during capture. */
-fun hrvCapturingSub(secondsLeft: Int, beatCount: Int): String =
-    "${secondsLeft}s left · $beatCount beats"
+fun hrvCapturingSub(context: android.content.Context, secondsLeft: Int, beatCount: Int): String =
+    context.getString(R.string.hrv_capturing_sub, secondsLeft, beatCount)
 
 /** HrvSnapshot dial a11y while capturing. */
-fun hrvDialCapturingA11y(value: String, sub: String): String =
-    "${LifeChapterLacquer.HRV_PHASE_CAPTURING}. $value milliseconds ${LifeChapterLacquer.RMSSD_CHIP_LABEL} so far. $sub."
+fun hrvDialCapturingA11y(context: android.content.Context, value: String, sub: String): String =
+    "${context.getString(R.string.hrv_phase_capturing)}. $value milliseconds ${LifeChapterLacquer.RMSSD_CHIP_LABEL} so far. $sub."
 
 /** HrvSnapshot primary CTA by phase. */
-fun hrvPrimaryLabel(capturing: Boolean, done: Boolean): String = when {
-    capturing -> LifeChapterLacquer.HRV_CANCEL_LABEL
-    done -> LifeChapterLacquer.HRV_TAKE_ANOTHER_LABEL
-    else -> LifeChapterLacquer.HRV_TAKE_READING_LABEL
+fun hrvPrimaryLabel(context: android.content.Context, capturing: Boolean, done: Boolean): String = when {
+    capturing -> context.getString(R.string.hrv_cancel)
+    done -> context.getString(R.string.hrv_take_another)
+    else -> context.getString(R.string.hrv_take_reading)
 }
 
 /** HrvSnapshot instruction under the dial. */
-fun hrvInstruction(capturing: Boolean, done: Boolean, bonded: Boolean, failed: Boolean): String = when {
-    capturing -> "Sit still, breathe normally. Keep your wrist relaxed and steady."
-    done && failed -> hrvNotEnoughBeatsLead()
-    done -> "Done. Save this reading to keep it in your trends."
-    bonded -> "Sit still and breathe normally. Tap below to take a 60-second reading."
-    else -> "Connect your strap on the Live screen to take a reading."
+fun hrvInstruction(
+    context: android.content.Context,
+    capturing: Boolean,
+    done: Boolean,
+    bonded: Boolean,
+    failed: Boolean,
+): String = when {
+    capturing -> context.getString(R.string.hrv_instruction_capturing)
+    done && failed -> hrvNotEnoughBeatsLead(context)
+    done -> context.getString(R.string.hrv_instruction_done)
+    bonded -> context.getString(R.string.hrv_instruction_bonded)
+    else -> context.getString(R.string.hrv_instruction_connect)
 }
 
 /** Shared lead when filtering left too few clean beats. */
-fun hrvNotEnoughBeatsLead(): String = "Not enough clean beats - sit still and try again."
+fun hrvNotEnoughBeatsLead(context: android.content.Context): String =
+    context.getString(R.string.hrv_not_enough_beats)
 
 /** HrvSnapshot result body when filtering left too few beats. */
-fun hrvInsufficientBeatsBody(nClean: Int, nInput: Int, need: Int): String =
-    "${hrvNotEnoughBeatsLead()} $nClean of $nInput beats survived filtering (need $need)."
+fun hrvInsufficientBeatsBody(
+    context: android.content.Context,
+    nClean: Int,
+    nInput: Int,
+    need: Int,
+): String = context.getString(
+    R.string.hrv_insufficient_beats_body,
+    hrvNotEnoughBeatsLead(context),
+    nClean,
+    nInput,
+    need,
+)
+
+/** Live Signal Trust history-sync detail. */
+fun liveHistorySyncDetail(
+    context: android.content.Context,
+    backfilling: Boolean,
+    lastSyncError: String?,
+    lastSyncAt: Long?,
+): String = when {
+    lastSyncError != null -> lastSyncError
+    backfilling -> context.getString(R.string.live_sync_offload_progress)
+    lastSyncAt == null -> context.getString(R.string.live_sync_no_offload)
+    else -> context.getString(R.string.live_sync_last_completed)
+}
 
 /** Sleep Alarm / Today — open Sleep → Alarm TalkBack. */
 fun alarmOpenWakeSettingsA11y(
@@ -824,11 +921,16 @@ fun liveRrIntervalMsValue(ms: Int): String =
     "$ms ${LifeChapterLacquer.HRV_MS_CAPTION}"
 
 /** Shared Sip strip a11y — Today + Nutrition hydration jump (litres). */
-fun hydrationSipA11y(totalMl: Double, goalMl: Int): String =
-    "Hydration ${"%.1f".format(totalMl / 1000.0)} of ${"%.1f".format(goalMl / 1000.0)} litres. Sip adds 250 millilitres."
+fun hydrationSipA11y(context: android.content.Context, totalMl: Double, goalMl: Int): String =
+    context.getString(
+        R.string.hydration_sip_a11y,
+        totalMl / 1000.0,
+        goalMl / 1000.0,
+    )
 
 /** Goal-met footnote under Sip litres — Today + Nutrition. */
-fun hydrationGoalMetCaption(): String = "Goal met · keep sipping if you like"
+fun hydrationGoalMetCaption(context: android.content.Context): String =
+    context.getString(R.string.hydration_goal_met)
 
 /**
  * Today Fuel peek primary line — kcal · P/C/F · meal count (Nutrition cohesion).
@@ -854,6 +956,29 @@ fun fuelPeekLine(
     else -> "$dayKcal kcal · $mealCount logged"
 }
 
+/** Compose/UI twin of [fuelPeekLine]; English helper stays for JVM/docs cohesion. */
+fun fuelPeekLineLocalized(
+    context: android.content.Context,
+    dayKcal: Int,
+    mealCount: Int,
+    proteinG: Int,
+    carbsG: Int,
+    fatG: Int,
+): String = when {
+    mealCount <= 0 -> context.getString(R.string.today_fuel_log_meals)
+    proteinG > 0 || carbsG > 0 || fatG > 0 -> {
+        val bits = buildList {
+            add("$dayKcal kcal")
+            if (proteinG > 0) add("${proteinG}g P")
+            if (carbsG > 0) add("${carbsG}g C")
+            if (fatG > 0) add("${fatG}g F")
+            add("$mealCount")
+        }
+        bits.joinToString(" · ")
+    }
+    else -> context.getString(R.string.today_fuel_kcal_logged, dayKcal, mealCount)
+}
+
 /** Today Fuel peek contentDescription. */
 fun fuelPeekA11y(dayKcal: Int, mealCount: Int, proteinG: Int, carbsG: Int, fatG: Int): String {
     if (mealCount <= 0) return "Fuel · log meals on-device. Opens Nutrition."
@@ -872,30 +997,91 @@ fun fuelPeekA11y(dayKcal: Int, mealCount: Int, proteinG: Int, carbsG: Int, fatG:
     }
 }
 
+fun fuelPeekA11yLocalized(
+    context: android.content.Context,
+    dayKcal: Int,
+    mealCount: Int,
+    proteinG: Int,
+    carbsG: Int,
+    fatG: Int,
+): String {
+    if (mealCount <= 0) return context.getString(R.string.today_fuel_a11y_empty)
+    val macros = buildList {
+        if (proteinG > 0) add(context.getString(R.string.today_fuel_a11y_protein, proteinG))
+        if (carbsG > 0) add(context.getString(R.string.today_fuel_a11y_carbs, carbsG))
+        if (fatG > 0) add(context.getString(R.string.today_fuel_a11y_fat, fatG))
+    }
+    val macroPart = if (macros.isEmpty()) "" else " · " + macros.joinToString(" · ")
+    return context.getString(R.string.today_fuel_a11y_full, dayKcal, macroPart, mealCount)
+}
+
 /** Cycle soft physiology bit — +fuel / easy · display soft (never edits banked Charge). */
 fun cycleSoftBitCaption(
+    context: android.content.Context,
     needsMoreFuel: Boolean,
     takeItEasy: Boolean,
     recoveryCapacityFactor: Double?,
 ): String = when {
-    needsMoreFuel -> " · +fuel"
+    needsMoreFuel -> context.getString(R.string.cycle_soft_fuel)
     takeItEasy && recoveryCapacityFactor != null ->
-        " · easy · display soft ×${"%.2f".format(recoveryCapacityFactor)}"
+        context.getString(
+            R.string.cycle_soft_easy,
+            "%.2f".format(recoveryCapacityFactor),
+        )
+    else -> ""
+}
+
+/** Cycle card phase label (localized). */
+fun cyclePhaseLabel(
+    context: android.content.Context,
+    phase: com.noop.analytics.PeriodCalendar.CalendarPhase,
+): String = context.getString(
+    when (phase) {
+        com.noop.analytics.PeriodCalendar.CalendarPhase.MENSTRUAL -> R.string.cycle_phase_menstrual
+        com.noop.analytics.PeriodCalendar.CalendarPhase.FOLLICULAR -> R.string.cycle_phase_follicular
+        com.noop.analytics.PeriodCalendar.CalendarPhase.PERI_OVULATORY -> R.string.cycle_phase_mid
+        com.noop.analytics.PeriodCalendar.CalendarPhase.LUTEAL -> R.string.cycle_phase_luteal
+        com.noop.analytics.PeriodCalendar.CalendarPhase.LEARNING -> R.string.cycle_phase_learning
+        com.noop.analytics.PeriodCalendar.CalendarPhase.UNKNOWN -> R.string.cycle_phase_unknown
+    },
+)
+
+/** Cycle day bit · day N. */
+fun cycleDayBit(context: android.content.Context, cycleDay: Int?): String =
+    cycleDay?.let { context.getString(R.string.cycle_day_bit, it) }.orEmpty()
+
+/** Cycle science cite under the phase line (localized; EN bank stays in PeriodCalendar). */
+fun cycleScienceCite(
+    context: android.content.Context,
+    phase: com.noop.analytics.PeriodCalendar.CalendarPhase,
+): String = when (phase) {
+    com.noop.analytics.PeriodCalendar.CalendarPhase.MENSTRUAL ->
+        context.getString(R.string.cycle_cite_menstrual)
+    com.noop.analytics.PeriodCalendar.CalendarPhase.FOLLICULAR ->
+        context.getString(R.string.cycle_cite_follicular)
+    com.noop.analytics.PeriodCalendar.CalendarPhase.PERI_OVULATORY ->
+        context.getString(R.string.cycle_cite_mid)
+    com.noop.analytics.PeriodCalendar.CalendarPhase.LUTEAL ->
+        context.getString(R.string.cycle_cite_luteal)
     else -> ""
 }
 
 /** Cycle card a11y — phase · day · soft cue. */
-fun cycleCardA11y(phaseLabel: String, dayBit: String, softBit: String): String =
-    "Cycle $phaseLabel$dayBit$softBit. Opens cycle calendar."
+fun cycleCardA11y(
+    context: android.content.Context,
+    phaseLabel: String,
+    dayBit: String,
+    softBit: String,
+): String = context.getString(R.string.cycle_a11y, phaseLabel, dayBit, softBit)
 
 /**
  * Shared Armed / Off / May drift pill label — Today Quick + Alarm glance.
  * Armed state stays one word so the pill reads at a glance.
  */
-fun alarmArmStatusLabel(enabled: Boolean, canExact: Boolean): String = when {
-    !enabled -> LifeChapterLacquer.ALARM_STATUS_OFF
-    !canExact -> LifeChapterLacquer.ALARM_STATUS_MAY_DRIFT
-    else -> LifeChapterLacquer.ALARM_STATUS_ARMED
+fun alarmArmStatusLabel(context: android.content.Context, enabled: Boolean, canExact: Boolean): String = when {
+    !enabled -> context.getString(R.string.alarm_status_off)
+    !canExact -> context.getString(R.string.alarm_status_may_drift)
+    else -> context.getString(R.string.alarm_status_armed)
 }
 
 /**
@@ -955,12 +1141,25 @@ fun alarmGlanceAimCaption(
     append("m")
 }
 
-/** WindowCard / Plan aim · wake range — Wake settings cohesion. */
+/** WindowCard / Plan aim · wake range — Wake settings cohesion. EN lacquer for JVM. */
 fun alarmWindowAimCaption(
     aimLabel: String,
     wakeStartLabel: String,
     wakeEndLabel: String,
 ): String = "$aimLabel · $wakeStartLabel → $wakeEndLabel"
+
+/** WindowCard / Plan aim · wake range — locale-aware UI. */
+fun alarmWindowAimCaptionLocalized(
+    context: android.content.Context,
+    aimLabel: String,
+    wakeStartLabel: String,
+    wakeEndLabel: String,
+): String = context.getString(
+    R.string.alarm_window_aim_caption,
+    aimLabel,
+    wakeStartLabel,
+    wakeEndLabel,
+)
 
 /** Wake settings Arm card plan line — honest when exact alarms off; Rest tone when armed. */
 fun alarmArmedPlanCaption(canExact: Boolean): String = when {
@@ -972,9 +1171,13 @@ fun alarmArmedPlanCaption(canExact: Boolean): String = when {
 fun alarmExactEarlyWarn(): String =
     "Allow exact alarms so wake can protect deep sleep — else may drift."
 
-/** Alarms vs notifications vs Cycle — one glossary line. */
+/** Alarms vs notifications vs Cycle — one glossary line. EN lacquer for JVM. */
 fun alarmTaxonomyGlossary(): String =
     "Alarms wake you · Notifications are system alerts · Cycle reminders are separate."
+
+/** Alarms vs notifications vs Cycle — locale-aware UI. */
+fun alarmTaxonomyGlossaryLocalized(context: android.content.Context): String =
+    context.getString(R.string.alarm_taxonomy_glossary)
 
 /**
  * Alarm Arm strap honesty line — glance Arm panel.
@@ -1001,17 +1204,38 @@ fun alarmStrapStatusCaption(
     }
 }
 
-/** Dual buzz models footnote — Wake settings Extras. */
+/** Dual buzz models footnote — Wake settings Extras. EN lacquer for JVM. */
 fun alarmDualBuzzCaption(): String =
     "Soft-window buzz (“${LifeChapterLacquer.ALARM_BUZZ_STRAP_LABEL}”) needs NOOP open. " +
         "Firmware (“${LifeChapterLacquer.ALARM_STRAP_WAKE_TITLE}”) can fire closed. Phone deadline backs both."
 
-/** Plan card foot — aim · earliest wake · night count. */
+/** Dual buzz models footnote — locale-aware UI. */
+fun alarmDualBuzzCaptionLocalized(context: android.content.Context): String =
+    context.getString(
+        R.string.alarm_dual_buzz_caption,
+        context.getString(R.string.alarm_buzz_strap_label),
+        context.getString(R.string.alarm_strap_wake_title),
+    )
+
+/** Plan card foot — aim · earliest wake · night count. EN lacquer for JVM. */
 fun alarmPlanFootCaption(
     aimLabel: String,
     wakeLabel: String,
     nightCount: Int,
 ): String = "$aimLabel · $wakeLabel earliest · $nightCount nights"
+
+/** Plan card foot — locale-aware UI. */
+fun alarmPlanFootCaptionLocalized(
+    context: android.content.Context,
+    aimLabel: String,
+    wakeLabel: String,
+    nightCount: Int,
+): String = context.getString(
+    R.string.alarm_plan_foot_caption,
+    aimLabel,
+    wakeLabel,
+    nightCount,
+)
 
 /** WindowCard / bedtime clock TalkBack — status · bed · aim. */
 fun alarmBedtimeClockA11y(
@@ -1042,12 +1266,14 @@ fun opticalLockCompactLabel(lockPct: Int?, awaiting: Boolean = true): String? = 
 }
 
 /** Signal Trust R-R value while locking — "67% lock" / "Locking…". */
-fun opticalLockTrustValue(lockPct: Int?): String =
-    lockPct?.let { "$it% lock" } ?: "Locking…"
+fun opticalLockTrustValue(context: android.content.Context, lockPct: Int?): String =
+    lockPct?.let { context.getString(R.string.live_pct_lock, it) }
+        ?: context.getString(R.string.live_locking)
 
 /** Trust / connection-mode phrase — "optical lock 67%" or "optical lock for R-R". */
-fun opticalLockTrustBrief(lockPct: Int?): String =
-    lockPct?.let { "optical lock $it%" } ?: "optical lock for R-R"
+fun opticalLockTrustBrief(context: android.content.Context, lockPct: Int?): String =
+    lockPct?.let { context.getString(R.string.optical_lock_brief_pct, it) }
+        ?: context.getString(R.string.optical_lock_brief_waiting)
 
 /** RrFeelProgressHairline TalkBack. */
 fun rrFeelHairlineA11y(
@@ -1163,9 +1389,15 @@ fun alarmBedOverline(enabled: Boolean, canExact: Boolean): String = when {
     else -> LifeChapterLacquer.ALARM_BED_RECOMMENDED
 }
 
-/** WindowCard — open Settings to guarantee deadline. */
+/** WindowCard — open Settings to guarantee deadline. EN lacquer for JVM. */
 fun alarmWindowGuaranteeCaption(deadlineLabel: String): String =
     "Settings to guarantee $deadlineLabel"
+
+/** WindowCard — open Settings to guarantee deadline — locale-aware UI. */
+fun alarmWindowGuaranteeCaptionLocalized(
+    context: android.content.Context,
+    deadlineLabel: String,
+): String = context.getString(R.string.alarm_window_guarantee, deadlineLabel)
 
 /** WindowCard — backup phone deadline honesty. */
 fun alarmWindowBackupCaption(deadlineLabel: String): String =
@@ -1180,13 +1412,16 @@ fun alarmStrapBuzzToggleA11y(on: Boolean): String =
     if (on) "Strap buzz on. Tap to turn off." else "Strap buzz off. Tap to arm strap buzz."
 
 /** Test buzz TalkBack. */
-fun alarmTestBuzzA11y(): String = "Test one-shot strap buzz. Not wake arm."
+fun alarmTestBuzzA11y(context: android.content.Context): String =
+    context.getString(R.string.alarm_test_buzz_a11y)
 
 /** Buzz-the-time TalkBack. */
-fun alarmBuzzTimeA11y(): String = "Buzz wall-clock time on strap. Not wake arm."
+fun alarmBuzzTimeA11y(context: android.content.Context): String =
+    context.getString(R.string.alarm_buzz_time_a11y)
 
 /** Connect-strap toast — Test buzz / Buzz time. */
-fun alarmConnectStrapToast(): String = "Connect the strap first."
+fun alarmConnectStrapToast(context: android.content.Context): String =
+    context.getString(R.string.alarm_connect_strap_toast)
 
 /** Turn-back Extras toggle TalkBack. */
 fun alarmTurnBackA11y(on: Boolean): String =
@@ -1264,38 +1499,40 @@ fun alarmGlanceBedA11y(
 
 /** Test-buzz result toast — offline reconnect / pair prompt / sent. */
 fun alarmTestBuzzToast(
+    context: android.content.Context,
     canBuzz: Boolean,
     whoop5: Boolean,
     connected: Boolean = true,
 ): String = when {
-    whoop5 && !connected -> "Reconnect your strap, then tap Test buzz."
-    !connected -> alarmConnectStrapToast()
-    !canBuzz -> "Accept the Bluetooth pairing prompt, then tap Test buzz again."
-    whoop5 -> "One-shot buzz sent (not wake arm). Watch for a buzz on the strap."
-    else -> "One-shot buzz sent (not wake arm). Watch for a buzz on the strap. Phone deadline still fires alone."
+    whoop5 && !connected -> context.getString(R.string.alarm_test_buzz_reconnect)
+    !connected -> alarmConnectStrapToast(context)
+    !canBuzz -> context.getString(R.string.alarm_test_buzz_pair_prompt)
+    whoop5 -> context.getString(R.string.alarm_test_buzz_sent_whoop5)
+    else -> context.getString(R.string.alarm_test_buzz_sent_whoop4)
 }
 
 /** Map engineering Buzz statusNote lines to short user copy (bond / framing / offline). */
-fun alarmTestBuzzStatusCaption(note: String): String = when {
+fun alarmTestBuzzStatusCaption(context: android.content.Context, note: String): String = when {
     note.contains("not connected", ignoreCase = true) ->
-        "Reconnect your strap, then tap Test buzz."
+        context.getString(R.string.alarm_test_buzz_reconnect)
     note.contains("framing", ignoreCase = true) ||
         note.contains("Command protocol", ignoreCase = true) ->
-        "Reconnect your strap, then tap Test buzz."
+        context.getString(R.string.alarm_test_buzz_reconnect)
     note.contains("full bond", ignoreCase = true) ||
         note.contains("pairing prompt", ignoreCase = true) ->
-        "Accept the Bluetooth pairing prompt, then tap Test buzz again."
+        context.getString(R.string.alarm_test_buzz_pair_prompt)
     note.contains("Alongside", ignoreCase = true) && note.contains("bond", ignoreCase = true) ->
-        "Reconnect your strap, then tap Test buzz."
+        context.getString(R.string.alarm_test_buzz_reconnect)
     note.contains("Strap accepted buzz", ignoreCase = true) ->
-        "Strap accepted the buzz. If the wrist is quiet, reconnect exclusive and try again."
+        context.getString(R.string.alarm_test_buzz_accepted)
     note.contains("Strap rejected buzz", ignoreCase = true) ->
-        "Strap didn't buzz — reconnect and try Test buzz again."
+        context.getString(R.string.alarm_test_buzz_rejected)
     else -> note
 }
 
 /** Buzz-the-time success toast (not wake arm). */
-fun alarmBuzzTimeToast(): String = "Buzzing wall-clock time on strap (not wake arm)."
+fun alarmBuzzTimeToast(context: android.content.Context): String =
+    context.getString(R.string.alarm_buzz_time_toast)
 
 /** Extras Off soft-wake honesty (Sleep glance). */
 fun alarmSoftWakeOffCaption(): String =
@@ -1323,13 +1560,21 @@ fun alarmArmButtonLabel(enabled: Boolean): String =
 fun rrRmssdMsCaption(rmssdMs: Double): String =
     "${LifeChapterLacquer.RMSSD_CHIP_LABEL} ${rmssdMs.roundToInt()} ${LifeChapterLacquer.HRV_MS_CAPTION}"
 
-/** Plan card empty — need personal bedtime cue. */
+/** Plan card empty — need personal bedtime cue. EN lacquer for JVM. */
 fun alarmPlanEmptyCaption(): String =
     "Record three nights for a personal bedtime cue."
 
-/** Plan card schedule honesty under aim foot. */
+/** Plan card empty — locale-aware UI. */
+fun alarmPlanEmptyCaptionLocalized(context: android.content.Context): String =
+    context.getString(R.string.alarm_plan_empty)
+
+/** Plan card schedule honesty under aim foot. EN lacquer for JVM. */
 fun alarmScheduleCueCaption(): String =
     "Schedule cue, not a health target."
+
+/** Plan card schedule honesty — locale-aware UI. */
+fun alarmScheduleCueCaptionLocalized(context: android.content.Context): String =
+    context.getString(R.string.alarm_schedule_cue)
 
 /** Extras → Charge vessel jump (Sleep glance). */
 fun alarmOpenChargeOnTodayLabel(): String = "Open Charge on Today"
@@ -1349,8 +1594,12 @@ fun alarmWakeWindowStartsLabel(): String = "Wake window starts"
 fun alarmWakeWindowStartsHelp(): String =
     "An early cue is possible from here when live HR changes. The deadline alarm is always kept."
 
-/** Wake settings Arm — window length row title. */
+/** Wake settings Arm — window length row title. EN lacquer for JVM. */
 fun alarmWindowLengthLabel(): String = "Window length"
+
+/** Wake settings Arm — window length row title — locale-aware UI. */
+fun alarmWindowLengthLabelLocalized(context: android.content.Context): String =
+    context.getString(R.string.alarm_window_length_label)
 
 /** Wake settings Arm — window length help. */
 fun alarmWindowLengthHelp(): String =
@@ -1360,18 +1609,41 @@ fun alarmWindowLengthHelp(): String =
 fun alarmWakeSpanA11y(startLabel: String, endLabel: String, windowMinutes: Int): String =
     "Wake window $startLabel to $endLabel · $windowMinutes minutes"
 
-/** Arm wake-span overline under clocks. */
+/** Arm wake-span overline under clocks. EN lacquer for JVM. */
 fun alarmWakeSpanOverline(): String = "SOFT WINDOW"
 
-/** Arm window stepper foot — minutes · by deadline. */
+/** Arm wake-span overline — locale-aware UI. */
+fun alarmWakeSpanOverlineLocalized(context: android.content.Context): String =
+    context.getString(R.string.alarm_wake_span_overline)
+
+/** Arm window stepper foot — minutes · by deadline. EN lacquer for JVM. */
 fun alarmWindowByDeadlineCaption(windowMinutes: Int, deadlineLabel: String): String =
     "$windowMinutes min · by $deadlineLabel"
 
-/** Earliest clock column overline. */
+/** Arm window stepper foot — locale-aware UI. */
+fun alarmWindowByDeadlineCaptionLocalized(
+    context: android.content.Context,
+    windowMinutes: Int,
+    deadlineLabel: String,
+): String = context.getString(
+    R.string.alarm_window_by_deadline,
+    windowMinutes,
+    deadlineLabel,
+)
+
+/** Earliest clock column overline. EN lacquer for JVM. */
 fun alarmEarliestOverline(): String = "EARLIEST"
 
-/** Deadline clock column overline. */
+/** Earliest clock column overline — locale-aware UI. */
+fun alarmEarliestOverlineLocalized(context: android.content.Context): String =
+    context.getString(R.string.alarm_earliest_overline)
+
+/** Deadline clock column overline. EN lacquer for JVM. */
 fun alarmDeadlineOverline(): String = "DEADLINE"
+
+/** Deadline clock column overline — locale-aware UI. */
+fun alarmDeadlineOverlineLocalized(context: android.content.Context): String =
+    context.getString(R.string.alarm_deadline_overline)
 
 /** Evening / Wind-down card headline. */
 fun alarmWakeAlarmHeadline(): String = "Wake alarm"
@@ -1412,12 +1684,13 @@ fun alarmWindDownRemindHelp(): String =
  * Membership-free honesty only; never invents SpO₂/BP.
  */
 fun opticalLockCaption(
+    context: android.content.Context,
     type40Frames: Int,
     type40WithRr: Int,
     lockPct: Int?,
-    lead: String = LifeChapterLacquer.OPTICAL_LOCK_LEAD,
+    leadRes: Int = R.string.optical_lock_lead,
 ): String = buildString {
-    append(lead)
+    append(context.getString(leadRes))
     if (type40Frames > 0) {
         append(" · ")
         append(type40Frames)
@@ -1576,20 +1849,22 @@ fun WakeWindowSpanBar(
                 cornerRadius = CornerRadius(r, r),
             )
         }
-        // End ticks — earliest (left) + deadline (right of fill).
+        // Earliest + deadline ticks sit on the TRACK ends (not the fill tip).
+        // Tying the right tick to a short fill clustered three blobs on the left and read as
+        // "weird 3 dots" in the Alarm soft-window chrome.
+        val tickW = (h * 0.55f).coerceAtLeast(2f)
         val tickH = h * 1.35f
         val tickY = (h - tickH) / 2f
         drawRoundRect(
             color = accent.copy(alpha = 0.72f),
             topLeft = Offset(0f, tickY),
-            size = Size(h * 0.55f, tickH),
+            size = Size(tickW, tickH),
             cornerRadius = CornerRadius(r, r),
         )
-        val endX = (w - h * 0.55f).coerceAtLeast(h * 0.55f)
         drawRoundRect(
             color = accent.copy(alpha = 0.85f),
-            topLeft = Offset(endX, tickY),
-            size = Size(h * 0.55f, tickH),
+            topLeft = Offset((size.width - tickW).coerceAtLeast(0f), tickY),
+            size = Size(tickW, tickH),
             cornerRadius = CornerRadius(r, r),
         )
     }

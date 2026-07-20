@@ -3410,12 +3410,20 @@ extension BLEManager: @preconcurrency CBPeripheralDelegate {
     /// Newest plausible-unix marker in a GET_DATA_RANGE COMMAND_RESPONSE = the strap's newest stored
     /// record. Mirrors re/diagnose_biometrics.py: scan u32 LE words in the response body (data starts at
     /// frame[7], after [type,seq,cmd]), keep those in the unix range, return the max. nil if none.
-    static func dataRangeNewestUnix(from frame: [UInt8]) -> Int? {
+    ///
+    /// #1020 (2026-07-18, Android twin): candidates are bounded ABOVE by `wallNowUnix` + 48 h. On real MG
+    /// long-form range replies the aligned 7+4k scan latched STRADDLING words — (unix u32, value u32)
+    /// record pairs sit on an 8-byte grid one byte off the scan grid, so the scan read ts_high24 + the
+    /// next field's low byte as garbage ≈2028–2030 "newest" values (false "strap clock Nh ahead" alarms,
+    /// suppressed periodic backfill, false future-clock banner, while the strap RTC was wall-clock-exact).
+    /// A strap cannot bank records more than 48 h in the future, so future words are not candidates.
+    static func dataRangeNewestUnix(from frame: [UInt8], wallNowUnix: Int) -> Int? {
         guard frame.count > 7 else { return nil }
+        let maxPlausible = wallNowUnix + BackfillContinuation.defaultFutureSkewSeconds
         let body = Array(frame[7...]); var newest: Int? = nil; var i = 0
         while i + 4 <= body.count {
             let w = Int(body[i]) | Int(body[i+1]) << 8 | Int(body[i+2]) << 16 | Int(body[i+3]) << 24
-            if w >= 1_700_000_000 && w <= 1_900_000_000 { newest = max(newest ?? 0, w) }
+            if w >= 1_700_000_000 && w <= maxPlausible { newest = max(newest ?? 0, w) }
             i += 4
         }
         return newest
@@ -3426,12 +3434,15 @@ extension BLEManager: @preconcurrency CBPeripheralDelegate {
     /// full banked SPAN (oldest…newest). For the recurring "last night didn't sync" reports (#364) that
     /// span is the backlog DEPTH at a glance: a strap that banked weeks of un-synced history has a wide
     /// span and simply needs time to drain oldest-first, vs. a narrow span that should clear quickly.
-    static func dataRangeOldestUnix(from frame: [UInt8]) -> Int? {
+    /// #1020: same wall+48 h upper bound as `dataRangeNewestUnix` — a straddling word must never be
+    /// admitted as a marker, or it can close the #547 session window against real records.
+    static func dataRangeOldestUnix(from frame: [UInt8], wallNowUnix: Int) -> Int? {
         guard frame.count > 7 else { return nil }
+        let maxPlausible = wallNowUnix + BackfillContinuation.defaultFutureSkewSeconds
         let body = Array(frame[7...]); var oldest: Int? = nil; var i = 0
         while i + 4 <= body.count {
             let w = Int(body[i]) | Int(body[i+1]) << 8 | Int(body[i+2]) << 16 | Int(body[i+3]) << 24
-            if w >= 1_700_000_000 && w <= 1_900_000_000 { oldest = min(oldest ?? .max, w) }
+            if w >= 1_700_000_000 && w <= maxPlausible { oldest = min(oldest ?? .max, w) }
             i += 4
         }
         return oldest
@@ -3498,13 +3509,13 @@ extension BLEManager: @preconcurrency CBPeripheralDelegate {
                     // offsets are inspectable straight from a normal strap-log export. Short frame.
                     let hex = frame.map { String(format: "%02x", $0) }.joined()
                     log("Get Data Range raw frame (#451 — for offset analysis): \(hex)")
-                    if let newest = BLEManager.dataRangeNewestUnix(from: frame) {
+                    let wallNowRangeSec = Int(Date().timeIntervalSince1970)   // #1020: real wall clock, upper-bounds the marker scan
+                    if let newest = BLEManager.dataRangeNewestUnix(from: frame, wallNowUnix: wallNowRangeSec) {
                         strapNewestTs = newest                    // feeds the liveness watchdog
                         // #928: flag an implausibly FUTURE "newest" (strap clock set ahead) right where it
                         // lands, so a Test Centre export shows WHY auto-continue refused to trust the range.
-                        let wallNowForSkew = Int(Date().timeIntervalSince1970)
-                        if newest > wallNowForSkew + BackfillContinuation.defaultFutureSkewSeconds {
-                            log("Strap newest banked record reads \((newest - wallNowForSkew) / 3600)h AHEAD of the wall clock (implausible; strap clock set in the future, #928). Auto-continue will not trust this range.")
+                        if newest > wallNowRangeSec + BackfillContinuation.defaultFutureSkewSeconds {
+                            log("Strap newest banked record reads \((newest - wallNowRangeSec) / 3600)h AHEAD of the wall clock (implausible; strap clock set in the future, #928). Auto-continue will not trust this range.")
                         }
                         // #547 SESSION-RELATIVE gate: publish the strap's banked-record window to the
                         // Backfiller so the historical ingest gate can reject a record dated months outside
@@ -3522,7 +3533,7 @@ extension BLEManager: @preconcurrency CBPeripheralDelegate {
                         log("Strap newest banked record: \(d.string(from: Date(timeIntervalSince1970: TimeInterval(newest)))) (from data range)")
                         // Also surface the OLDEST banked record so one connect shows the full backlog SPAN — the
                         // depth a deep oldest-first drain has to cover before recent nights land (#364).
-                        let oldest = BLEManager.dataRangeOldestUnix(from: frame)
+                        let oldest = BLEManager.dataRangeOldestUnix(from: frame, wallNowUnix: wallNowRangeSec)
                         if let oldest, oldest < newest {
                             backfiller?.sessionOldestUnix = oldest   // #547: closes the session-relative window
                             let spanDays = (newest - oldest) / 86_400

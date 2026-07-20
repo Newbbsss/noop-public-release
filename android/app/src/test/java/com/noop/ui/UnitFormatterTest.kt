@@ -156,12 +156,12 @@ class UnitFormatterTest {
     }
 
     @Test
-    fun effortDisplayOrEmpty_skipsZeroAndNull() {
+    fun effortDisplayOrEmpty_pendingDash_andCalmZero() {
         assertEquals("—", UnitFormatter.effortDisplayOrEmpty(null, EffortScale.WHOOP))
-        assertEquals("—", UnitFormatter.effortDisplayOrEmpty(0.0, EffortScale.WHOOP))
-        assertEquals("—", UnitFormatter.effortDisplayOrEmpty(0.0, EffortScale.HUNDRED))
+        assertEquals("0.0", UnitFormatter.effortDisplayOrEmpty(0.0, EffortScale.WHOOP))
+        assertEquals("0", UnitFormatter.effortDisplayOrEmpty(0.0, EffortScale.HUNDRED))
         assertEquals("4.2", UnitFormatter.effortDisplayOrEmpty(20.0, EffortScale.WHOOP))
         assertEquals("20", UnitFormatter.effortDisplayOrEmpty(20.0, EffortScale.HUNDRED))
-        assertEquals("Awaiting", UnitFormatter.effortDisplayOrEmpty(0.0, EffortScale.WHOOP, empty = "Awaiting"))
+        assertEquals("Awaiting", UnitFormatter.effortDisplayOrEmpty(null, EffortScale.WHOOP, empty = "Awaiting"))
     }
 }

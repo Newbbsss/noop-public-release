@@ -107,8 +107,14 @@ object RawSensorExport {
         // carried verbatim. Column 12, before the event columns (matches the Swift exporter order).
         val sleepState = repo.sleepStateSamples(deviceId, from, to, limit)
         counts["band_sleep_state"] = sleepState.size
-        for (s in sleepState) rows += LineRow(s.ts, line("band_sleep_state", s.ts, 12 to n(s.state)))
-
+        for (s in sleepState) {
+            rows += LineRow(s.ts, line("band_sleep_state", s.ts, 12 to n(s.state)))
+            // MG `@82` optical aux (raw u8) — NEVER SpO₂ %. Column 15 keeps event cols undisturbed.
+            s.aux82?.let { aux ->
+                rows += LineRow(s.ts, line("optical_aux82", s.ts, 15 to n(aux)))
+            }
+        }
+        counts["optical_aux82"] = sleepState.count { it.aux82 != null }
         val events = repo.events(deviceId, from, to, limit)
         counts["event"] = events.size
         for (s in events) rows += LineRow(

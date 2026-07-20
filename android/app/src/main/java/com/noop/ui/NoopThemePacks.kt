@@ -2,10 +2,12 @@ package com.noop.ui
 
 import android.content.Context
 import android.content.SharedPreferences
+import androidx.annotation.StringRes
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.Color
+import com.noop.R
 
 /**
  * Named visual packs on top of Light/Dark/System. Append to [all] → Settings picks it up.
@@ -24,7 +26,17 @@ data class ThemePack(
     /** Sparse petal/leaf motif overlay on liquid sky (nature packs). */
     val natureMotif: Boolean = false,
     val swatch: Color = dark.accent,
-)
+    /** Localized display name; [label] stays English fallback for logs/toasts without Context. */
+    @StringRes val labelRes: Int = 0,
+    /** Localized one-line blurb; [blurb] stays English fallback. */
+    @StringRes val blurbRes: Int = 0,
+) {
+    fun localizedLabel(ctx: Context): String =
+        if (labelRes != 0) ctx.getString(labelRes) else label
+
+    fun localizedBlurb(ctx: Context): String =
+        if (blurbRes != 0) ctx.getString(blurbRes) else blurb
+}
 
 object ThemePacks {
     val TitaniumGold = ThemePack(
@@ -34,12 +46,16 @@ object ThemePacks {
         dark = DarkTokens,
         light = LightTokens,
         swatch = DarkTokens.accent,
+        labelRes = R.string.theme_pack_titanium_gold,
+        blurbRes = R.string.theme_pack_blurb_titanium_gold,
     )
 
     val OceanGlass = ThemePack(
         id = "ocean_glass",
         label = "Ocean Glass",
         blurb = "Cool navy with frosted glass nav.",
+        labelRes = R.string.theme_pack_ocean_glass,
+        blurbRes = R.string.theme_pack_blurb_ocean_glass,
         dark = DarkTokens.copy(
             surfaceBase = Color(0xFF071018),
             surfaceRaised = Color(0xFF0E1A24),
@@ -64,6 +80,8 @@ object ThemePacks {
     val EmberNight = ThemePack(
         id = "ember_night",
         label = "Ember Night",
+        labelRes = R.string.theme_pack_ember_night,
+        blurbRes = R.string.theme_pack_blurb_ember_night,
         blurb = "Charcoal ground, copper ember — not cream paper.",
         dark = DarkTokens.copy(
             surfaceBase = Color(0xFF0E0B09),
@@ -95,6 +113,8 @@ object ThemePacks {
     val ForestQuiet = ThemePack(
         id = "forest_quiet",
         label = "Forest Quiet",
+        labelRes = R.string.theme_pack_forest_quiet,
+        blurbRes = R.string.theme_pack_blurb_forest_quiet,
         blurb = "Deep moss, calm recovery green.",
         dark = DarkTokens.copy(
             surfaceBase = Color(0xFF0A120E),
@@ -117,6 +137,8 @@ object ThemePacks {
     val MeadowBloom = ThemePack(
         id = "meadow_bloom",
         label = "Meadow Bloom",
+        labelRes = R.string.theme_pack_meadow_bloom,
+        blurbRes = R.string.theme_pack_blurb_meadow_bloom,
         blurb = "Soft clover and wildflower light.",
         dark = DarkTokens.copy(
             surfaceBase = Color(0xFF0C1410),
@@ -141,6 +163,8 @@ object ThemePacks {
     val CherryGrove = ThemePack(
         id = "cherry_grove",
         label = "Cherry Grove",
+        labelRes = R.string.theme_pack_cherry_grove,
+        blurbRes = R.string.theme_pack_blurb_cherry_grove,
         blurb = "Petal pink under canopy green.",
         dark = DarkTokens.copy(
             surfaceBase = Color(0xFF120E12),
@@ -166,6 +190,8 @@ object ThemePacks {
     val WillowMist = ThemePack(
         id = "willow_mist",
         label = "Willow Mist",
+        labelRes = R.string.theme_pack_willow_mist,
+        blurbRes = R.string.theme_pack_blurb_willow_mist,
         blurb = "Silver willow leaves in fog.",
         dark = DarkTokens.copy(
             surfaceBase = Color(0xFF0C1010),
@@ -189,6 +215,8 @@ object ThemePacks {
     val ArcticSteel = ThemePack(
         id = "arctic_steel",
         label = "Arctic Steel",
+        labelRes = R.string.theme_pack_arctic_steel,
+        blurbRes = R.string.theme_pack_blurb_arctic_steel,
         blurb = "Cold steel, frosted nav.",
         dark = DarkTokens.copy(
             surfaceBase = Color(0xFF0A0C10),
@@ -211,6 +239,8 @@ object ThemePacks {
     val SunsetTrack = ThemePack(
         id = "sunset_track",
         label = "Sunset Track",
+        labelRes = R.string.theme_pack_sunset_track,
+        blurbRes = R.string.theme_pack_blurb_sunset_track,
         blurb = "Dusk amber on ink — no purple rest.",
         dark = DarkTokens.copy(
             surfaceBase = Color(0xFF0C0B10),
@@ -240,6 +270,8 @@ object ThemePacks {
     val MidnightIndigo = ThemePack(
         id = "midnight_indigo",
         label = "Midnight Indigo",
+        labelRes = R.string.theme_pack_midnight_indigo,
+        blurbRes = R.string.theme_pack_blurb_midnight_indigo,
         blurb = "Deep slate surfaces with a cool steel-blue accent.",
         dark = DarkTokens.copy(
             surfaceBase = Color(0xFF070A0F),
@@ -267,6 +299,8 @@ object ThemePacks {
     val SandInk = ThemePack(
         id = "sand_ink",
         label = "Sand & Ink",
+        labelRes = R.string.theme_pack_sand_ink,
+        blurbRes = R.string.theme_pack_blurb_sand_ink,
         blurb = "Warm sand paper, ink text.",
         dark = DarkTokens.copy(
             surfaceBase = Color(0xFF14110E),
@@ -288,6 +322,8 @@ object ThemePacks {
     val NeonPulse = ThemePack(
         id = "neon_pulse",
         label = "Neon Pulse",
+        labelRes = R.string.theme_pack_neon_pulse,
+        blurbRes = R.string.theme_pack_blurb_neon_pulse,
         blurb = "High-energy cyan with card aura.",
         dark = DarkTokens.copy(
             surfaceBase = Color(0xFF05080C),
@@ -310,6 +346,8 @@ object ThemePacks {
     val PinkBlossom = ThemePack(
         id = "pink_blossom",
         label = "Pink Blossom",
+        labelRes = R.string.theme_pack_pink_blossom,
+        blurbRes = R.string.theme_pack_blurb_pink_blossom,
         blurb = "Soft floral pink, frosted glass nav.",
         dark = DarkTokens.copy(
             surfaceBase = Color(0xFF140E12),

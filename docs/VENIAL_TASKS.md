@@ -55,3 +55,12 @@ Never install store APK. deploy_live_edit.ps1 + preview_charging.ps1. Update ANY
 - `start_noop_live_review` with store APK after source edits
 - Full clean rebuild when `deploy_live_edit` incremental is enough
 - Phone stream / scrcpy
+
+## Hand-off — Sleep UI readability (2026-07-18)
+
+**For UI agent (venial / Impeccable as needed):** user report — Sleep screen words hard to read (low-contrast tertiary captions, overlines, “typically …” lines, Ready strip). Not Fold-Anthony ground truth; general MAIN Sleep polish.
+
+- Surfaces: `SleepScreen.kt` hero + stage breakdown + Rest drivers
+- Prefer higher contrast on tertiary captions; keep NOOP tokens; no invented vitals
+- Related analytics bank already labeled Sleeping HR + “Deep + REM (not deep alone)”
+- [x] 2026-07-18 (Kimi): hero overlines + “typically …” footnotes + “Deep + REM (not deep alone)” caption + Rest drivers meta line → `Palette.textSecondary` (`SleepScreen.kt` 3589–3605, 6938). Stages overline already `textPrimary.copy(alpha=0.72f)`.

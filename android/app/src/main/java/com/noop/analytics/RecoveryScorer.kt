@@ -34,11 +34,11 @@ import kotlin.math.roundToInt
  * Each metric is standardized to a robust z-score against the personal baseline
  * (mean + EWMA-abs-dev spread). Missing terms are dropped and the weights
  * renormalized. The composite z is squashed through a logistic anchored so that
- * Z = 0 → ~58% (WHOOP's published population-average recovery).
+ * Z = 0 → ~50% (Gilbert honesty floor).
  *
  * Cold-start: if the HRV baseline (dominant driver) is not yet usable
  * (< MIN_NIGHTS_SEED valid nights), recovery() returns null. Callers may use
- * [populationMean] (58.0) as a fallback but should flag it.
+ * [populationMean] (50.0) as a fallback but should flag it.
  *
  * `start` / `end` are wall-clock unix SECONDS (Long), matching the com.noop.data
  * layer and HrSample.ts (the Swift source uses Int seconds).
@@ -73,12 +73,21 @@ object RecoveryScorer {
     /** Logistic spread: ±2 z-units ≈ full Red–Green band (15%–95%). */
     const val logisticK: Double = 1.6
 
-    /** Logistic offset so Z=0 → ~58% (WHOOP population mean). score = 100/(1+exp(-k*(z-z0)));
-     *  raising z0 *lowers* Charge — the 8.6.85 bump to 0.03 was inverted and crushed scores. */
-    const val logisticZ0: Double = -0.20
+    /** Logistic offset. score = 100/(1+exp(-k*(z-z0))); raising z0 *lowers* Charge.
+     *  Gilbert trust (8.6.235): 0.00 → z=0 ≈ 50% (was -0.05 → ~52%). */
+    const val logisticZ0: Double = 0.00
 
-    /** WHOOP-published population-average recovery (%). Cold-start fallback. */
-    const val populationMean: Double = 58.0
+    /** Cold-start fallback when Charge is not yet calibrated (neutral mid band). */
+    const val populationMean: Double = 50.0
+
+    /** Prior-day Effort (0–100) weight — yesterday's load hits today's Charge when present. */
+    const val wPriorStrain: Double = 0.10
+
+    /** Effort ≈ this fraction of max is neutral for the prior-strain z (30 on 0–100). */
+    const val priorStrainNeutral: Double = 0.30
+
+    /** Scale for prior-strain z: (prior/100 − neutral) / scale. */
+    const val priorStrainScale: Double = 0.28
 
     /** Recovery band thresholds (WHOOP color scheme). */
     const val bandRedMax: Double = 34.0
@@ -211,6 +220,7 @@ object RecoveryScorer {
      *   baseline (raw ±°C, DailyMetric.skinTempDevC); applied as a SYMMETRIC penalty
      *   −|dev| / skinTempDevScale. null drops the term and renormalizes (score then
      *   identical to the pre-skin-temp model).
+     * @param priorDayStrain yesterday's Effort 0–100; null drops the term.
      * @param hrvBaselineUsable whether the HRV baseline has enough nights
      *   (BaselineState.usable). When false, returns null (cold-start).
      */
@@ -223,6 +233,7 @@ object RecoveryScorer {
         respBaseline: DriverBaseline?,
         sleepPerf: Double?,
         skinTempDev: Double? = null,
+        priorDayStrain: Double? = null,
         hrvBaselineUsable: Boolean = true,
     ): Double? {
         // Cold-start gate: HRV is the dominant driver; if its baseline isn't
@@ -252,6 +263,12 @@ object RecoveryScorer {
         if (skinTempDev != null) {
             terms.add((-abs(skinTempDev) / skinTempDevScale) to wSkinTemp)
         }
+        // Yesterday Effort: higher load → more negative z (recovery debt).
+        if (priorDayStrain != null) {
+            val frac = (priorDayStrain / 100.0).coerceIn(0.0, 1.5)
+            val z = -((frac - priorStrainNeutral) / priorStrainScale)
+            terms.add(z to wPriorStrain)
+        }
 
         if (terms.isEmpty()) return null
         val totalWeight = terms.sumOf { it.second }
@@ -275,6 +292,7 @@ object RecoveryScorer {
         respBaseline: BaselineState?,
         sleepPerf: Double?,
         skinTempDev: Double? = null,
+        priorDayStrain: Double? = null,
     ): Double? = recovery(
         hrv = hrv,
         rhr = rhr,
@@ -284,6 +302,7 @@ object RecoveryScorer {
         respBaseline = respBaseline?.let { DriverBaseline(it) },
         sleepPerf = sleepPerf,
         skinTempDev = skinTempDev,
+        priorDayStrain = priorDayStrain,
         hrvBaselineUsable = hrvBaseline.usable,
     )
 }

@@ -48,6 +48,16 @@ import kotlin.math.sqrt
  */
 object SleepStager {
 
+    /**
+     * Optional profile soft priors for V1 staging (8.6.235). Null fields = no change.
+     * Set only around [AnalyticsEngine.analyzeDay] (serialized analyze path); never invents sensors.
+     */
+    data class SoftPriors(val ageYears: Double? = null, val bmi: Double? = null)
+
+    @Volatile
+    var softPriors: SoftPriors = SoftPriors()
+
+
     // ── Stage 0 constants (sleep.py) ─────────────────────────────────────────
 
     /** Per-sample gravity change (g) at/below which a sample is "still". */
@@ -165,6 +175,41 @@ object SleepStager {
     const val bandBoundMinAsleepSec: Long = 90L * 60L
     /** Max gap between consecutive asleep samples still counted as one stretch. */
     const val bandBoundSampleGapSec: Long = 5L * 60L
+
+    // ── Primary-bout alignment (WHOOP compare 2026-07-17) ─────────────────────
+    //
+    // Gravity stillness often keeps a morning still/sit stretch inside the SAME in-bed run as the
+    // overnight sleep (coffee, scrolling, residual stillness). Staging correctly labels that tail
+    // WAKE, but leaving it inside [start,end] inflates TIB and awake% (Fold: 03:44–12:20 with ~40%
+    // awake vs WHOOP's 5:05–9:16 primary bout). Align the scored window to the longest sleep
+    // cluster — split on sustained wake — without inventing Deep/REM. Honesty: HR-only / sparse
+    // MG motion stages stay approximate; this only fixes the WINDOW.
+
+    /** Sustained wake (minutes) that splits sleep clusters / ends the primary bout. */
+    const val primaryBoutSplitWakeMin: Int = 45
+
+    /** Keep up to this many minutes of pre-onset wake as sleep-onset latency pad. */
+    const val primaryBoutSolPadMin: Int = 20
+
+    /** Keep up to this many minutes of post-final-sleep wake for a clean wake edge. */
+    const val primaryBoutWakePadMin: Int = 10
+
+    /**
+     * Rejoin a following sleep cluster when it has at least this many minutes asleep.
+     *
+     * User reports (WHOOP-class false morning wake ~6:15–6:22 while real wake ~8:15): Cole–Kripke /
+     * HR-rise can label a mid-morning stretch as sustained wake (≥ [primaryBoutSplitWakeMin]), so
+     * primary-bout keeps only the first cluster and cuts the scored wake early — even though the
+     * wearer returned to substantial sleep. Rejoin when that return-to-sleep is real; do **not**
+     * invent Deep/REM. Trailing post-final stillness with **no** return sleep still clips (Jul 17).
+     */
+    const val primaryBoutRejoinMinAsleepMin: Int = 45
+
+    /**
+     * Max wake gap (minutes) across which a substantial return-to-sleep may rejoin the primary bout.
+     * Longer gaps stay split (true early wake + later nap → nap card / separate cluster).
+     */
+    const val primaryBoutRejoinGapMaxMin: Int = 90
 
     /** Seconds in a calendar day (for local-hour-of-day arithmetic). */
     const val secondsPerDay: Long = 86_400L
@@ -420,15 +465,18 @@ object SleepStager {
 
     // Jul-13 pack (MAIN 32/66/2 vs WHOOP ~24/29/31/16): widen HR-low + still so sparse
     // PPG nights reopen Deep; lower HR-high so late still+elevated HR can reopen REM.
-    // Percentile bands stay relative — never invent Deep/REM from HC TIB.
-    const val stageHRLowPct: Double = 42.0
+    // Jul-20 Light-bias pack (Gilbert): widen Deep/REM eligibility further — Light is the
+    // classifyOne default when Wake/Deep/REM fail. Percentile bands stay relative — never
+    // invent Deep/REM from HC TIB / empty gravity. Per-epoch RMSSD still gates Deep via
+    // parasympOK; sessionAvgHRV is Charge-only (do not confuse).
+    const val stageHRLowPct: Double = 48.0
     const val stageHRHighPct: Double = 60.0
-    const val stageHRVHighPct: Double = 70.0
+    const val stageHRVHighPct: Double = 58.0
     const val stageHRVarHighPct: Double = 62.0
     const val stageRRVHighPct: Double = 65.0
     const val stageRRVLowPct: Double = 50.0
     const val stageWakeMoveFrac: Double = 0.15
-    const val stageStillMoveFrac: Double = 0.18
+    const val stageStillMoveFrac: Double = 0.21
 
     /**
      * Fraction of sleep-period epochs that must carry a MISSING per-epoch RMSSD (sparse R-R) for the
@@ -1166,14 +1214,20 @@ object SleepStager {
                 continue
             }
             // Fable Sleep #27/#28: soft-snap bed/wake to longest band-asleep stretch when present.
-            val (bed, wake) = refineBoundsFromBandState(p.start, p.end, bandSleepState)
-            val stages = if (useSleepStagerV2) {
-                SleepStagerV2.stageSession(start = bed, end = wake, grav = grav,
+            val (bed0, wake0) = refineBoundsFromBandState(p.start, p.end, bandSleepState)
+            val rawStages = if (useSleepStagerV2) {
+                SleepStagerV2.stageSession(start = bed0, end = wake0, grav = grav,
                     hr = hrS, rr = rrS, resp = respS)
             } else {
-                stageSession(start = bed, end = wake, grav = grav,
+                stageSession(start = bed0, end = wake0, grav = grav,
                     hr = hrS, rr = rrS, resp = respS)
             }
+            // Align scored TIB to the primary sleep bout (drop long post-wake stillness / pre-onset
+            // fluff that gravity merged into one run). Does not invent stages — clips only.
+            val aligned = alignToPrimaryBout(bed0, wake0, rawStages)
+            val bed = aligned.start
+            val wake = aligned.end
+            val stages = aligned.stages
             val eff = efficiency(start = bed, end = wake, stages = stages)
             val avgHrv = sessionAvgHRV(start = bed, end = wake, rr = rrS)
             val avgSdnn = sessionAvgSdnn(start = bed, end = wake, rr = rrS)
@@ -1190,13 +1244,188 @@ object SleepStager {
             )
             traceSink?.invoke(SleepStagerTrace.runLine(runIndex, bed, wake,
                 SleepStagerTrace.Verdict.KEPT, "accepted",
-                "spanMin=${(wake - bed) / 60} eff=${SleepStagerTrace.round2(eff)} restingHR=${restingFinal ?: -1} daytime=$isDaytime"))
+                "spanMin=${(wake - bed) / 60} eff=${SleepStagerTrace.round2(eff)} restingHR=${restingFinal ?: -1} daytime=$isDaytime primaryBout=${bed != bed0 || wake != wake0}"))
             // A run that does NOT continue the chain re-anchors it on this run's onset.
             if (!continuesChain) chainFromOvernight = isOvernightOnset(bed, tzOffsetSeconds)
             chainPrevEnd = wake
         }
         sessions.sortBy { it.start }
         return sessions
+    }
+
+    /**
+     * Clip a staged in-bed window to the **primary sleep bout**: the cluster of sleep epochs with
+     * the most asleep time, split when sustained wake ≥ [primaryBoutSplitWakeMin], then **rejoin**
+     * a following cluster when return-to-sleep is substantial within [primaryBoutRejoinGapMaxMin]
+     * (false morning wake). Trims long leading wake (keep ≤ [primaryBoutSolPadMin]) and long
+     * trailing wake (keep ≤ [primaryBoutWakePadMin]). Returns the original window when there is no
+     * sleep content or the clip would be empty. Never invents Deep/REM — only reshapes bounds +
+     * clips segments.
+     */
+    internal fun alignToPrimaryBout(
+        start: Long,
+        end: Long,
+        stages: List<StageSegment>,
+        splitWakeMin: Int = primaryBoutSplitWakeMin,
+        solPadMin: Int = primaryBoutSolPadMin,
+        wakePadMin: Int = primaryBoutWakePadMin,
+        rejoinMinAsleepMin: Int = primaryBoutRejoinMinAsleepMin,
+        rejoinGapMaxMin: Int = primaryBoutRejoinGapMaxMin,
+    ): DetectedSleep {
+        val segs = stages.sortedBy { it.start }.filter { it.end > it.start }
+        if (segs.isEmpty() || end <= start) {
+            return DetectedSleep(start = start, end = end, efficiency = 0.0, stages = stages,
+                restingHR = null, avgHRV = null)
+        }
+        val splitS = splitWakeMin * 60L
+        val solPadS = solPadMin * 60L
+        val wakePadS = wakePadMin * 60L
+        val rejoinMinS = rejoinMinAsleepMin * 60L
+        val rejoinGapS = rejoinGapMaxMin * 60L
+
+        data class Cluster(var start: Long, var end: Long, var asleepS: Long)
+
+        val clusters = ArrayList<Cluster>()
+        var cur: Cluster? = null
+        var pendingWakeStart: Long? = null
+        var pendingWakeEnd: Long? = null
+
+        fun flushWakeIntoOrSplit(wakeStart: Long, wakeEnd: Long) {
+            val wakeDur = wakeEnd - wakeStart
+            val c = cur
+            if (c == null) return // leading wake handled after cluster pick
+            if (wakeDur >= splitS) {
+                // Sustained wake ends the cluster; do not absorb it.
+                cur = null
+            } else {
+                // Short WASO stays inside the bout.
+                c.end = wakeEnd
+            }
+        }
+
+        for (s in segs) {
+            val isSleep = s.stage == "light" || s.stage == "deep" || s.stage == "rem"
+            if (isSleep) {
+                    if (pendingWakeStart != null && pendingWakeEnd != null) {
+                        flushWakeIntoOrSplit(pendingWakeStart, pendingWakeEnd)
+                        pendingWakeStart = null
+                        pendingWakeEnd = null
+                    }
+                val c = cur
+                if (c == null) {
+                    val neu = Cluster(start = s.start, end = s.end, asleepS = s.end - s.start)
+                    clusters.add(neu)
+                    cur = neu
+                } else {
+                    c.end = s.end
+                    c.asleepS += s.end - s.start
+                }
+            } else {
+                // wake
+                if (cur == null) continue // leading wake — trim later via SOL pad
+                if (pendingWakeStart == null) pendingWakeStart = s.start
+                pendingWakeEnd = s.end
+            }
+        }
+        // Trailing short wake may still be pending; absorb only if under split threshold.
+        if (pendingWakeStart != null && pendingWakeEnd != null) {
+            flushWakeIntoOrSplit(pendingWakeStart, pendingWakeEnd)
+        }
+
+        // Rejoin false-morning-wake splits: substantial return-to-sleep within the gap cap.
+        if (clusters.size >= 2) {
+            val merged = ArrayList<Cluster>()
+            var acc = clusters[0]
+            for (i in 1 until clusters.size) {
+                val nxt = clusters[i]
+                val gap = nxt.start - acc.end
+                if (gap in 1..rejoinGapS && nxt.asleepS >= rejoinMinS) {
+                    acc.end = nxt.end
+                    acc.asleepS += nxt.asleepS
+                } else {
+                    merged.add(acc)
+                    acc = nxt
+                }
+            }
+            merged.add(acc)
+            clusters.clear()
+            clusters.addAll(merged)
+        }
+
+        val primary = clusters.maxByOrNull { it.asleepS }
+            ?: return DetectedSleep(
+                start = start, end = end,
+                efficiency = efficiency(start, end, segs),
+                stages = segs.map { StageSegment(it.start, it.end, it.stage) },
+                restingHR = null, avgHRV = null,
+            )
+
+        // First / last sleep edges inside the primary cluster (for SOL / wake pads).
+        val sleepSegs = segs.filter {
+            (it.stage == "light" || it.stage == "deep" || it.stage == "rem") &&
+                it.start < primary.end && it.end > primary.start
+        }
+        val firstSleep = sleepSegs.minOfOrNull { it.start } ?: primary.start
+        val lastSleep = sleepSegs.maxOfOrNull { it.end } ?: primary.end
+
+        // Drop long pre-onset wake (keep ≤ SOL pad) and long post-wake stillness (keep ≤ wake pad).
+        // Short WASO already absorbed into [primary] stays inside the bout.
+        val newStart = maxOf(start, firstSleep - solPadS)
+        val newEnd = when {
+            primary.end > lastSleep -> minOf(end, primary.end) // absorbed short trailing WASO
+            else -> minOf(end, lastSleep + wakePadS)
+        }
+        if (newEnd <= newStart) {
+            return DetectedSleep(
+                start = start, end = end,
+                efficiency = efficiency(start, end, segs),
+                stages = segs.map { StageSegment(it.start, it.end, it.stage) },
+                restingHR = null, avgHRV = null,
+            )
+        }
+
+        // No-op when the gravity/band window already matches the primary bout.
+        if (newStart == start && newEnd == end) {
+            return DetectedSleep(
+                start = start, end = end,
+                efficiency = efficiency(start, end, segs),
+                stages = segs.map { StageSegment(it.start, it.end, it.stage) },
+                restingHR = null, avgHRV = null,
+            )
+        }
+
+        val clipped = ArrayList<StageSegment>()
+        for (s in segs) {
+            val a = maxOf(s.start, newStart)
+            val b = minOf(s.end, newEnd)
+            if (b <= a) continue
+            val last = clipped.lastOrNull()
+            if (last != null && last.stage == s.stage) {
+                last.end = b
+            } else {
+                clipped.add(StageSegment(start = a, end = b, stage = s.stage))
+            }
+        }
+        if (clipped.isEmpty()) {
+            return DetectedSleep(
+                start = start, end = end,
+                efficiency = efficiency(start, end, segs),
+                stages = segs.map { StageSegment(it.start, it.end, it.stage) },
+                restingHR = null, avgHRV = null,
+            )
+        }
+        // Ensure the clipped stages tile [newStart, newEnd]: pad edges with wake if needed.
+        if (clipped.first().start > newStart) {
+            clipped.add(0, StageSegment(newStart, clipped.first().start, "wake"))
+        }
+        if (clipped.last().end < newEnd) {
+            clipped.add(StageSegment(clipped.last().end, newEnd, "wake"))
+        }
+        val eff = efficiency(newStart, newEnd, clipped)
+        return DetectedSleep(
+            start = newStart, end = newEnd, efficiency = eff,
+            stages = clipped, restingHR = null, avgHRV = null,
+        )
     }
 
     /**
@@ -2032,7 +2261,12 @@ object SleepStager {
         // Missing respiration (NaN RRV) treated as "regular" (pro-deep bias).
         val rrvRegular = (!f.rrv.isFinite()) || (rrvLo != null && f.rrv <= rrvLo)
 
-        val still = f.moveFrac <= stageStillMoveFrac
+        val stillBar = if ((softPriors.bmi ?: 0.0) >= 35.0) {
+            stageStillMoveFrac * 1.15
+        } else {
+            stageStillMoveFrac
+        }
+        val still = f.moveFrac <= stillBar
         val moving = f.moveFrac >= stageWakeMoveFrac
 
         // WAKE: sustained motion + activated cardiac (or no HR to vet motion). On a sparse/PPG night the
@@ -2094,14 +2328,22 @@ object SleepStager {
         // late deep when early deep is already ADEQUATE (≥12% of the sleep window) — otherwise keep the
         // cardiac estimate. REM onset guard unchanged. (#127, 2026-07-14 pack)
         val sleepLen = (finalWakeIdx - onsetIdx + 1).coerceAtLeast(1)
-        val earlyDeepN = labels.indices.count {
-            it in onsetIdx..finalWakeIdx && labels[it] == "deep" && features[it].clock <= deepFirstFraction
+        val deepFrac = if ((softPriors.ageYears ?: 0.0) >= 65.0) {
+            (deepFirstFraction * 1.15).coerceAtMost(0.45)
+        } else {
+            deepFirstFraction
         }
-        val earlyDeepAdequate = earlyDeepN.toDouble() >= 0.12 * sleepLen.toDouble()
+        val earlyDeepN = labels.indices.count {
+            it in onsetIdx..finalWakeIdx && labels[it] == "deep" && features[it].clock <= deepFrac
+        }
+        // Jul-20 Light-bias pack: raise adequacy bar 0.12→0.15 so late Deep is demoted less often
+        // (when early Deep is only marginal, keep the cardiac estimate). Chose this over raising
+        // deepFirstFraction — that would make early-adequate easier and demote more late Deep.
+        val earlyDeepAdequate = earlyDeepN.toDouble() >= 0.15 * sleepLen.toDouble()
         for ((i, f) in features.withIndex()) {
             if (i < onsetIdx || i > finalWakeIdx) continue
             if (out[i] == "rem" && (i - onsetIdx) < noREMEpochs) out[i] = "light"
-            if (out[i] == "deep" && f.clock > deepFirstFraction && earlyDeepAdequate) out[i] = "light"
+            if (out[i] == "deep" && f.clock > deepFrac && earlyDeepAdequate) out[i] = "light"
         }
         return out
     }

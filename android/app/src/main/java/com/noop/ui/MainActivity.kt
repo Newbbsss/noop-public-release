@@ -6,9 +6,9 @@ import android.content.Intent
 import android.content.SharedPreferences
 import android.os.Build
 import android.os.Bundle
-import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.appcompat.app.AppCompatActivity
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
@@ -28,6 +28,7 @@ import com.noop.BuildConfig
 import com.noop.NoopApplication
 import com.noop.ble.BleProtocolMode
 import com.noop.ble.WhoopModel
+import com.noop.data.DataBackup
 import com.noop.data.DemoSeeder
 import com.noop.data.WhoopRepository
 import kotlinx.coroutines.Dispatchers
@@ -37,8 +38,13 @@ import kotlinx.coroutines.launch
  * Single-activity host. Requests the runtime BLE permissions the strap connection
  * needs, then renders the Compose tree under [NoopTheme]. The design system is
  * dark-only, so we draw edge-to-edge over the near-black [Palette.surfaceBase].
+ *
+ * Extends [AppCompatActivity] (not ComponentActivity) so
+ * [androidx.appcompat.app.AppCompatDelegate.setApplicationLocales] can apply
+ * per-app language packs and recreate this host — required for Compose
+ * `stringResource` to resolve values-es / values-fr / values-de.
  */
-class MainActivity : ComponentActivity() {
+class MainActivity : AppCompatActivity() {
 
     private val permissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
@@ -83,14 +89,30 @@ class MainActivity : ComponentActivity() {
         // being ON, runs fully off the main thread on Dispatchers.IO, and is launched AFTER the
         // launch-critical setup so a 100MB+ whole-DB zip can never block app startup. Cheap (two prefs
         // reads) when the feature is off, which is the default.
+        // Also: on-open auto-restore when the live store is empty and a folder backup holds data
+        // (default ON; never wipes a populated phone).
         runCatching { BackupSync.reschedule(applicationContext) }
         lifecycleScope.launch(Dispatchers.IO) {
             runCatching { BackupSync.catchUpIfDue(applicationContext) }
+            val restore = runCatching { BackupSync.autoRestoreIfNeeded(applicationContext) }
+                .getOrDefault(BackupSync.AutoRestoreOutcome.Skipped)
+            when (restore) {
+                is BackupSync.AutoRestoreOutcome.RestoredNeedsRelaunch -> {
+                    DataBackup.relaunchProcessAfterRestore(applicationContext)
+                }
+                is BackupSync.AutoRestoreOutcome.Failed -> {
+                    if (restore.mustRelaunch) {
+                        DataBackup.relaunchProcessAfterRestore(applicationContext)
+                    }
+                }
+                else -> Unit
+            }
         }
 
         // Load the Light/Dark/System + chart-colour preferences before first composition so the theme
         // and chart ramps are correct from the very first frame (no flash).
         AppearancePrefs.load(this)
+        LocalePrefs.load(this)
         ThemePackPrefs.load(this)
         ChartStylePrefs.load(this)
         // Decode the optional on-device profile photo (if set) before first composition so the Today
@@ -100,6 +122,7 @@ class MainActivity : ComponentActivity() {
         if (BuildConfig.DEBUG) {
             ChargingUiPreview.showFromIntent(intent)
         }
+        consumeOpenDevicesExtra(intent)
 
         setContent {
             NoopTheme {
@@ -112,6 +135,14 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         if (BuildConfig.DEBUG) ChargingUiPreview.showFromIntent(intent)
+        consumeOpenDevicesExtra(intent)
+    }
+
+    /** FGS 5AM sibling honesty → Devices (Use worn MG). */
+    private fun consumeOpenDevicesExtra(intent: Intent?) {
+        if (intent?.getBooleanExtra(EXTRA_OPEN_DEVICES, false) != true) return
+        SessionUiFlags.openDevicesOnce = true
+        intent.removeExtra(EXTRA_OPEN_DEVICES)
     }
 
     /** Request the BLE permissions appropriate to the running OS version. */
@@ -134,8 +165,10 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-internal fun appLaunchIntent(context: Context): Intent =
-    context.packageManager.getLaunchIntentForPackage(context.packageName)
+internal const val EXTRA_OPEN_DEVICES = "noop.open_devices"
+
+internal fun appLaunchIntent(context: Context, openDevices: Boolean = false): Intent =
+    (context.packageManager.getLaunchIntentForPackage(context.packageName)
         ?.apply {
             addFlags(
                 Intent.FLAG_ACTIVITY_NEW_TASK or
@@ -151,7 +184,9 @@ internal fun appLaunchIntent(context: Context): Intent =
                     Intent.FLAG_ACTIVITY_SINGLE_TOP or
                     Intent.FLAG_ACTIVITY_CLEAR_TOP,
             )
-        }
+        }).also { intent ->
+        if (openDevices) intent.putExtra(EXTRA_OPEN_DEVICES, true)
+    }
 
 // MARK: - First-run / changelog gating (mirrors macOS ContentView.swift)
 //
@@ -207,6 +242,12 @@ object NoopPrefs {
 
     /** Sub-option: while power saving is easing, release always-on continuous HRV. Live still arms on demand. */
     const val KEY_POWER_SAVING_RELEASE_CONTINUOUS_HRV = "noop.powerSavingReleaseContinuousHrv"
+
+    /** Experimental: CONNECTION_PRIORITY_HIGH during history offload only (ryanbr #536). Default OFF. */
+    const val KEY_FASTER_HISTORY_SYNC = "noop.fasterHistorySync"
+
+    /** Experimental: prefer LE 2M PHY during offload burst only (ryanbr #537+#538). Default OFF. */
+    const val KEY_FAST_LINK_PHY = "noop.fastLinkPhy"
 
     /** The calendar day (yyyy-MM-dd) on which the morning-journal nudge was last shown, keeps the
      *  Sleep screen's "Good morning" sheet to at most once per day. */
@@ -279,9 +320,10 @@ object NoopPrefs {
     }
 
     /** Whether NOOP keeps the dense realtime HR stream armed 24/7 for continuous HRV capture. Default
-     *  false. Only takes effect while [backgroundConnection] is also on. */
+     *  true (Gilbert P0 2026-07-17 — denser overnight HRV / daytime HR bank). Only takes effect while
+     *  [backgroundConnection] is also on. Absent key → ON; users who explicitly set OFF stay OFF. */
     fun continuousHrv(context: Context): Boolean =
-        of(context).getBoolean(KEY_CONTINUOUS_HRV, false)
+        of(context).getBoolean(KEY_CONTINUOUS_HRV, true)
 
     fun setContinuousHrv(context: Context, enabled: Boolean) {
         of(context).edit().putBoolean(KEY_CONTINUOUS_HRV, enabled).apply()
@@ -319,6 +361,20 @@ object NoopPrefs {
 
     fun setPowerSavingReleaseContinuousHrv(context: Context, enabled: Boolean) {
         of(context).edit().putBoolean(KEY_POWER_SAVING_RELEASE_CONTINUOUS_HRV, enabled).apply()
+    }
+
+    fun fasterHistorySync(context: Context): Boolean =
+        of(context).getBoolean(KEY_FASTER_HISTORY_SYNC, false)
+
+    fun setFasterHistorySync(context: Context, enabled: Boolean) {
+        of(context).edit().putBoolean(KEY_FASTER_HISTORY_SYNC, enabled).apply()
+    }
+
+    fun fastLinkPhy(context: Context): Boolean =
+        of(context).getBoolean(KEY_FAST_LINK_PHY, false)
+
+    fun setFastLinkPhy(context: Context, enabled: Boolean) {
+        of(context).edit().putBoolean(KEY_FAST_LINK_PHY, enabled).apply()
     }
 
     /** Whether the strap log is mirrored to logcat. Default false (normal users don't log to adb). */
@@ -405,6 +461,19 @@ object NoopPrefs {
         of(context).edit().apply {
             if (unit == null) remove(KEY_TEMPERATURE_UNIT) else putString(KEY_TEMPERATURE_UNIT, unit.raw)
         }.apply()
+    }
+
+    /**
+     * App clock face — **12-hour default** (Gilbert P0). Independent of the phone's system
+     * 12/24 setting so Today / Sleep / Alarm / haptic buzz always match what the user picks here.
+     */
+    const val KEY_USE_24_HOUR = "noop.use24HourClock"
+
+    fun use24HourClock(context: Context): Boolean =
+        of(context).getBoolean(KEY_USE_24_HOUR, false)
+
+    fun setUse24HourClock(context: Context, use24: Boolean) {
+        of(context).edit().putBoolean(KEY_USE_24_HOUR, use24).apply()
     }
 
     /** Health Connect periodic auto-sync (Samsung Health → Health Connect → NOOP). Default OFF.
@@ -881,8 +950,9 @@ object NoopPrefs {
     /** Whether the one-shot full-history Effort rescore has run. Bumped v313 → v322 so Fold days that an
      *  older gap-null rule left at strain=NULL (70k+ HR samples, Trends still showed an older spike) get
      *  rewritten once the Fable #322 segmenter ships. Set true once it completes so the pass never re-runs. */
-    // Bumped v323 → v324 (TOP 2026-07-13): MAIN stuck-calibrating / null Effort after prior one-shots.
-    const val KEY_EFFORT_RESCORE_DONE = "noop.effortRescore.v324.done"
+    // Bumped v324 → v176 (2026-07-17): Edwards ≥60% HRR + steps-only floor — stale same-day strain
+    // was freezing Effort at ~39 via effectiveEffortStrain max(live, stored) after the WHOOP compare.
+    const val KEY_EFFORT_RESCORE_DONE = "noop.effortRescore.v176.done"
 
     fun effortRescoreDone(context: Context): Boolean =
         of(context).getBoolean(KEY_EFFORT_RESCORE_DONE, false)
@@ -1044,6 +1114,90 @@ object NoopPrefs {
 
     fun setGripPulseEnabled(context: Context, enabled: Boolean) {
         of(context).edit().putBoolean(KEY_GRIP_PULSE, enabled).apply()
+    }
+
+    /**
+     * Last painted Today hero scores — survive process death and APK updates (SharedPreferences).
+     * Cold-open paints these until [AppViewModel.recentDays] emits so vessels never flash
+     * "Awaiting strap" over real yesterday Charge / Effort / Rest / stress / skin temp.
+     */
+    const val KEY_HERO_SNAP_DAY = "noop.heroSnap.day"
+    const val KEY_HERO_SNAP_CHARGE = "noop.heroSnap.charge"
+    const val KEY_HERO_SNAP_EFFORT = "noop.heroSnap.effort"
+    const val KEY_HERO_SNAP_REST = "noop.heroSnap.rest"
+    const val KEY_HERO_SNAP_STRESS = "noop.heroSnap.stress"
+    const val KEY_HERO_SNAP_SKIN = "noop.heroSnap.skinTempDevC"
+
+    data class HeroScoreSnapshot(
+        val day: String,
+        val charge: Double? = null,
+        val effort: Double? = null,
+        val rest: Double? = null,
+        val stress: Double? = null,
+        val skinTempDevC: Double? = null,
+    )
+
+    fun heroScoreSnapshot(context: Context): HeroScoreSnapshot? {
+        val p = of(context)
+        val day = p.getString(KEY_HERO_SNAP_DAY, null) ?: return null
+        fun d(key: String): Double? =
+            if (p.contains(key)) p.getFloat(key, Float.NaN).toDouble().takeIf { !it.isNaN() } else null
+        return HeroScoreSnapshot(
+            day = day,
+            charge = d(KEY_HERO_SNAP_CHARGE),
+            effort = d(KEY_HERO_SNAP_EFFORT),
+            rest = d(KEY_HERO_SNAP_REST),
+            stress = d(KEY_HERO_SNAP_STRESS),
+            skinTempDevC = d(KEY_HERO_SNAP_SKIN),
+        )
+    }
+
+    fun setHeroScoreSnapshot(context: Context, snap: HeroScoreSnapshot) {
+        val e = of(context).edit().putString(KEY_HERO_SNAP_DAY, snap.day)
+        fun put(key: String, v: Double?) {
+            if (v == null) e.remove(key) else e.putFloat(key, v.toFloat())
+        }
+        put(KEY_HERO_SNAP_CHARGE, snap.charge)
+        put(KEY_HERO_SNAP_EFFORT, snap.effort)
+        put(KEY_HERO_SNAP_REST, snap.rest)
+        put(KEY_HERO_SNAP_STRESS, snap.stress)
+        put(KEY_HERO_SNAP_SKIN, snap.skinTempDevC)
+        e.apply()
+    }
+
+    /**
+     * Last known strap pack SoC — survives process death so cold-open / disconnected never blank
+     * the battery ring. Aged by [com.noop.analytics.StrapBatteryPredictor] until live BLE is trusted.
+     * Distinct from [HeroScoreSnapshot.charge] (recovery Charge score).
+     */
+    const val KEY_STRAP_BATT_PCT = "noop.strapBatt.pct"
+    const val KEY_STRAP_BATT_AT_MS = "noop.strapBatt.atMs"
+    const val KEY_STRAP_BATT_CHARGING = "noop.strapBatt.charging"
+    const val KEY_STRAP_BATT_WHOOP5 = "noop.strapBatt.whoop5"
+
+    fun strapBatterySnapshot(context: Context): com.noop.analytics.StrapBatteryPredictor.Snapshot? {
+        val p = of(context)
+        if (!p.contains(KEY_STRAP_BATT_PCT) || !p.contains(KEY_STRAP_BATT_AT_MS)) return null
+        val pct = p.getFloat(KEY_STRAP_BATT_PCT, Float.NaN).toDouble()
+        if (pct.isNaN()) return null
+        return com.noop.analytics.StrapBatteryPredictor.Snapshot(
+            pct = pct.coerceIn(0.0, 100.0),
+            savedAtMs = p.getLong(KEY_STRAP_BATT_AT_MS, 0L),
+            charging = p.getBoolean(KEY_STRAP_BATT_CHARGING, false),
+            whoop5Family = p.getBoolean(KEY_STRAP_BATT_WHOOP5, true),
+        )
+    }
+
+    fun setStrapBatterySnapshot(
+        context: Context,
+        snap: com.noop.analytics.StrapBatteryPredictor.Snapshot,
+    ) {
+        of(context).edit()
+            .putFloat(KEY_STRAP_BATT_PCT, snap.pct.toFloat().coerceIn(0f, 100f))
+            .putLong(KEY_STRAP_BATT_AT_MS, snap.savedAtMs)
+            .putBoolean(KEY_STRAP_BATT_CHARGING, snap.charging)
+            .putBoolean(KEY_STRAP_BATT_WHOOP5, snap.whoop5Family)
+            .apply()
     }
 }
 

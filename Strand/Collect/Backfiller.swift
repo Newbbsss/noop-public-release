@@ -462,7 +462,9 @@ final class Backfiller {
                         unix: unix,
                         red: p.parsed["spo2_red"]?.intValue,
                         ir: p.parsed["spo2_ir"]?.intValue,
-                        skinRaw: p.parsed["skin_temp_raw"]?.intValue))
+                        skinRaw: p.parsed["skin_temp_raw"]?.intValue,
+                        sleepState: p.parsed["sleep_state"]?.intValue,
+                        auxByte82: p.parsed["aux_byte_82"]?.intValue))
                     spo2Dumped += 1
                 }
             }

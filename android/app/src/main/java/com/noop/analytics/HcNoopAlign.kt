@@ -131,9 +131,20 @@ object HcNoopAlign {
     /** Which source [preferSteps] would pick — for honest UI captions (Fable #320). */
     enum class StepsSource { STRAP, ESTIMATE, UNAVAILABLE }
 
+    /**
+     * Caption source for Today Steps. Phone never wins.
+     *
+     * Legacy Android (pre-harden) copied `steps_est` onto [DailyMetric.steps] when `@57` was
+     * missing, so strap and estimate can be equal on estimate-only days — treat that as
+     * ESTIMATE so the tile says `est. · …` rather than a false `band`. True `@57` days that
+     * coincidentally match an estimate are rare; wear-day verify if caption flips.
+     */
     @Suppress("UNUSED_PARAMETER")
     fun stepsSource(strap: Int?, hc: Int?, estimate: Int?): StepsSource? = when {
-        strap != null && strap > 0 -> StepsSource.STRAP
+        strap != null && strap > 0 -> {
+            if (estimate != null && estimate > 0 && strap == estimate) StepsSource.ESTIMATE
+            else StepsSource.STRAP
+        }
         estimate != null && estimate > 0 -> StepsSource.ESTIMATE
         else -> null
     }

@@ -4,6 +4,7 @@ import com.noop.data.HrSample
 import kotlin.math.abs
 import kotlin.math.exp
 import kotlin.math.ln
+import kotlin.math.pow
 import kotlin.math.roundToLong
 
 /*
@@ -94,10 +95,17 @@ object StrainScorer {
     const val banisterBMen: Double = 1.92
     const val banisterBWomen: Double = 1.67
 
-    /** Edwards zone cut-offs as (%HRR threshold, weight), highest-first. */
+    /**
+     * Edwards zone cut-offs as (%HRR threshold, weight), highest-first.
+     * No weight below **60% HRR** (classic Edwards zone-1 at 50% dropped): ambulatory daytime HR
+     * on rest/walk mornings was minting Effort ~40 while WHOOP Strain stayed ~0.1 with 0:00 zone
+     * time (Fold compare 2026-07-17). Easy days then sit on the steps movement floor instead.
+     */
     val edwardsZones: List<Pair<Double, Int>> = listOf(
-        90.0 to 5, 80.0 to 4, 70.0 to 3, 60.0 to 2, 50.0 to 1,
+        90.0 to 5, 80.0 to 4, 70.0 to 3, 60.0 to 2,
     )
+    /** Minimum %HRR that contributes any Edwards weight. */
+    const val edwardsMinPctHrr: Double = 60.0
 
     /** TRIMP accumulation method. */
     enum class Method { EDWARDS, BANISTER }
@@ -241,6 +249,71 @@ object StrainScorer {
         return exp(maxStrain * sumXX / sumXY)
     }
 
+    // ---- Steps floor (Gilbert P0 2026-07-17; retuned WHOOP-like; kcal removed 2026-07-17b) ----
+    //
+    // Docs (ANALYTICS.md / Scoring Guide) promise that a long walk with little cardio still moves
+    // Effort via a movement-derived floor. Cardio TRIMP stays primary when higher; the floor only
+    // raises calm/zero walks. Shape is CONVEX in steps (small at low–mid daily steps, steeper as
+    // steps accumulate) so a desk/rest morning stays near 0 like WHOOP Strain ~0.1, while a very
+    // high step day can matter more — without the old near-linear climb that hit ~22 at ~12k steps.
+    //
+    // activeKcalEst in DailyMetric is whole-day active+resting energy (often ~1.5–2k) — feeding it
+    // into the floor saturated the cap every calm day. Floor is **steps-only** until true active
+    // kcal exists.
+
+    /** Steps below this contribute 0 to the movement floor (desk / noise). */
+    const val movementStepsNoiseFloor: Int = 5_000
+    /** @deprecated Kept for API compat; kcal no longer raises the floor (total-day kcal was wrong). */
+    const val movementKcalNoiseFloor: Double = 250.0
+    /** Hard cap — steps alone never invent high cardio Effort. */
+    const val movementFloorCap: Double = 22.0
+    /**
+     * Excess-steps scale for the convex curve: floor ≈ cap × (excess / scale)^exponent,
+     * clipped to [0, cap]. ~22k excess (~27k total steps) approaches the cap.
+     */
+    const val movementStepsScale: Double = 22_000.0
+    /** Convex exponent (>1): accelerating contribution as steps accumulate. */
+    const val movementStepsExponent: Double = 1.85
+    const val movementKcalScale: Double = 1_000.0
+    const val movementKcalExponent: Double = 1.85
+
+    /**
+     * Movement-derived Effort floor (0…[movementFloorCap]) from band steps.
+     * Band / day steps only — never phone steps as primary (caller must pass strap or estimate).
+     * Rest / desk morning (under noise floors) → 0. Mid walk (~10–12k) → low single digits.
+     * Very high step days climb faster toward the cap; cardio TRIMP still wins when higher.
+     *
+     * [activeKcal] is accepted for call-site compat but **ignored** — `DailyMetric.activeKcalEst`
+     * is whole-day energy, not active-only, and was pinning Effort near the cap on rest mornings.
+     */
+    fun movementFloor(steps: Int?, @Suppress("UNUSED_PARAMETER") activeKcal: Double?): Double {
+        fun convex(excess: Double, scale: Double, exponent: Double): Double {
+            if (excess <= 0.0 || scale <= 0.0) return 0.0
+            val u = (excess / scale).coerceAtLeast(0.0)
+            val shaped = u.pow(exponent).coerceAtMost(1.0)
+            return movementFloorCap * shaped
+        }
+        val fromSteps = if (steps == null || steps < movementStepsNoiseFloor) {
+            0.0
+        } else {
+            convex((steps - movementStepsNoiseFloor).toDouble(), movementStepsScale, movementStepsExponent)
+        }
+        val raw = fromSteps.coerceIn(0.0, movementFloorCap)
+        return (raw * 100.0).roundToLong() / 100.0
+    }
+
+    /**
+     * Combine cardio TRIMP Effort with the steps/kcal floor: `max(trimp, floor)`.
+     * - Both absent / zero → null when [trimpEffort] is null and floor is 0 (honest no-data).
+     * - Floor alone (walk, thin HR) → non-null floor.
+     * - TRIMP wins when higher.
+     */
+    fun withMovementFloor(trimpEffort: Double?, steps: Int?, activeKcal: Double?): Double? {
+        val floor = movementFloor(steps, activeKcal)
+        if (trimpEffort == null) return if (floor > 0.0) floor else null
+        return maxOf(trimpEffort, floor)
+    }
+
     // ---- Public API ----
 
     /**
@@ -249,6 +322,9 @@ object StrainScorer {
      * Returns null when there isn't yet enough data to trust the number — fewer than [minReadings]
      * samples AND less than [minSpanSeconds] of HR coverage (the sparse-strap path, #482) — or when
      * maxHR ≤ restingHR (invalid HRR).
+     *
+     * Does **not** apply the steps/kcal floor — callers that have day steps / active kcal should
+     * wrap with [withMovementFloor] (see [AnalyticsEngine.analyzeDay] and live Today).
      *
      * @param hr time-ordered [HrSample] list.
      * @param maxHR HRmax (bpm). Defaults to 220 − defaultAge when null.

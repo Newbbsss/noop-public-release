@@ -711,8 +711,8 @@ public enum AnalyticsEngine {
         /// Below this restorative share, duration credit is discounted (Android RestScorer parity).
         public static let durationQualityShareGate: Double = 0.16
         public static let durationQualityFloor: Double = 0.42
-        /// Soft WHOOP Sleep Performance align on matched nights (~−10 pts). Staging untouched.
-        public static let restWhoopAlignScale: Double = 0.90
+        /// Gilbert honesty scale on weighted Rest (Android RestScorer parity; 8.6.234 → 0.78).
+        public static let restWhoopAlignScale: Double = 0.78
         /// Neutral consistency when the caller supplies no regularity signal.
         public static let neutralConsistency: Double = 0.5
 
@@ -752,7 +752,9 @@ public enum AnalyticsEngine {
 
             let needSeconds = max(needHours, 0.1) * 3600.0
             let restorativeShare = tstSeconds > 0 ? restorativeSeconds / tstSeconds : 0.0
-            let durationScore = clamp01(tstSeconds / needSeconds) * durationQualityFactor(restorativeShare)
+            let ratio = tstSeconds / needSeconds
+            let durationRaw = ratio >= 1.0 ? 1.0 : pow(ratio, 1.40)
+            let durationScore = durationRaw * durationQualityFactor(restorativeShare)
             let efficiencyScore = clamp01(efficiency)
             let deepFactor: Double = {
                 guard let deep = deepSeconds, tstSeconds > 0 else { return 1.0 }

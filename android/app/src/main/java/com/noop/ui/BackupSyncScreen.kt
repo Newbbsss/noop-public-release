@@ -64,6 +64,7 @@ fun BackupSyncScreen() {
 
     var treeUri by remember { mutableStateOf(BackupSyncPrefs.treeUri(context)) }
     var auto by remember { mutableStateOf(BackupSyncPrefs.autoEnabled(context)) }
+    var autoRestore by remember { mutableStateOf(BackupSyncPrefs.autoRestoreEnabled(context)) }
     var lastMs by remember { mutableStateOf(BackupSyncPrefs.lastBackupMs(context)) }
     var busy by remember { mutableStateOf(false) }
     // How many dated snapshots to keep; pruning deletes the oldest beyond this (BackupSync.snapshotsToPrune).
@@ -98,15 +99,18 @@ fun BackupSyncScreen() {
                     // user could keep syncing into the closed DB, the very bug we're fixing.
                     withContext(NonCancellable) {
                         delay(800)   // let the toast render before the process dies
-                        val ctx = context.applicationContext
-                        ctx.packageManager.getLaunchIntentForPackage(ctx.packageName)
-                            ?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
-                            ?.let { ctx.startActivity(it) }
-                        Runtime.getRuntime().exit(0)
+                        DataBackup.relaunchProcessAfterRestore(context)
                     }
                 }
-                is DataBackup.ImportResult.Failed ->
+                is DataBackup.ImportResult.Failed -> {
                     Toast.makeText(context, r.message, Toast.LENGTH_LONG).show()
+                    if (r.mustRelaunch) {
+                        withContext(NonCancellable) {
+                            delay(1200)
+                            DataBackup.relaunchProcessAfterRestore(context)
+                        }
+                    }
+                }
             }
         }
     }
@@ -191,6 +195,35 @@ fun BackupSyncScreen() {
                                 auto = it
                                 BackupSyncPrefs.setAutoEnabled(context, it)
                                 runCatching { BackupSync.reschedule(context) }
+                            },
+                            colors = SwitchDefaults.colors(
+                                checkedThumbColor = Palette.surfaceBase,
+                                checkedTrackColor = Palette.accent,
+                                uncheckedThumbColor = Palette.textSecondary,
+                                uncheckedTrackColor = Palette.surfaceInset,
+                                uncheckedBorderColor = Palette.hairline,
+                            ),
+                        )
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(
+                            modifier = Modifier.weight(1f),
+                            verticalArrangement = Arrangement.spacedBy(2.dp),
+                        ) {
+                            Text("Auto-restore on open", style = NoopType.body, color = Palette.textPrimary)
+                            Text(
+                                "When this phone has no NOOP data yet, restore the newest good backup from " +
+                                    "your folder on open. Never overwrites a phone that already has data. On by default.",
+                                style = NoopType.footnote, color = Palette.textTertiary,
+                            )
+                        }
+                        Spacer(Modifier.width(16.dp))
+                        Switch(
+                            checked = autoRestore,
+                            enabled = treeUri != null && !busy,
+                            onCheckedChange = {
+                                autoRestore = it
+                                BackupSyncPrefs.setAutoRestoreEnabled(context, it)
                             },
                             colors = SwitchDefaults.colors(
                                 checkedThumbColor = Palette.surfaceBase,

@@ -207,8 +207,29 @@ class SourceCoordinator(
         connectedWhoopAddress = address
         if (address == null) return
         scope.launch {
-            val activeId = registry.activeDeviceId() ?: return@launch
             val devices = registry.all()
+            // Gilbert Fold 2026-07-18: pin/BLE can be worn MG (E9…/MGB…) while registry still has the
+            // unworn 5AM sibling active (and the MG row archived). Promote the row that owns the live
+            // MAC so Devices lists MGB, samples bank under whoop-E9…, and Sleep sees last night.
+            val matched = devices.firstOrNull {
+                it.peripheralId.equals(address, ignoreCase = true)
+            } ?: devices.firstOrNull {
+                it.id.equals("whoop-$address", ignoreCase = true)
+            }
+            val activeId = registry.activeDeviceId()
+            if (matched != null && isWhoop(matched) && matched.id != activeId) {
+                log(
+                    "Multi-WHOOP: live $address matches ${matched.id} " +
+                        "(${matched.nickname ?: matched.model}) — promoting over active=$activeId",
+                )
+                registry.setActive(matched.id)
+                // Force reconcile even if we previously pointed at the sibling (lastSeenId short-circuit).
+                lastSeenId = null
+                reconcile(matched.id)
+                return@launch
+            }
+
+            if (activeId == null) return@launch
             val row = devices.firstOrNull { it.id == activeId }
             if (!isWhoop(activeId, devices) || row == null) return@launch
 
@@ -221,8 +242,8 @@ class SourceCoordinator(
                     // Already adopted this exact strap → nothing to do.
                 }
                 else ->
-                    // A DIFFERENT strap connected under this WHOOP row. Never silently overwrite — that would
-                    // mis-map another physical strap's samples onto this device. Log and leave the stored id.
+                    // A DIFFERENT strap connected and it has NO registry row of its own. Never silently
+                    // overwrite — that would mis-map another physical strap's samples onto this device.
                     log(
                         "Multi-WHOOP: active device $activeId is registered to strap $existing but " +
                             "$address connected — not overwriting.",

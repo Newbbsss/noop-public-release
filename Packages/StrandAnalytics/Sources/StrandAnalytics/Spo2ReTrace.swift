@@ -23,16 +23,18 @@ public enum Spo2ReTrace {
     /// keeps the strap log bounded; the Backfiller counter spans chunks and resets per session.
     public static let maxSamples = 8
 
-    /// One record's RE line: the mapped SpO2 channels + timestamp + layout version, then the FULL frame
-    /// hex (no prefix cap - a v24 record is ~84 B and the unmapped tail is exactly where a banked SpO2
-    /// would sit). Absent channels render "null" so a channel-less record still proves what it lacks.
+    /// One record's RE line: the mapped SpO2 channels + timestamp + layout version, then sleep_state /
+    /// aux_byte_82 (v18 research fields — raw, NEVER SpO2 %), then the FULL frame hex. Absent channels
+    /// render "null" so a channel-less record still proves what it lacks.
     /// Takes already-extracted ints (ConnectionTrace's primitive style) so this package stays free of a
     /// WhoopProtocol dependency; the caller reads them off its parsed frame.
     public static func recordLine(frame: [UInt8], version: Int?, unix: Int?,
-                                  red: Int?, ir: Int?, skinRaw: Int?) -> String {
+                                  red: Int?, ir: Int?, skinRaw: Int?,
+                                  sleepState: Int? = nil, auxByte82: Int? = nil) -> String {
         let hex = frame.map { String(format: "%02x", $0) }.joined()
         func f(_ v: Int?) -> String { v.map(String.init) ?? "null" }
         return "spo2re v=\(f(version)) unix=\(f(unix)) red=\(f(red)) ir=\(f(ir)) "
-            + "skinRaw=\(f(skinRaw)) len=\(frame.count) raw=\(hex)"
+            + "skinRaw=\(f(skinRaw)) sleep_state=\(f(sleepState)) aux82=\(f(auxByte82)) "
+            + "len=\(frame.count) raw=\(hex)"
     }
 }

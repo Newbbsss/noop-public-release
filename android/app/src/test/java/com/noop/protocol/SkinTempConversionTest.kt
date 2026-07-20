@@ -1,6 +1,7 @@
 package com.noop.protocol
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -58,5 +59,39 @@ class SkinTempConversionTest {
         val c = skinTempCelsius(900, DeviceFamily.WHOOP4)
         assertTrue(c > 28.0)
         assertTrue(c < 42.0)
+    }
+
+    // ── Registry model labels (#171) — Deep Timeline family resolve ─────────
+
+    @Test
+    fun registryModelWizardLabelsMapCorrectly() {
+        assertEquals(DeviceFamily.WHOOP4, DeviceFamily.forRegistryModel("4.0"))
+        assertEquals(DeviceFamily.WHOOP4, DeviceFamily.forRegistryModel("3.0"))
+        assertEquals(DeviceFamily.WHOOP4, DeviceFamily.forRegistryModel("WHOOP 4.0"))
+        assertEquals(DeviceFamily.WHOOP5, DeviceFamily.forRegistryModel("MG"))
+        assertEquals(DeviceFamily.WHOOP5, DeviceFamily.forRegistryModel("5.0"))
+        assertEquals(DeviceFamily.WHOOP5, DeviceFamily.forRegistryModel("WHOOP 5.0 / MG"))
+        assertEquals(DeviceFamily.WHOOP5, DeviceFamily.forRegistryModel("WHOOP"))
+        assertEquals(DeviceFamily.WHOOP5, DeviceFamily.forRegistryModel(null))
+    }
+
+    @Test
+    fun mgCentidegreesThroughWhoop4MapIsImpossibleHeat() {
+        // Worn MG raw ~3500 (= 35.0 °C). Mis-scaled through the WHOOP4 ADC map → ~166 °C
+        // (Deep Timeline MIN/MAX bug Gilbert reported).
+        val wrong = skinTempCelsius(3500, DeviceFamily.WHOOP4)
+        assertTrue("mis-scaled MG raw must look absurdly hot, got $wrong", wrong > 100.0)
+        assertFalse(isPlausibleSkinTempC(wrong))
+        val right = skinTempCelsius(3500, DeviceFamily.WHOOP5)
+        assertEquals(35.0, right, 1e-9)
+        assertTrue(isPlausibleSkinTempC(right))
+    }
+
+    @Test
+    fun ingestGateAcceptsEitherFamilyScale() {
+        assertTrue(isPlausibleSkinTempRaw(3400)) // 5/MG centidegrees ≈ 34 °C
+        assertTrue(isPlausibleSkinTempRaw(826))  // WHOOP4 worn ADC → 33 °C
+        assertFalse(isPlausibleSkinTempRaw(0))
+        assertFalse(isPlausibleSkinTempRaw(50_000))
     }
 }

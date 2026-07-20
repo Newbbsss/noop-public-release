@@ -47,6 +47,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
+import com.noop.R
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.text.style.TextAlign
@@ -160,28 +162,28 @@ fun HrvSnapshotScreen(
     // items. Conditional sections use `if (cond) { item {} }` so a hidden result/hint adds no row. Order +
     // spacing identical (LazyColumn reproduces the eager `spacedBy(20.dp)`).
     LazyScreenScaffold(
-        title = LifeChapterLacquer.HRV_READING_TITLE,
-        subtitle = LifeChapterLacquer.HRV_READING_SUBTITLE,
+        title = stringResource(R.string.hrv_reading_title),
+        subtitle = stringResource(R.string.hrv_reading_subtitle),
     ) {
         // Status row.
         item {
         Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             when (phase) {
-                HrvPhase.Idle -> StatePill(LifeChapterLacquer.HRV_PHASE_READY, tone = StrandTone.Neutral)
-                HrvPhase.Capturing -> StatePill(LifeChapterLacquer.HRV_PHASE_CAPTURING, tone = StrandTone.Accent, pulsing = true)
-                HrvPhase.Done -> StatePill(LifeChapterLacquer.HRV_PHASE_DONE, tone = StrandTone.Positive)
+                HrvPhase.Idle -> StatePill(stringResource(R.string.hrv_phase_ready), tone = StrandTone.Neutral)
+                HrvPhase.Capturing -> StatePill(stringResource(R.string.hrv_phase_capturing), tone = StrandTone.Accent, pulsing = true)
+                HrvPhase.Done -> StatePill(stringResource(R.string.hrv_phase_done), tone = StrandTone.Positive)
             }
             Spacer(Modifier.width(8.dp))
             if (bonded) {
-                StatePill(LifeChapterLacquer.HRV_STRAP_LIVE, tone = StrandTone.Positive)
+                StatePill(stringResource(R.string.hrv_strap_live), tone = StrandTone.Positive)
             } else {
-                StatePill(LifeChapterLacquer.HRV_STRAP_OFF, tone = StrandTone.Warning)
+                StatePill(stringResource(R.string.hrv_strap_off), tone = StrandTone.Warning)
             }
             Spacer(Modifier.weight(1f))
             IconButton(onClick = onClose) {
                 Icon(
                     Icons.Filled.Close,
-                    contentDescription = LifeChapterLacquer.HRV_CLOSE_A11Y,
+                    contentDescription = stringResource(R.string.hrv_close_a11y),
                     tint = Palette.textTertiary,
                 )
             }
@@ -216,13 +218,13 @@ fun HrvSnapshotScreen(
                             hrvMsRmssdUnit()
                         },
                         sub = if (phase == HrvPhase.Capturing) {
-                            hrvCapturingSub(secondsRemaining, captureBuffer.value.size)
+                            hrvCapturingSub(context, secondsRemaining, captureBuffer.value.size)
                         } else null,
                     )
                 }
 
                 Text(
-                    text = instruction(phase, bonded, result),
+                    text = instruction(context, phase, bonded, result),
                     style = NoopType.subhead,
                     color = if (phase == HrvPhase.Capturing) Palette.restBright else Palette.textSecondary,
                     textAlign = TextAlign.Center,
@@ -263,7 +265,7 @@ fun HrvSnapshotScreen(
                 } else {
                     Icon(Icons.Filled.MonitorHeart, contentDescription = null, modifier = Modifier.padding(end = 6.dp))
                 }
-                Text(primaryLabel(phase), style = NoopType.headline)
+                Text(primaryLabel(context, phase), style = NoopType.headline)
             }
 
             val r = result
@@ -290,7 +292,7 @@ fun HrvSnapshotScreen(
                 ) {
                     Icon(Icons.Filled.Download, contentDescription = null, modifier = Modifier.padding(end = 6.dp))
                     Text(
-                        if (saved) LifeChapterLacquer.HRV_SAVED_LABEL else LifeChapterLacquer.HRV_SAVE_LABEL,
+                        if (saved) stringResource(R.string.hrv_saved) else stringResource(R.string.hrv_save),
                         style = NoopType.body,
                     )
                 }
@@ -336,13 +338,14 @@ private enum class HrvPhase { Idle, Capturing, Done }
 /** The centre dial: a progress ring around the live RMSSD / countdown. */
 @Composable
 private fun CaptureDial(fraction: Float, value: String, unit: String, sub: String?) {
+    val context = LocalContext.current
     val animatedFraction by animateFloatAsState(
         targetValue = fraction.coerceIn(0f, 1f),
         animationSpec = tween(400, easing = Motion.easeInOut),
         label = "hrvDial",
     )
     val a11y = when {
-        sub != null -> hrvDialCapturingA11y(value, sub)
+        sub != null -> hrvDialCapturingA11y(context, value, sub)
         else -> "$value $unit"
     }
     Box(
@@ -401,7 +404,7 @@ private fun CaptureDial(fraction: Float, value: String, unit: String, sub: Strin
 private fun ResultCard(result: HrvAnalyzer.HrvResult) {
     NoopCard(padding = 18.dp, tint = Palette.restColor) {
         Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-            Overline(LifeChapterLacquer.HRV_YOUR_READING_OVERLINE)
+            Overline(stringResource(R.string.hrv_your_reading))
 
             if (result.rmssd == null) {
                 Row(
@@ -410,7 +413,12 @@ private fun ResultCard(result: HrvAnalyzer.HrvResult) {
                 ) {
                     Icon(Icons.Filled.WarningAmber, contentDescription = null, tint = Palette.statusWarning)
                     Text(
-                        hrvInsufficientBeatsBody(result.nClean, result.nInput, HrvAnalyzer.MIN_BEATS),
+                        hrvInsufficientBeatsBody(
+                            LocalContext.current,
+                            result.nClean,
+                            result.nInput,
+                            HrvAnalyzer.MIN_BEATS,
+                        ),
                         style = NoopType.footnote, color = Palette.textSecondary,
                     )
                 }
@@ -498,13 +506,20 @@ private fun dialValue(phase: HrvPhase, runningRmssd: Double?, result: HrvAnalyze
         HrvPhase.Done -> result?.rmssd?.let { String.format(Locale.US, "%.0f", it) } ?: "—"
     }
 
-private fun primaryLabel(phase: HrvPhase): String = hrvPrimaryLabel(
+private fun primaryLabel(context: android.content.Context, phase: HrvPhase): String = hrvPrimaryLabel(
+    context = context,
     capturing = phase == HrvPhase.Capturing,
     done = phase == HrvPhase.Done,
 )
 
-private fun instruction(phase: HrvPhase, bonded: Boolean, result: HrvAnalyzer.HrvResult?): String =
+private fun instruction(
+    context: android.content.Context,
+    phase: HrvPhase,
+    bonded: Boolean,
+    result: HrvAnalyzer.HrvResult?,
+): String =
     hrvInstruction(
+        context = context,
         capturing = phase == HrvPhase.Capturing,
         done = phase == HrvPhase.Done,
         bonded = bonded,

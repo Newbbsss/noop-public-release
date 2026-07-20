@@ -130,3 +130,153 @@ internal const val LOGICAL_DAY_ROLLOVER_HOUR: Int = 4
 
 /** Exposed for symmetry / call-site readability (start of the rollover window). */
 internal val LOGICAL_DAY_ROLLOVER_TIME: LocalTime = LocalTime.of(LOGICAL_DAY_ROLLOVER_HOUR, 0)
+
+/**
+ * Evening hour that opens a wake-day's overnight bout window (prior day 18:00 → wake day 18:00).
+ * Also the soft ceiling: after this hour on a calendar day with no bout yet, presentation follows
+ * [logicalDay] again (new evening cycle) instead of extending "yesterday" forever.
+ */
+internal const val AWAKE_SPAN_EVENING_HOUR: Int = 18
+
+/** Minimum session length (seconds) to count as tonight's overnight bout; shorter daytime naps are ignored. */
+internal const val AWAKE_SPAN_MIN_BOUT_SEC: Long = 90L * 60L
+
+/**
+ * True when any sleep block belongs to [wakeDay]'s overnight bout: started after the prior evening
+ * ([AWAKE_SPAN_EVENING_HOUR]) through wakeDay's evening, or ended on wakeDay before that evening.
+ * Short daytime-onset naps are ignored so a 20-minute sit does not clear the awake-past-midnight span.
+ */
+internal fun hasOvernightBoutForWakeDay(
+    wakeDay: LocalDate,
+    sessions: List<Pair<Long, Long>>,
+    zone: ZoneId,
+    eveningHour: Int = AWAKE_SPAN_EVENING_HOUR,
+    minBoutSec: Long = AWAKE_SPAN_MIN_BOUT_SEC,
+): Boolean {
+    val eveningStart = wakeDay.minusDays(1).atTime(eveningHour, 0).atZone(zone).toEpochSecond()
+    val nextEvening = wakeDay.atTime(eveningHour, 0).atZone(zone).toEpochSecond()
+    val wakeDayStart = wakeDay.atStartOfDay(zone).toEpochSecond()
+    return sessions.any { (start, end) ->
+        if (end < start) return@any false
+        val dur = end - start
+        if (dur < minBoutSec) {
+            val hour = java.time.Instant.ofEpochSecond(start).atZone(zone).toLocalTime().hour
+            // Short block only counts with overnight-ish onset (not a daytime nap).
+            if (hour in 8 until 20) return@any false
+        }
+        val startedInWindow = start in eveningStart until nextEvening
+        val endedOnWakeMorning = end in wakeDayStart until nextEvening
+        startedInWindow || endedOnWakeMorning
+    }
+}
+
+/**
+ * Presentation "today" while still awake after calendar midnight (Gilbert): keep the prior calendar
+ * day until tonight's overnight bout begins. Once a bout exists (or the new evening has started),
+ * fall back to [logicalDay] (04:00 rollover for early risers).
+ *
+ * [wakeDayHasBankedNight] covers the morning-after case where the overnight session is already
+ * scored on the calendar wake-day (Charge ready) but the live session merge briefly lags — without
+ * it, presentation stayed on yesterday until 18:00 and Yesterday skipped a day.
+ *
+ * Pure + injectable for [LogicalDayTest] / awake-span tests.
+ */
+internal fun awakePresentationDay(
+    now: ZonedDateTime,
+    hasTonightOvernightBout: Boolean,
+    wakeDayHasBankedNight: Boolean = false,
+    rolloverHour: Int = LOGICAL_DAY_ROLLOVER_HOUR,
+    eveningHour: Int = AWAKE_SPAN_EVENING_HOUR,
+): LocalDate {
+    val t = now.toLocalTime()
+    val boutOrBanked = hasTonightOvernightBout || wakeDayHasBankedNight
+    if (!boutOrBanked && t < LocalTime.of(eveningHour, 0)) {
+        return now.toLocalDate().minusDays(1)
+    }
+    return logicalDay(now, rolloverHour)
+}
+
+/** ISO key for [awakePresentationDay]. */
+internal fun awakePresentationDayKey(
+    now: ZonedDateTime,
+    hasTonightOvernightBout: Boolean,
+    wakeDayHasBankedNight: Boolean = false,
+    rolloverHour: Int = LOGICAL_DAY_ROLLOVER_HOUR,
+    eveningHour: Int = AWAKE_SPAN_EVENING_HOUR,
+): String = awakePresentationDay(
+    now, hasTonightOvernightBout, wakeDayHasBankedNight, rolloverHour, eveningHour,
+).toString()
+
+/**
+ * Window start for HR / Effort / day-span charts: midnight of the presentation day, so after
+ * calendar midnight while still awake the curve keeps yesterday → now instead of blanking.
+ */
+internal fun awakeSpanStartEpochSecond(
+    now: ZonedDateTime,
+    hasTonightOvernightBout: Boolean,
+    wakeDayHasBankedNight: Boolean = false,
+    zone: ZoneId = now.zone,
+    rolloverHour: Int = LOGICAL_DAY_ROLLOVER_HOUR,
+    eveningHour: Int = AWAKE_SPAN_EVENING_HOUR,
+): Long = awakePresentationDay(
+    now, hasTonightOvernightBout, wakeDayHasBankedNight, rolloverHour, eveningHour,
+)
+    .atStartOfDay(zone)
+    .toEpochSecond()
+
+/**
+ * True in the post-midnight awake continuation: UI should label the span as prior-day → now
+ * (Language owns final copy; logic only exposes the gate).
+ */
+internal fun extendsAwakePastMidnight(
+    now: ZonedDateTime,
+    hasTonightOvernightBout: Boolean,
+    wakeDayHasBankedNight: Boolean = false,
+    eveningHour: Int = AWAKE_SPAN_EVENING_HOUR,
+): Boolean = !hasTonightOvernightBout &&
+    !wakeDayHasBankedNight &&
+    now.toLocalTime() < LocalTime.of(eveningHour, 0)
+
+/**
+ * Whether a daily row is worth listing as its own navigable day (Charge / sleep / effort / vitals).
+ * Empty calendar stubs (UTC twin, post-midnight blank, import placeholder) are dropped so the
+ * day strip does not show two Fri/Sat/Sun labels for one real day.
+ */
+internal fun isMeaningfulDayRow(m: DailyMetric): Boolean =
+    m.totalSleepMin != null ||
+        m.recovery != null ||
+        (m.strain != null && m.strain > 0.0) ||
+        m.avgHrv != null ||
+        m.restingHr != null ||
+        m.respRateBpm != null ||
+        (m.steps != null && m.steps > 0) ||
+        (m.exerciseCount != null && m.exerciseCount > 0)
+
+/**
+ * Offsets (days back from [anchor]) for banked days that carry real data, always including 0.
+ * Dedupes by calendar key so a stub twin cannot mint a second weekday mark.
+ */
+internal fun loggedDayOffsetsFromBank(
+    days: List<DailyMetric>,
+    anchor: LocalDate,
+): List<Int> {
+    val fromBank = days.mapNotNull { m ->
+        if (!isMeaningfulDayRow(m)) return@mapNotNull null
+        val d = runCatching { LocalDate.parse(m.day) }.getOrNull() ?: return@mapNotNull null
+        java.time.temporal.ChronoUnit.DAYS.between(d, anchor).toInt().takeIf { it >= 0 }
+    }
+    return (fromBank + 0).distinct().sorted()
+}
+
+/**
+ * Subtitle under the Today header title. When the title is already the weekday name (offset ≥ 2),
+ * omit the repeated EEEE so Gilbert does not see a large "Friday" over a small "Friday, …".
+ */
+internal fun todayHeaderHumanDate(
+    selectedDayOffset: Int,
+    keyDate: LocalDate,
+    locale: java.util.Locale = java.util.Locale.getDefault(),
+): String {
+    val pattern = if (selectedDayOffset >= 2) "d MMMM" else "EEEE, d MMMM"
+    return keyDate.format(java.time.format.DateTimeFormatter.ofPattern(pattern, locale))
+}

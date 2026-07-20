@@ -7,6 +7,7 @@ import android.content.pm.PackageManager
 import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.annotation.StringRes
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -17,9 +18,11 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CalendarMonth
@@ -52,6 +55,7 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
@@ -61,6 +65,7 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.graphics.Color
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.noop.R
 import com.noop.notif.CallAlertController
 import com.noop.notif.CallAlertSource
 import java.util.Calendar
@@ -81,24 +86,25 @@ import java.util.Calendar
 
 // MARK: - Domain model (mirrors NotificationSettingsStore.swift)
 
-/** Haptic pattern fired on the strap; only the repeat count varies. */
-internal enum class BuzzPattern(val label: String, val loops: Int) {
-    Single("Single", 1),
-    Double("Double", 2),
-    Triple("Triple", 3),
-    Long("Long", 5),
+/** Haptic pattern fired on the strap; only the repeat count varies. `label` stays EN for prefs/JVM. */
+internal enum class BuzzPattern(val label: String, val loops: Int, @StringRes val labelRes: Int) {
+    Single("Single", 1, R.string.notif_pattern_single),
+    Double("Double", 2, R.string.notif_pattern_double),
+    Triple("Triple", 3, R.string.notif_pattern_triple),
+    Long("Long", 5, R.string.notif_pattern_long),
 }
 
-/** Grouping for the settings screen, with its header icon + default pattern. */
+/** Grouping for the settings screen, with its header icon + default pattern. `title` stays EN for JVM. */
 internal enum class NotifCategory(
     val title: String,
     val icon: ImageVector,
     val defaultPattern: BuzzPattern,
+    @StringRes val titleRes: Int,
 ) {
-    Email("Email", Icons.Filled.Email, BuzzPattern.Double),
-    Messaging("Messaging", Icons.AutoMirrored.Filled.Chat, BuzzPattern.Single),
-    Meetings("Meetings", Icons.Filled.Videocam, BuzzPattern.Triple),
-    Calendar("Calendar & Reminders", Icons.Filled.CalendarMonth, BuzzPattern.Double),
+    Email("Email", Icons.Filled.Email, BuzzPattern.Double, R.string.notif_cat_email),
+    Messaging("Messaging", Icons.AutoMirrored.Filled.Chat, BuzzPattern.Single, R.string.notif_cat_messaging),
+    Meetings("Meetings", Icons.Filled.Videocam, BuzzPattern.Triple, R.string.notif_cat_meetings),
+    Calendar("Calendar & Reminders", Icons.Filled.CalendarMonth, BuzzPattern.Double, R.string.notif_cat_calendar),
 }
 
 /** A notification-capable app NOOP can mirror to the wrist. `id` is the persistence key. */
@@ -259,12 +265,12 @@ fun NotificationsSettingsScreen(vm: AppViewModel) {
     val enabledCount = enabledState.values.count { it }
 
     ScreenScaffold(
-        title = "Notifications",
-        subtitle = "Buzz your strap when these apps notify you. Everything runs on this device.",
+        title = stringResource(R.string.nav_notifications),
+        subtitle = stringResource(R.string.notif_subtitle),
     ) {
         // #108 — Alarms vs Notifications vs Cycle reminders.
         Text(
-            alarmTaxonomyGlossary(),
+            alarmTaxonomyGlossaryLocalized(context),
             style = NoopType.footnote,
             color = Palette.textTertiary,
             modifier = Modifier.fillMaxWidth(),
@@ -272,12 +278,12 @@ fun NotificationsSettingsScreen(vm: AppViewModel) {
         // MARK: Master card
         AlertSection(
             icon = Icons.Filled.NotificationsActive,
-            title = "Wrist alerts",
-            blurb = "When on, NOOP taps your wrist for the apps you pick below, so you can leave " +
-                "your phone and still feel what matters.",
+            title = stringResource(R.string.notif_wrist_alerts_title),
+            blurb = stringResource(R.string.notif_wrist_alerts_blurb),
         ) {
+            val enableLabel = stringResource(R.string.notif_enable_wrist_alerts)
             Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Text("Enable wrist alerts", style = NoopType.body, color = Palette.textPrimary)
+                Text(enableLabel, style = NoopType.body, color = Palette.textPrimary)
                 Spacer(Modifier.weight(1f))
                 NoopSwitch(
                     checked = masterEnabled,
@@ -285,7 +291,7 @@ fun NotificationsSettingsScreen(vm: AppViewModel) {
                         masterEnabled = it
                         NotifPrefs.setBool(context, NotifPrefs.MASTER, it)
                     },
-                    label = "Enable wrist alerts",
+                    label = enableLabel,
                 )
             }
 
@@ -294,15 +300,18 @@ fun NotificationsSettingsScreen(vm: AppViewModel) {
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                StatePill(strapPillTitle(live), tone = strapPillTone(live), pulsing = live.connected)
+                StatePill(strapPillTitle(context, live), tone = strapPillTone(live), pulsing = live.connected)
                 StatePill(
-                    "$enabledCount app${if (enabledCount == 1) "" else "s"} on",
+                    stringResource(
+                        if (enabledCount == 1) R.string.notif_apps_on_one else R.string.notif_apps_on_many,
+                        enabledCount,
+                    ),
                     tone = if (enabledCount > 0) StrandTone.Positive else StrandTone.Neutral,
                     showsDot = false,
                 )
                 Spacer(Modifier.weight(1f))
                 PillButton(
-                    label = LifeChapterLacquer.ALARM_TEST_BUZZ_LABEL,
+                    label = stringResource(R.string.notif_test_buzz),
                     icon = Icons.Filled.GraphicEq,
                     enabled = live.bonded,
                     onClick = { vm.buzz(loops = 2) },
@@ -381,12 +390,12 @@ fun NotificationsSettingsScreen(vm: AppViewModel) {
         // MARK: Behaviour card
         AlertSection(
             icon = Icons.Filled.Tune,
-            title = "Behaviour",
-            blurb = "Fine-tune when alerts reach your wrist.",
+            title = stringResource(R.string.notif_behaviour_title),
+            blurb = stringResource(R.string.notif_behaviour_blurb),
         ) {
             FormToggleRow(
-                label = "Only buzz when worn",
-                help = "Skip alerts when the strap is off your wrist.",
+                label = stringResource(R.string.notif_only_when_worn),
+                help = stringResource(R.string.notif_only_when_worn_help),
                 checked = onlyWhenWorn,
                 onChange = {
                     onlyWhenWorn = it
@@ -395,10 +404,8 @@ fun NotificationsSettingsScreen(vm: AppViewModel) {
             )
             RowDivider()
             FormToggleRow(
-                label = "All other apps",
-                help = "Also buzz for apps that aren't in the lists above (e.g. BeReal). Android " +
-                    "doesn't let NOOP see every installed app, so this is how you cover the rest. " +
-                    "Can be chatty; quiet hours and \"only when worn\" still apply.",
+                label = stringResource(R.string.notif_all_other_apps),
+                help = stringResource(R.string.notif_all_other_apps_help),
                 checked = allOtherApps,
                 onChange = {
                     allOtherApps = it
@@ -407,8 +414,8 @@ fun NotificationsSettingsScreen(vm: AppViewModel) {
             )
             RowDivider()
             FormToggleRow(
-                label = "Quiet hours",
-                help = "Mute wrist alerts overnight.",
+                label = stringResource(R.string.notif_quiet_hours),
+                help = stringResource(R.string.notif_quiet_hours_help),
                 checked = quietHoursEnabled,
                 onChange = {
                     quietHoursEnabled = it
@@ -422,19 +429,19 @@ fun NotificationsSettingsScreen(vm: AppViewModel) {
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
-                    Text("From", style = NoopType.body, color = Palette.textPrimary)
+                    Text(stringResource(R.string.notif_quiet_from), style = NoopType.body, color = Palette.textPrimary)
                     TimeChip(
                         minutes = quietStartMinutes,
-                        accessibilityLabel = "Quiet hours start",
+                        accessibilityLabel = stringResource(R.string.notif_quiet_start_a11y),
                         onPicked = {
                             quietStartMinutes = it
                             NotifPrefs.setInt(context, NotifPrefs.QUIET_START, it)
                         },
                     )
-                    Text("to", style = NoopType.body, color = Palette.textSecondary)
+                    Text(stringResource(R.string.notif_quiet_to), style = NoopType.body, color = Palette.textSecondary)
                     TimeChip(
                         minutes = quietEndMinutes,
-                        accessibilityLabel = "Quiet hours end",
+                        accessibilityLabel = stringResource(R.string.notif_quiet_end_a11y),
                         onPicked = {
                             quietEndMinutes = it
                             NotifPrefs.setInt(context, NotifPrefs.QUIET_END, it)
@@ -448,15 +455,12 @@ fun NotificationsSettingsScreen(vm: AppViewModel) {
         // MARK: Daily reports (#517) — phone notifications, not wrist buzzes. Opt-in, default OFF, no AI.
         AlertSection(
             icon = Icons.Filled.NotificationsActive,
-            title = "Daily reports",
-            blurb = "Optional phone notifications, off by default. These arrive after your strap syncs " +
-                "and NOOP scores the data, so they land soon after, not the exact second you wake or " +
-                "finish a workout. Everything is worked out on this phone.",
+            title = stringResource(R.string.notif_daily_reports_title),
+            blurb = stringResource(R.string.notif_daily_reports_blurb),
         ) {
             FormToggleRow(
-                label = "Morning recap",
-                help = "After last night is processed, a notification with your Charge and Rest. Posts " +
-                    "once a day, after your strap has synced the night.",
+                label = stringResource(R.string.notif_morning_recap),
+                help = stringResource(R.string.notif_morning_recap_help),
                 checked = morningReport,
                 onChange = {
                     morningReport = it
@@ -465,9 +469,8 @@ fun NotificationsSettingsScreen(vm: AppViewModel) {
             )
             RowDivider()
             FormToggleRow(
-                label = "Post-workout summary",
-                help = "When a new workout syncs in, a notification with its Effort, duration and average " +
-                    "heart rate. Shows up after the session reaches NOOP on the next sync.",
+                label = stringResource(R.string.notif_post_workout),
+                help = stringResource(R.string.notif_post_workout_help),
                 checked = postWorkoutReport,
                 onChange = {
                     postWorkoutReport = it
@@ -483,10 +486,10 @@ fun NotificationsSettingsScreen(vm: AppViewModel) {
 
 // MARK: - Strap status (mirrors the three-state mapping from the Mac screen)
 
-private fun strapPillTitle(live: com.noop.ble.LiveState): String = when {
-    live.connected -> "Strap connected"
-    live.bonded -> "Strap idle"
-    else -> "Strap not connected"
+private fun strapPillTitle(context: Context, live: com.noop.ble.LiveState): String = when {
+    live.connected -> context.getString(R.string.notif_strap_connected)
+    live.bonded -> context.getString(R.string.notif_strap_idle)
+    else -> context.getString(R.string.notif_strap_not_connected)
 }
 
 private fun strapPillTone(live: com.noop.ble.LiveState): StrandTone = when {
@@ -511,10 +514,11 @@ private fun CallsCard(
     onTest: () -> Unit,
 ) {
     val contentAlpha = if (masterEnabled) 1f else Palette.disabledOpacity
+    val buzzCallsLabel = stringResource(R.string.notif_buzz_incoming_calls)
     AlertSection(
         icon = Icons.Filled.Call,
-        title = "Calls",
-        blurb = "Tap your wrist for incoming phone calls and strict best-effort VoIP calls.",
+        title = stringResource(R.string.notif_calls_title),
+        blurb = stringResource(R.string.notif_calls_blurb),
     ) {
         Column(modifier = Modifier.alphaIf(contentAlpha)) {
             Row(
@@ -525,9 +529,9 @@ private fun CallsCard(
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    Text("Buzz on incoming calls", style = NoopType.body, color = Palette.textPrimary)
+                    Text(buzzCallsLabel, style = NoopType.body, color = Palette.textPrimary)
                     Text(
-                        "Uses the same quiet-hours and worn-only rules.",
+                        stringResource(R.string.notif_buzz_incoming_calls_help),
                         style = NoopType.footnote,
                         color = Palette.textTertiary,
                     )
@@ -540,21 +544,21 @@ private fun CallsCard(
                     checked = callsEnabled,
                     onChange = onCallsEnabled,
                     enabled = masterEnabled,
-                    label = "Buzz on incoming calls",
+                    label = buzzCallsLabel,
                 )
             }
             if (callsEnabled) {
                 RowDivider()
                 FormToggleRow(
-                    label = "Phone calls",
-                    help = "Needs Phone permission; NOOP never reads numbers or call logs.",
+                    label = stringResource(R.string.notif_phone_calls),
+                    help = stringResource(R.string.notif_phone_calls_help),
                     checked = phoneCallsEnabled,
                     enabled = masterEnabled,
                     onChange = onPhoneCallsEnabled,
                 )
                 if (permissionDenied) {
                     Text(
-                        "Phone permission was denied, so phone-call buzzing is off.",
+                        stringResource(R.string.notif_phone_permission_denied),
                         style = NoopType.footnote,
                         color = Palette.statusCritical,
                         modifier = Modifier.padding(top = 2.dp, bottom = 8.dp),
@@ -562,8 +566,8 @@ private fun CallsCard(
                 }
                 RowDivider()
                 FormToggleRow(
-                    label = "VoIP calls",
-                    help = "Detects call-style notifications from known calling apps.",
+                    label = stringResource(R.string.notif_voip_calls),
+                    help = stringResource(R.string.notif_voip_calls_help),
                     checked = voipCallsEnabled,
                     enabled = masterEnabled,
                     onChange = onVoipCallsEnabled,
@@ -579,6 +583,7 @@ private fun CallsCard(
 private fun DeliveryNote() {
     val context = LocalContext.current
     val shape = RoundedCornerShape(10.dp)
+    val openAccessA11y = stringResource(R.string.notif_open_notification_access_a11y)
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -596,9 +601,7 @@ private fun DeliveryNote() {
                 modifier = Modifier.size(16.dp),
             )
             Text(
-                "Wrist delivery needs Notification Access so NOOP can read which apps notify " +
-                    "you. Nothing leaves this device. Your choices are saved now and apply " +
-                    "automatically once access is granted.",
+                stringResource(R.string.notif_delivery_note),
                 style = NoopType.footnote,
                 color = Palette.textSecondary,
             )
@@ -615,7 +618,7 @@ private fun DeliveryNote() {
                     }
                 }
                 .padding(horizontal = 2.dp, vertical = 2.dp)
-                .semantics { contentDescription = "Open Notification Access settings" },
+                .semantics { contentDescription = openAccessA11y },
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
@@ -625,7 +628,7 @@ private fun DeliveryNote() {
                 tint = Palette.accent,
                 modifier = Modifier.size(14.dp),
             )
-            Text("Open Notification Access", style = NoopType.caption, color = Palette.accent)
+            Text(stringResource(R.string.notif_open_notification_access), style = NoopType.caption, color = Palette.accent)
         }
     }
 }
@@ -645,7 +648,7 @@ private fun CategoryCard(
     onTest: (NotifApp) -> Unit,
 ) {
     val contentAlpha = if (masterEnabled) 1f else Palette.disabledOpacity
-    AlertSection(icon = category.icon, title = category.title) {
+    AlertSection(icon = category.icon, title = stringResource(category.titleRes)) {
         Column(modifier = Modifier.alphaIf(contentAlpha)) {
             apps.forEachIndexed { idx, app ->
                 AppRow(
@@ -700,7 +703,7 @@ private fun AppRow(
         Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text(app.name, style = NoopType.body, color = Palette.textPrimary)
             Text(
-                if (enabled) "Buzzes your wrist" else "Off",
+                if (enabled) stringResource(R.string.notif_buzzes_wrist) else stringResource(R.string.notif_off),
                 style = NoopType.footnote,
                 color = if (enabled) Palette.accent else Palette.textTertiary,
             )
@@ -720,7 +723,7 @@ private fun AppRow(
             checked = enabled,
             onChange = onToggle,
             enabled = interactive,
-            label = "${app.name} wrist alerts",
+            label = stringResource(R.string.notif_app_switch_a11y, app.name),
         )
     }
 }
@@ -736,6 +739,7 @@ private fun PatternMenu(
 ) {
     var expanded by remember { mutableStateOf(false) }
     val shape = RoundedCornerShape(50)
+    val patternA11y = stringResource(R.string.notif_pattern_a11y, appName)
     Box {
         Row(
             modifier = Modifier
@@ -744,7 +748,7 @@ private fun PatternMenu(
                 .border(1.dp, Palette.hairline, shape)
                 .clickable(enabled = enabled) { expanded = true }
                 .padding(horizontal = 10.dp, vertical = 5.dp)
-                .semantics { contentDescription = "Buzz pattern for $appName" },
+                .semantics { contentDescription = patternA11y },
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(5.dp),
         ) {
@@ -754,7 +758,7 @@ private fun PatternMenu(
                 tint = Palette.textSecondary,
                 modifier = Modifier.size(12.dp),
             )
-            Text(pattern.label, style = NoopType.caption, color = Palette.textSecondary)
+            Text(stringResource(pattern.labelRes), style = NoopType.caption, color = Palette.textSecondary)
         }
         DropdownMenu(
             expanded = expanded,
@@ -765,7 +769,7 @@ private fun PatternMenu(
                 DropdownMenuItem(
                     text = {
                         Text(
-                            p.label,
+                            stringResource(p.labelRes),
                             style = NoopType.body,
                             color = if (p == pattern) Palette.accent else Palette.textPrimary,
                         )
@@ -786,6 +790,7 @@ private fun PatternMenu(
 private fun TestIconButton(enabled: Boolean, appName: String, onClick: () -> Unit) {
     val shape = RoundedCornerShape(8.dp)
     val tint = if (enabled) Palette.accent else Palette.textTertiary
+    val testA11y = stringResource(R.string.notif_test_buzz_a11y, appName)
     Box(
         modifier = Modifier
             .size(28.dp)
@@ -793,7 +798,7 @@ private fun TestIconButton(enabled: Boolean, appName: String, onClick: () -> Uni
             .background(Palette.accent.copy(alpha = if (enabled) 0.12f else 0.04f))
             .border(1.dp, tint.copy(alpha = 0.30f), shape)
             .clickable(enabled = enabled, onClick = onClick)
-            .semantics { contentDescription = "Test $appName buzz" },
+            .semantics { contentDescription = testA11y },
         contentAlignment = Alignment.Center,
     ) {
         Icon(Icons.Filled.PlayArrow, contentDescription = null, tint = tint, modifier = Modifier.size(15.dp))
@@ -819,8 +824,50 @@ private fun PillButton(label: String, icon: ImageVector, enabled: Boolean, onCli
     }
 }
 
-// MARK: - Time chip (NOOP wheel picker → HH:mm). Shared by Alarm / Automations / quiet hours.
+// MARK: - Time chip (NOOP wheel picker). Shared by Alarm / Automations / quiet hours.
 // No Android radial dial — vertical hour/minute steppers on lacquer (Impeccable product density).
+
+/**
+ * Dual Bedtime|Wake clock face: hour:minute at [digitSp], AM/PM as a smaller caption so the
+ * period never shares the digit size or overflows the half-width column (12h only).
+ */
+@Composable
+fun AlarmWallClockText(
+    minutes: Int,
+    is24Hour: Boolean,
+    digitSp: Float,
+    color: Color,
+    modifier: Modifier = Modifier,
+    weight: FontWeight = FontWeight.Bold,
+    contentAlignment: Alignment = Alignment.CenterStart,
+) {
+    val parts = remember(minutes, is24Hour) {
+        com.noop.alarm.NextAlarmDisplay.clockParts(minutes, is24Hour)
+    }
+    Box(modifier = modifier, contentAlignment = contentAlignment) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            Text(
+                parts.digits,
+                style = NoopType.number(digitSp, weight = weight),
+                color = color,
+                maxLines = 1,
+                softWrap = false,
+            )
+            if (parts.meridiem != null) {
+                Text(
+                    parts.meridiem,
+                    style = NoopType.caption.copy(fontWeight = FontWeight.SemiBold),
+                    color = color.copy(alpha = 0.78f),
+                    maxLines = 1,
+                    softWrap = false,
+                )
+            }
+        }
+    }
+}
 
 @Composable
 internal fun TimeChip(
@@ -830,10 +877,10 @@ internal fun TimeChip(
 ) {
     var showPicker by remember { mutableStateOf(false) }
     val shape = RoundedCornerShape(50)
-    val hour = minutes / 60
-    val minute = minutes % 60
+    // 12-/24-hour follows Settings → Units → Time format, like the picker dialog it opens.
+    val is24 = NoopPrefs.use24HourClock(LocalContext.current)
     Text(
-        text = "%02d:%02d".format(hour, minute),
+        text = com.noop.alarm.NextAlarmDisplay.formatMinuteOfDay(minutes, is24),
         style = NoopType.number(17f, weight = FontWeight.SemiBold),
         color = Palette.accent,
         modifier = Modifier
@@ -868,16 +915,22 @@ fun NoopTimePickerDialog(
     initialMinutes: Int,
     onDismiss: () -> Unit,
     onConfirm: (minutes: Int) -> Unit,
-    confirmLabel: String = "Set",
+    confirmLabel: String = stringResource(R.string.notif_time_set),
 ) {
     val context = LocalContext.current
-    val is24 = remember(context) { android.text.format.DateFormat.is24HourFormat(context) }
+    // Fresh read (not remember) so Units → Time format applies if Settings changed this session.
+    val is24 = NoopPrefs.use24HourClock(context)
     val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
     val seed = ((initialMinutes % (24 * 60)) + 24 * 60) % (24 * 60)
     var hour by remember(seed) { mutableStateOf(seed / 60) }
     var minute by remember(seed) { mutableStateOf(seed % 60) }
     val shape = RoundedCornerShape(LifeChapterLacquer.CORNER_DP.dp)
     val accent = DomainTheme.Rest.color
+    val hourLabel = stringResource(R.string.notif_time_hour)
+    val minLabel = stringResource(R.string.notif_time_min)
+    val pickerA11y = stringResource(R.string.notif_time_picker_a11y, title)
+    val steppersA11y = stringResource(R.string.notif_time_steppers_a11y)
+    val cancelA11y = stringResource(R.string.notif_time_cancel_a11y)
     Dialog(onDismissRequest = onDismiss) {
         Column(
             modifier = Modifier
@@ -889,21 +942,23 @@ fun NoopTimePickerDialog(
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
             Text(title, style = NoopType.headline, color = Palette.textPrimary,
-                modifier = Modifier.semantics { contentDescription = "Time picker. $title" })
+                modifier = Modifier.semantics { contentDescription = pickerA11y })
             val reduced = rememberReduceMotion()
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .semantics {
-                        contentDescription = "Hour and minute steppers. Double tap plus or minus to change."
+                        contentDescription = steppersA11y
                     },
                 horizontalArrangement = Arrangement.Center,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 NoopTimeWheelColumn(
                     value = if (is24) hour else ((hour + 11) % 12) + 1,
-                    label = "Hour",
+                    label = hourLabel,
                     accent = accent,
+                    // 12-hour face reads "7" not "07"; minutes stay zero-padded.
+                    padTwo = is24,
                     reducedMotion = reduced,
                     onBump = { delta ->
                         hour = (hour + delta + 24) % 24
@@ -920,7 +975,7 @@ fun NoopTimePickerDialog(
                 )
                 NoopTimeWheelColumn(
                     value = minute,
-                    label = "Min",
+                    label = minLabel,
                     accent = accent,
                     padTwo = true,
                     reducedMotion = reduced,
@@ -951,14 +1006,14 @@ fun NoopTimePickerDialog(
                 horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
             ) {
                 Text(
-                    "Cancel",
+                    stringResource(R.string.notif_time_cancel),
                     style = NoopType.body,
                     color = Palette.textSecondary,
                     modifier = Modifier
                         .clip(RoundedCornerShape(50))
                         .clickable(onClick = onDismiss)
                         .padding(horizontal = 16.dp, vertical = 10.dp)
-                        .semantics { contentDescription = "Cancel time picker" },
+                        .semantics { contentDescription = cancelA11y },
                 )
                 Text(
                     confirmLabel,
@@ -969,7 +1024,7 @@ fun NoopTimePickerDialog(
                         .background(accent.copy(alpha = 0.14f))
                         .clickable { onConfirm(hour * 60 + minute) }
                         .padding(horizontal = 18.dp, vertical = 10.dp)
-                        .semantics { contentDescription = "$confirmLabel time" },
+                        .semantics { contentDescription = confirmLabel },
                 )
             }
         }
@@ -987,6 +1042,8 @@ private fun NoopTimeWheelColumn(
 ) {
     val display = if (padTwo) "%02d".format(value) else value.toString()
     val cell = RoundedCornerShape(14.dp)
+    val decreaseA11y = stringResource(R.string.notif_time_decrease_a11y, label)
+    val increaseA11y = stringResource(R.string.notif_time_increase_a11y, label)
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(4.dp),
@@ -997,7 +1054,7 @@ private fun NoopTimeWheelColumn(
                 .size(48.dp)
                 .clip(RoundedCornerShape(50))
                 .clickable { onBump(-1) }
-                .semantics { contentDescription = "Decrease $label" },
+                .semantics { contentDescription = decreaseA11y },
             contentAlignment = Alignment.Center,
         ) {
             Text(
@@ -1028,7 +1085,7 @@ private fun NoopTimeWheelColumn(
                 .size(48.dp)
                 .clip(RoundedCornerShape(50))
                 .clickable { onBump(1) }
-                .semantics { contentDescription = "Increase $label" },
+                .semantics { contentDescription = increaseA11y },
             contentAlignment = Alignment.Center,
         ) {
             Text(
@@ -1052,28 +1109,37 @@ private fun NoopAmPmToggle(
     onToggle: () -> Unit,
 ) {
     val shape = RoundedCornerShape(12.dp)
+    // Footnote + tight width — subordinate to 32sp hour/minute wheels; never spill the picker row.
     Column(
         modifier = Modifier
+            .widthIn(max = 36.dp)
+            .heightIn(min = 56.dp)
             .clip(shape)
             .border(1.dp, accent.copy(alpha = 0.35f), shape)
             .clickable(onClick = onToggle)
-            .padding(horizontal = 10.dp, vertical = 8.dp),
+            .padding(horizontal = 6.dp, vertical = 6.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(4.dp),
+        verticalArrangement = Arrangement.spacedBy(2.dp, Alignment.CenterVertically),
     ) {
         Text(
             "AM",
-            style = NoopType.caption.copy(
+            style = NoopType.footnote.copy(
                 fontWeight = if (!isPm) FontWeight.SemiBold else FontWeight.Normal,
             ),
             color = if (!isPm) accent else Palette.textTertiary,
+            maxLines = 1,
+            softWrap = false,
+            textAlign = TextAlign.Center,
         )
         Text(
             "PM",
-            style = NoopType.caption.copy(
+            style = NoopType.footnote.copy(
                 fontWeight = if (isPm) FontWeight.SemiBold else FontWeight.Normal,
             ),
             color = if (isPm) accent else Palette.textTertiary,
+            maxLines = 1,
+            softWrap = false,
+            textAlign = TextAlign.Center,
         )
     }
 }
@@ -1085,7 +1151,7 @@ private fun AlertSection(
     icon: ImageVector,
     title: String,
     blurb: String? = null,
-    overline: String = "Alerts",
+    overline: String = stringResource(R.string.notif_alerts_overline),
     content: @Composable () -> Unit,
 ) {
     NoopCard(padding = 20.dp, tint = Palette.accent) {

@@ -2,6 +2,8 @@
 
 **CONTINUED 2026-07-12 WHOOP Stress Monitor match pass (8.6.34-fable).** Code-truth map of what feeds NOOP Stress, how WHOOP’s UI behaves from export screenshots, band streams used, and remaining irreducible gaps.
 
+**Code truth 2026-07-19:** `DaytimeStress.bucketSeconds = 300` (**5-min** buckets), `calmAnchorOffset = 2.00` (raw=0 → ~0.36 LOW). Older sections below that say “15-min” / `calmAnchorOffset = 1.55` are **historical match-pass notes**, not current tunables. See `docs/agent/research/SLEEP_STRESS_SCIENCE_AUDIT_2026-07-19.md`.
+
 Exports: `Downloads/Noop stresd-20260712T213610Z-2-001/Noop stresd/` (JPG only).
 
 ### WHOOP Stress Monitor (from SS — reverse-engineered behavior)
@@ -110,7 +112,7 @@ Debug + MAIN share `src/main` (`AlgoParityGuardTest.daytimeStressMotionRetune_ke
 
 ```
 HR + R-R + gravity→ActivityPoint + steps@63 + sedentary bouts
-  ──► DaytimeStress (15-min) ──► 0–3 (calm≈0.5)
+  ──► DaytimeStress (5-min; was 15-min) ──► 0–3 (calm≈0.36–0.5)
 daily RHR + avgHRV ──► StressModel ──► daily 0–3 (secondary)
 ```
 
@@ -120,7 +122,7 @@ daily RHR + avgHRV ──► StressModel ──► daily 0–3 (secondary)
 
 | Input | Where | How much | Gate | Notes |
 |-------|-------|----------|------|-------|
-| Quiet HR (p10/p25) | `DaytimeStress` | +1 z vs waking calm | ≥75 samples / 15-min | Motion-busy → lower half BPMs |
+| Quiet HR (p10/p25) | `DaytimeStress` | +1 z vs waking calm | ≥25 samples / 5-min (sparse ≥18) | Motion-busy → lower half BPMs |
 | Bucket RMSSD | same | +1 z when low | clean R-R | Optional enrich |
 | Calm anchor offset | `squash` | calm→~0.36 | const **2.00** | WHOOP floor (8.6.77) |
 | Night bias | −0.85..−1.35 raw | sleep hours | hour ∉ 06–22 | WHOOP sleep band |

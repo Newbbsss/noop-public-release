@@ -16,7 +16,10 @@ class Spo2ReTraceTest {
             frame = byteArrayOf(0x00, 0x0f, 0xff.toByte(), 0x10),
             version = 24, unix = 1_700_000_000, red = 512, ir = 480, skinRaw = 330,
         )
-        assertEquals("spo2re v=24 unix=1700000000 red=512 ir=480 skinRaw=330 len=4 raw=000fff10", line)
+        assertEquals(
+            "spo2re v=24 unix=1700000000 red=512 ir=480 skinRaw=330 sleep_state=null aux82=null len=4 raw=000fff10",
+            line,
+        )
     }
 
     @Test fun absentChannelsRenderNull() {
@@ -25,7 +28,10 @@ class Spo2ReTraceTest {
         val line = Spo2ReTrace.recordLine(
             frame = byteArrayOf(1, 2, 3), version = 25, unix = 42, red = null, ir = null, skinRaw = null,
         )
-        assertEquals("spo2re v=25 unix=42 red=null ir=null skinRaw=null len=3 raw=010203", line)
+        assertEquals(
+            "spo2re v=25 unix=42 red=null ir=null skinRaw=null sleep_state=null aux82=null len=3 raw=010203",
+            line,
+        )
     }
 
     @Test fun hexRendersUnsignedFullFrame() {
@@ -37,6 +43,17 @@ class Spo2ReTraceTest {
         )
         assertTrue(line, line.endsWith("raw=ff00ab"))
         assertTrue(line, line.contains("v=null"))
+    }
+
+    @Test fun aux82AndSleepStateNamedNeverAsPct() {
+        // Research P0: name sleep_state + aux82 for correlation — never label as SpO2 %.
+        val line = Spo2ReTrace.recordLine(
+            frame = byteArrayOf(1, 2), version = 18, unix = 99,
+            red = null, ir = null, skinRaw = null, sleepState = 2, auxByte82 = 0x80,
+        )
+        assertTrue(line, line.contains("sleep_state=2"))
+        assertTrue(line, line.contains("aux82=128"))
+        assertTrue(line, !line.contains("spo2Pct") && !line.contains("spo2%"))
     }
 
     @Test fun sampleCapBoundedAtEight() {

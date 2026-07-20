@@ -1,5 +1,6 @@
 package com.noop.ui
 
+import com.noop.data.DailyMetric
 import org.junit.Assert.assertEquals
 import org.junit.Test
 import java.time.LocalDate
@@ -113,5 +114,152 @@ class LogicalDayTest {
             "2026-07-13",
             resolvedSelectedDayKey(2, LocalDate.of(2026, 7, 13), todayRowDay = "2026-07-15"),
         )
+    }
+
+    // ── Awake-past-midnight span (Gilbert: yesterday→now until overnight bout) ──────────────
+
+    @Test
+    fun awakePastMidnightWithoutBoutKeepsPriorCalendarDay() {
+        // 01:00 Mon, still awake → Sunday.
+        assertEquals(
+            LocalDate.of(2026, 6, 11),
+            awakePresentationDay(at(1, 0), hasTonightOvernightBout = false),
+        )
+        assertEquals(true, extendsAwakePastMidnight(at(1, 0), hasTonightOvernightBout = false))
+    }
+
+    @Test
+    fun awakePastMidnightPastLogicalRolloverStillKeepsPriorDay() {
+        // 05:00 Mon awake (past 04:00 logical) → still Sunday until bout.
+        assertEquals(
+            LocalDate.of(2026, 6, 11),
+            awakePresentationDay(at(5, 0), hasTonightOvernightBout = false),
+        )
+        assertEquals(
+            LocalDate.of(2026, 6, 12),
+            logicalDay(at(5, 0)),
+        )
+    }
+
+    @Test
+    fun overnightBoutSwitchesToLogicalDay() {
+        // 01:00 Mon with tonight's bout → logical (prior until 04:00).
+        assertEquals(
+            LocalDate.of(2026, 6, 11),
+            awakePresentationDay(at(1, 0), hasTonightOvernightBout = true),
+        )
+        assertEquals(false, extendsAwakePastMidnight(at(1, 0), hasTonightOvernightBout = true))
+        // 05:00 Mon with bout → new logical day.
+        assertEquals(
+            LocalDate.of(2026, 6, 12),
+            awakePresentationDay(at(5, 0), hasTonightOvernightBout = true),
+        )
+    }
+
+    @Test
+    fun bankedWakeDayNightClearsAwakeSpanWithoutSession() {
+        // 07:00 Mon: session merge lagged, but wake-day already has totalSleepMin → new Charge day.
+        assertEquals(
+            LocalDate.of(2026, 6, 12),
+            awakePresentationDay(
+                at(7, 0),
+                hasTonightOvernightBout = false,
+                wakeDayHasBankedNight = true,
+            ),
+        )
+        assertEquals(
+            false,
+            extendsAwakePastMidnight(
+                at(7, 0),
+                hasTonightOvernightBout = false,
+                wakeDayHasBankedNight = true,
+            ),
+        )
+    }
+
+    @Test
+    fun todayHeaderHumanDateOmitsRepeatedWeekday() {
+        val fri = LocalDate.of(2026, 7, 17) // Friday
+        assertEquals(
+            "Friday, 17 July",
+            todayHeaderHumanDate(0, fri, java.util.Locale.UK),
+        )
+        assertEquals(
+            "17 July",
+            todayHeaderHumanDate(2, fri, java.util.Locale.UK),
+        )
+    }
+
+    @Test
+    fun loggedDayOffsetsDropsEmptyStubs() {
+        val anchor = LocalDate.of(2026, 7, 20)
+        val days = listOf(
+            DailyMetric(deviceId = "t", day = "2026-07-20", recovery = 70.0),
+            DailyMetric(deviceId = "t", day = "2026-07-19"), // empty stub
+            DailyMetric(deviceId = "t", day = "2026-07-18", totalSleepMin = 420.0),
+        )
+        assertEquals(listOf(0, 2), loggedDayOffsetsFromBank(days, anchor))
+    }
+
+    @Test
+    fun eveningWithoutBoutUsesCalendarLogicalDay() {
+        // 20:00 — new evening cycle; do not extend to "yesterday".
+        assertEquals(
+            LocalDate.of(2026, 6, 12),
+            awakePresentationDay(at(20, 0), hasTonightOvernightBout = false),
+        )
+        assertEquals(false, extendsAwakePastMidnight(at(20, 0), hasTonightOvernightBout = false))
+    }
+
+    /** Fri→Sat→Sun: weekend awake span must not invent a third day or skip Saturday. */
+    @Test
+    fun weekendAwakeSpanFriSatSunDoesNotDuplicateOrSkip() {
+        // Friday 2026-07-17 23:00 — still Friday (evening cycle, not past midnight).
+        val friEve = LocalDateTime.of(LocalDate.of(2026, 7, 17), LocalTime.of(23, 0)).atZone(zone)
+        assertEquals(LocalDate.of(2026, 7, 17), awakePresentationDay(friEve, hasTonightOvernightBout = false))
+        assertEquals(false, extendsAwakePastMidnight(friEve, hasTonightOvernightBout = false))
+
+        // Saturday 01:30 still awake → Friday (yesterday→now), not a blank Sat stub.
+        val satEarly = LocalDateTime.of(LocalDate.of(2026, 7, 18), LocalTime.of(1, 30)).atZone(zone)
+        assertEquals(LocalDate.of(2026, 7, 17), awakePresentationDay(satEarly, hasTonightOvernightBout = false))
+        assertEquals(true, extendsAwakePastMidnight(satEarly, hasTonightOvernightBout = false))
+
+        // Sunday 02:00 still awake (no Sat overnight bout) → Saturday.
+        val sunEarly = LocalDateTime.of(LocalDate.of(2026, 7, 19), LocalTime.of(2, 0)).atZone(zone)
+        assertEquals(LocalDate.of(2026, 7, 18), awakePresentationDay(sunEarly, hasTonightOvernightBout = false))
+        assertEquals(true, extendsAwakePastMidnight(sunEarly, hasTonightOvernightBout = false))
+
+        // Sunday 07:00 with banked wake-night → Sunday Charge day (Wake→new Charge).
+        val sunMorning = LocalDateTime.of(LocalDate.of(2026, 7, 19), LocalTime.of(7, 0)).atZone(zone)
+        assertEquals(
+            LocalDate.of(2026, 7, 19),
+            awakePresentationDay(sunMorning, hasTonightOvernightBout = false, wakeDayHasBankedNight = true),
+        )
+    }
+
+    @Test
+    fun spanStartAnchorsToPriorMidnightWhileAwake() {
+        val expected = LocalDate.of(2026, 6, 11).atStartOfDay(zone).toEpochSecond()
+        assertEquals(
+            expected,
+            awakeSpanStartEpochSecond(at(2, 30), hasTonightOvernightBout = false, zone),
+        )
+    }
+
+    @Test
+    fun hasOvernightBoutDetectsWakeDaySession() {
+        val wake = LocalDate.of(2026, 6, 12)
+        val start = wake.minusDays(1).atTime(23, 0).atZone(zone).toEpochSecond()
+        val end = wake.atTime(7, 0).atZone(zone).toEpochSecond()
+        assertEquals(true, hasOvernightBoutForWakeDay(wake, listOf(start to end), zone))
+        assertEquals(false, hasOvernightBoutForWakeDay(wake, emptyList(), zone))
+    }
+
+    @Test
+    fun hasOvernightBoutIgnoresShortDaytimeNap() {
+        val wake = LocalDate.of(2026, 6, 12)
+        val start = wake.atTime(14, 0).atZone(zone).toEpochSecond()
+        val end = start + 20 * 60
+        assertEquals(false, hasOvernightBoutForWakeDay(wake, listOf(start to end), zone))
     }
 }

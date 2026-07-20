@@ -301,7 +301,7 @@ object RangeReportEngine {
             if (good) " - a good sign" else " - worth a look"
         }
         val unit = if (s.metric.unit.isEmpty()) "" else " ${s.metric.unit}"
-        return "${s.metric.label} is $word (avg ${round1(s.firstHalfMean)}$unit → " +
+        return "${s.metric.label} is $word (avg ${round1(s.firstHalfMean)}$unit -> " +
             "${round1(s.secondHalfMean)}$unit)$frame."
     }
 

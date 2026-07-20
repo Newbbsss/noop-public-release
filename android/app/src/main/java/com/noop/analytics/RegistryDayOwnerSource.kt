@@ -45,22 +45,10 @@ class RegistryDayOwnerSource(private val registry: DeviceRegistry) : Intelligenc
     // when they diverge, the #814/#799 spine symptom).
     override suspend fun activeWriteId(): String? = registry.activeDeviceId()
 
-    // #938: resolve the strap family that wrote [deviceId]'s rows from its registry model. A device whose
-    // model is "WHOOP 4.0" maps to WHOOP4 (raw-ADC skin-temp scale); everything else — a 5/MG, a non-WHOOP
-    // import whose skin temp is already °C, or an id absent from the registry — falls back to WHOOP5 (the
-    // prior /100 behaviour). Mirrors the Swift IntelligenceEngine.skinTempFamily(forOwner:devices:).
-    //
-    // The old exact `WhoopModel.displayName == model` compare only ever matched a row whose model was the
-    // literal picker label "WHOOP 5.0 / MG" — the AddDeviceWizard stores "5.0 MG" (now "5.0" / "MG") and
-    // the seeded my-whoop row stores "WHOOP", so BOTH fell into the != branch and were scaled as WHOOP4,
-    // inverting the documented fallback. Match on the label content instead, and only claim WHOOP4 for a
-    // row that is actually a WHOOP 3.x/4.x (brand-guarded so "Oura Ring 3" never reads as a 4.0).
+    // #938 / #171: registry model → family lives in DeviceFamily.forRegistryModel (wizard "4.0"/"MG",
+    // picker labels, seeded "WHOOP"). Mirrors Swift IntelligenceEngine.skinTempFamily(forOwner:devices:).
     override suspend fun skinTempFamily(deviceId: String): DeviceFamily {
-        val row = registry.all().firstOrNull { it.id == deviceId } ?: return DeviceFamily.WHOOP5
-        val model = row.model.lowercase()
-        val isWhoop = row.brand.equals("whoop", ignoreCase = true) || model.contains("whoop")
-        return if (isWhoop && !model.contains("5") && !model.contains("mg") &&
-            (model.contains("4") || model.contains("3"))
-        ) DeviceFamily.WHOOP4 else DeviceFamily.WHOOP5
+        val model = registry.all().firstOrNull { it.id == deviceId }?.model
+        return DeviceFamily.forRegistryModel(model)
     }
 }

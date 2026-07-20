@@ -41,10 +41,10 @@ struct SettingsView: View {
     /// BLE sensor for Garmin/Zwift/gym kit. See [PuffinExperiment.broadcastHrKey]. (#181)
     @AppStorage(PuffinExperiment.broadcastHrKey) private var broadcastHrEnabled = false
 
-    /// Opt-in "Continuous HRV capture" (off by default) — holds the dense realtime stream armed 24/7 so
+    /// "Continuous HRV capture" (ON by default, Gilbert P0 2026-07-17) — holds the dense realtime stream armed 24/7 so
     /// the strap banks beat-to-beat R-R for better overnight HRV/recovery/sleep, at a battery cost.
     /// See [PuffinExperiment.keepRealtimeForDataKey].
-    @AppStorage(PuffinExperiment.keepRealtimeForDataKey) private var continuousHrvEnabled = false
+    @AppStorage(PuffinExperiment.keepRealtimeForDataKey) private var continuousHrvEnabled = true
 
     /// #927 "Overnight only" refinement of Continuous HRV capture (off by default): arm the stream only
     /// inside the nightly quiet-hours window instead of 24/7. Composed with the base toggle (base on +

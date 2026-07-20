@@ -42,6 +42,24 @@ class RestDriversTest {
     }
 
     @Test
+    fun restorativeRowNamesDeepPlusRemNotDeepAlone() {
+        // ~10% deep + large REM → high restorative share; drivers must show both, not deep alone.
+        val daily = DailyMetric(
+            deviceId = "x",
+            day = "2026-07-18",
+            totalSleepMin = 382.0,
+            efficiency = 0.90,
+            deepMin = 38.0,   // ~10% of asleep
+            remMin = 257.0,   // → restorative ~77%
+            lightMin = 87.0,
+        )
+        val deepRem = RestDrivers.restDrivers(daily).first { it.label == "Deep + REM" }
+        assertTrue(deepRem.valueText.contains("restorative"))
+        assertTrue(deepRem.valueText.contains("deep"))
+        assertTrue(deepRem.baselineText.contains("deep+REM"))
+    }
+
+    @Test
     fun noSleepYieldsEmpty() {
         assertTrue(RestDrivers.restDrivers(DailyMetric(deviceId = "x", day = "2026-07-12")).isEmpty())
     }

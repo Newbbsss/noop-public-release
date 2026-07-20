@@ -26,11 +26,11 @@ import WhoopProtocol
 // Each metric is standardized to a robust z-score against the personal baseline
 // (mean + EWMA-abs-dev spread). Missing terms are dropped and the weights
 // renormalized. The composite z is squashed through a logistic anchored so that
-// Z = 0 → ~58% (WHOOP's published population-average recovery).
+// Z = 0 → ~52% (Gilbert honesty floor).
 //
 // Cold-start: if the HRV baseline (dominant driver) is not yet usable
 // (< MIN_NIGHTS_SEED valid nights), recovery() returns nil. Callers may use
-// RECOVERY_POPULATION_MEAN (58.0) as a fallback but should flag it.
+// RECOVERY_POPULATION_MEAN (52.0) as a fallback but should flag it.
 
 public enum RecoveryScorer {
 
@@ -50,10 +50,12 @@ public enum RecoveryScorer {
 
     /// Logistic spread: ±2 z-units ≈ full Red–Green band (15%–95%).
     public static let logisticK: Double = 1.6
-    /// Logistic offset so Z=0 → ~58% (WHOOP population mean). Raising z0 *lowers* Charge.
-    public static let logisticZ0: Double = -0.20
-    /// WHOOP-published population-average recovery (%). Cold-start fallback.
-    public static let populationMean: Double = 58.0
+    public static let logisticZ0: Double = 0.0
+    /// Cold-start fallback when Charge is not yet calibrated.
+    public static let populationMean: Double = 50.0
+    public static let wPriorStrain: Double = 0.10
+    public static let priorStrainNeutral: Double = 0.30
+    public static let priorStrainScale: Double = 0.28
 
     /// Recovery band thresholds (WHOOP color scheme).
     public static let bandRedMax: Double = 34.0
@@ -213,6 +215,7 @@ public enum RecoveryScorer {
                                 respBaseline: DriverBaseline?,
                                 sleepPerf: Double?,
                                 skinTempDev: Double? = nil,
+                                priorDayStrain: Double? = nil,
                                 hrvBaselineUsable: Bool = true) -> Double? {
         // Cold-start gate: HRV is the dominant driver; if its baseline isn't
         // usable, refuse to score (more honest than a fabricated value).
@@ -241,6 +244,11 @@ public enum RecoveryScorer {
         if let dev = skinTempDev {
             terms.append((-abs(dev) / skinTempScaleC, wSkinTemp))
         }
+        if let prior = priorDayStrain {
+            let frac = max(0.0, min(1.5, prior / 100.0))
+            let z = -((frac - priorStrainNeutral) / priorStrainScale)
+            terms.append((z, wPriorStrain))
+        }
 
         guard !terms.isEmpty else { return nil }
         let totalWeight = terms.reduce(0) { $0 + $1.w }
@@ -260,7 +268,8 @@ public enum RecoveryScorer {
                                 rhrBaseline: BaselineState?,
                                 respBaseline: BaselineState?,
                                 sleepPerf: Double?,
-                                skinTempDev: Double? = nil) -> Double? {
+                                skinTempDev: Double? = nil,
+                                priorDayStrain: Double? = nil) -> Double? {
         recovery(hrv: hrv,
                  rhr: rhr,
                  resp: resp,
@@ -269,6 +278,7 @@ public enum RecoveryScorer {
                  respBaseline: respBaseline.map(DriverBaseline.init),
                  sleepPerf: sleepPerf,
                  skinTempDev: skinTempDev,
+                 priorDayStrain: priorDayStrain,
                  hrvBaselineUsable: hrvBaseline.usable)
     }
 }

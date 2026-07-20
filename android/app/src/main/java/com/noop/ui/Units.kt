@@ -237,11 +237,16 @@ object UnitFormatter {
         }
 
     /**
-     * Effort readout honesty — null / ≤0 never paints **"0.0"** / **"0"** (calm TRIMP or empty shell).
-     * Matches [effectiveEffortStrain] on Today.
+     * Effort readout. Null → [empty] or "—" (pending / no score). ≤0 with a real value still formats
+     * as scale zero so calm scored days stay honest. Pass a custom [empty] when a caller wants
+     * "Awaiting" / localized pending copy.
      */
-    fun effortDisplayOrEmpty(value: Double?, scale: EffortScale, empty: String = "—"): String =
-        value?.takeIf { it > 0.0 }?.let { effortDisplay(it, scale) } ?: empty
+    fun effortDisplayOrEmpty(value: Double?, scale: EffortScale, empty: String? = null): String =
+        when {
+            value == null -> empty ?: "—"
+            value <= 0.0 -> effortDisplay(0.0, scale)
+            else -> effortDisplay(value, scale)
+        }
 
     /** The "out of" denominator label for the selected Effort scale — "100" or "21". */
     fun effortScaleMax(scale: EffortScale): String =

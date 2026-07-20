@@ -65,6 +65,7 @@ object RecoveryDrivers {
      *   Sleep row.
      * @param skinTempDev tonight's skin-temperature deviation from the personal baseline (raw +/- C);
      *   null drops the Skin temp row. Surfaced as a RELATIVE deviation, never an absolute temperature.
+     * @param priorDayStrain yesterday's Effort 0–100; null drops the row.
      */
     fun chargeDrivers(
         hrv: Double,
@@ -75,6 +76,7 @@ object RecoveryDrivers {
         respBaseline: BaselineState?,
         sleepPerf: Double?,
         skinTempDev: Double? = null,
+        priorDayStrain: Double? = null,
     ): List<ChargeDriver> {
         // Cold-start gate: no usable HRV baseline -> no score -> no drivers (honest empty, not faked rows).
         if (!hrvBaseline.usable) return emptyList()
@@ -120,6 +122,14 @@ object RecoveryDrivers {
             val z = -abs(skinTempDev) / RecoveryScorer.skinTempDevScale
             skinIdx = terms.size
             terms.add(Term(z, RecoveryScorer.wSkinTemp))
+        }
+
+        var strainIdx = -1
+        if (priorDayStrain != null) {
+            val frac = (priorDayStrain / 100.0).coerceIn(0.0, 1.5)
+            val z = -((frac - RecoveryScorer.priorStrainNeutral) / RecoveryScorer.priorStrainScale)
+            strainIdx = terms.size
+            terms.add(Term(z, RecoveryScorer.wPriorStrain))
         }
 
         // The actual score, EXACTLY as recovery(...) computes it (so the rows can't disagree with the ring).
@@ -170,7 +180,7 @@ object RecoveryDrivers {
                     label = "Sleep quality",
                     deltaPoints = delta(sleepIdx),
                     valueText = "${(sleepPerf * 100.0).roundToInt()}%",
-                    baselineText = "",   // centred on a fixed "good night", not a learned baseline
+                    baselineText = "Rest composite → Charge",   // Rest %, not raw hours; honesty vs duration-only
                     verdict = directionVerdict(terms[sleepIdx].z, good = "a strong night, supporting recovery",
                         flat = "a typical night", bad = "below a good night, limiting recovery"),
                 ),
@@ -198,6 +208,22 @@ object RecoveryDrivers {
                     valueText = String.format(java.util.Locale.US, "%+.1f C vs baseline", skinTempDev),
                     baselineText = "",   // a deviation already; the reference is the personal baseline (0)
                     verdict = skinTempVerdict(skinTempDev),
+                ),
+            )
+        }
+        if (strainIdx >= 0 && priorDayStrain != null) {
+            drivers.add(
+                ChargeDriver(
+                    label = "Yesterday's Effort",
+                    deltaPoints = delta(strainIdx),
+                    valueText = "${priorDayStrain.roundToInt()}",
+                    baselineText = "prior-day load → Charge",
+                    verdict = directionVerdict(
+                        terms[strainIdx].z,
+                        good = "lighter day before, supporting recovery",
+                        flat = "typical prior load",
+                        bad = "harder day before, limiting recovery",
+                    ),
                 ),
             )
         }

@@ -13,7 +13,7 @@ class TestReadoutTest {
     @Test fun lastChargeBreakdownParsesScoreAndBand() {
         val tail = listOf(
             "[recovery] charge day=2021-06-17 baseline hrv mean=50.0 spread=4.79 nValid=14 status=trusted",
-            "[recovery] charge day=2021-06-17 score=62.5 band=yellow (logistic k=1.6 z0=-0.20)",
+            "[recovery] charge day=2021-06-17 score=62.5 band=yellow (logistic k=1.6 z0=0.00)",
         )
         assertEquals("score=62.5 band=yellow", TestReadout.lastChargeBreakdown(tail))
     }

@@ -31,6 +31,7 @@ class HonestVitalsLabelsTest {
         val line = HonestVitalsLabels.spo2Line(null)
         assertEquals("—", line.valueText)
         assertEquals(HonestVitalsLabels.Provenance.BLANK, line.provenance)
+        assertTrue(line.caption.contains("import", ignoreCase = true) || line.caption.contains("offload", ignoreCase = true))
     }
 
     @Test
@@ -47,6 +48,33 @@ class HonestVitalsLabelsTest {
     fun spo2_measuredWhenBanked() {
         val line = HonestVitalsLabels.spo2Line(97.0)
         assertEquals("97%", line.valueText)
+        assertEquals(HonestVitalsLabels.Provenance.MEASURED, line.provenance)
+    }
+
+    @Test
+    fun spo2_rawAdcWhenSleepOffloadPresent_neverPercent() {
+        val line = HonestVitalsLabels.spo2Line(null, spo2Red = 31000, spo2Ir = 28000)
+        assertEquals("29500", line.valueText)
+        assertFalse(line.valueText.contains("%"))
+        assertEquals(HonestVitalsLabels.Provenance.ESTIMATE, line.provenance)
+        assertTrue(line.caption.contains("ADC", ignoreCase = true))
+        assertTrue(line.caption.contains("not %", ignoreCase = true))
+    }
+
+    @Test
+    fun spo2_mgOpticalAuxBanked_neverPercentDigit() {
+        val line = HonestVitalsLabels.spo2Line(null, opticalAuxBanked = true)
+        assertEquals("raw", line.valueText)
+        assertFalse(line.valueText.contains("%"))
+        assertEquals(HonestVitalsLabels.Provenance.ESTIMATE, line.provenance)
+        assertTrue(line.caption.contains("MG", ignoreCase = true))
+        assertTrue(line.caption.contains("not %", ignoreCase = true))
+    }
+
+    @Test
+    fun spo2_percentWinsOverRawAdc() {
+        val line = HonestVitalsLabels.spo2Line(96.0, spo2Red = 31000, spo2Ir = 28000)
+        assertEquals("96%", line.valueText)
         assertEquals(HonestVitalsLabels.Provenance.MEASURED, line.provenance)
     }
 

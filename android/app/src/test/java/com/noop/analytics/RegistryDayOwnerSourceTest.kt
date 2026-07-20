@@ -6,6 +6,7 @@ import com.noop.data.DeviceRegistryDao
 import com.noop.data.DeviceStatus
 import com.noop.data.PairedDeviceRow
 import com.noop.data.SourceKind
+import com.noop.protocol.DeviceFamily
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -54,6 +55,7 @@ class RegistryDayOwnerSourceTest {
         override suspend fun deleteSkinTempFor(deviceId: String) {}
         override suspend fun deleteRespFor(deviceId: String) {}
         override suspend fun deleteGravityFor(deviceId: String) {}
+        override suspend fun deleteImuActivityFor(deviceId: String) {}
         override suspend fun deleteStepsFor(deviceId: String) {}
         override suspend fun deletePpgHrFor(deviceId: String) {}
         override suspend fun deleteEventsFor(deviceId: String) {}
@@ -149,5 +151,22 @@ class RegistryDayOwnerSourceTest {
         assertEquals(listOf("my-whoop"), ids) // archived 'old' excluded
         // With only the active strap and it having NO data, there is no owner (honest gap).
         assertNull(resolveWith(src, "2026-06-15", mapOf("my-whoop" to false)))
+    }
+
+    @Test
+    fun skinTempFamilyUsesRegistryModelLabels() = runBlocking {
+        val dao = FakeDao().apply {
+            devices["mg"] = device("mg", "WHOOP", SourceKind.liveBLE, DeviceStatus.active)
+                .copy(model = "MG")
+            devices["four"] = device("four", "WHOOP", SourceKind.liveBLE, DeviceStatus.paired)
+                .copy(model = "4.0")
+            devices["seed"] = device("seed", "WHOOP", SourceKind.liveBLE, DeviceStatus.paired)
+                .copy(model = "WHOOP")
+        }
+        val src = RegistryDayOwnerSource(registry(dao))
+        assertEquals(DeviceFamily.WHOOP5, src.skinTempFamily("mg"))
+        assertEquals(DeviceFamily.WHOOP4, src.skinTempFamily("four"))
+        assertEquals(DeviceFamily.WHOOP5, src.skinTempFamily("seed"))
+        assertEquals(DeviceFamily.WHOOP5, src.skinTempFamily("missing"))
     }
 }

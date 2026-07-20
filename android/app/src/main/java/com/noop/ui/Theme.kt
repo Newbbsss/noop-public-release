@@ -1,6 +1,8 @@
 package com.noop.ui
 
+import androidx.annotation.StringRes
 import androidx.compose.animation.core.CubicBezierEasing
+import com.noop.R
 import androidx.compose.animation.core.Easing
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearOutSlowInEasing
@@ -324,8 +326,18 @@ enum class DomainTheme {
             else -> Palette.recoveryStops
         }
 
-    /** A short upper-case label for the world (CHARGE / EFFORT / REST / STRESS). */
+    /** English fallback (tests / non-Compose). Prefer [labelRes] in UI. */
     val label: String get() = name
+
+    /** Localized short label for vessels / Key Metrics (CHARGE → Carga / …). */
+    @get:StringRes
+    val labelRes: Int
+        get() = when (this) {
+            Charge -> R.string.domain_charge
+            Effort -> R.string.domain_effort
+            Rest -> R.string.domain_rest
+            Stress -> R.string.domain_stress
+        }
 }
 
 // MARK: - Motion (ported from StrandDesign/Motion.swift §9.6)

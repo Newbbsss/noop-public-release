@@ -37,6 +37,11 @@ class SleepStagerStageShareTest {
 
     @Test
     fun constants_widenDeepRemBandsForJul13Pack() {
+        // Jul-20 Light-bias pack pins (floors still satisfy AlgoParityGuard ≥40 / ≤62 / ≥0.15).
+        assertEquals(48.0, SleepStager.stageHRLowPct, 0.0)
+        assertEquals(60.0, SleepStager.stageHRHighPct, 0.0)
+        assertEquals(58.0, SleepStager.stageHRVHighPct, 0.0)
+        assertEquals(0.21, SleepStager.stageStillMoveFrac, 0.0)
         assertTrue(SleepStager.stageHRLowPct >= 40.0)
         assertTrue(SleepStager.stageHRHighPct <= 62.0)
         assertTrue(SleepStager.stageStillMoveFrac >= 0.15)
@@ -67,17 +72,17 @@ class SleepStagerStageShareTest {
         val rem = share("rem")
         val light = share("light")
         val wake = share("wake")
-        // Before fix: deep≈0.02 rem≈0. Target: deep≥0.20 rem≥0.10 (WHOOP 0.31 / 0.16 — leave headroom).
-        assertTrue("deep share was ${"%.2f".format(deep)}, expected ≥0.20", deep >= 0.20)
-        assertTrue("rem share was ${"%.2f".format(rem)}, expected ≥0.10", rem >= 0.10)
-        assertTrue("light share was ${"%.2f".format(light)}, expected ≤0.55", light <= 0.55)
+        // Before fix: deep≈0.02 rem≈0. Target: deep≥0.22 rem≥0.12 (Jul-20 pack; WHOOP ~0.31/0.16).
+        assertTrue("deep share was ${"%.2f".format(deep)}, expected ≥0.22", deep >= 0.22)
+        assertTrue("rem share was ${"%.2f".format(rem)}, expected ≥0.12", rem >= 0.12)
+        assertTrue("light share was ${"%.2f".format(light)}, expected ≤0.50", light <= 0.50)
         assertEquals(0.0, wake, 1e-9) // all still → no wake in this synthetic
         // Record δ vs the MAIN 32/66/2 / 0 baseline for CONTINUE.
         val deepPct = (deep * 100).roundToInt()
         val remPct = (rem * 100).roundToInt()
         val lightPct = (light * 100).roundToInt()
-        assertTrue("post-fix deep $deepPct% should beat MAIN 2%", deepPct >= 20)
-        assertTrue("post-fix rem $remPct% should beat MAIN 0%", remPct >= 10)
-        assertTrue("post-fix light $lightPct% should be below MAIN 66%", lightPct <= 55)
+        assertTrue("post-fix deep $deepPct% should beat MAIN 2%", deepPct >= 22)
+        assertTrue("post-fix rem $remPct% should beat MAIN 0%", remPct >= 12)
+        assertTrue("post-fix light $lightPct% should be below MAIN 66%", lightPct <= 50)
     }
 }

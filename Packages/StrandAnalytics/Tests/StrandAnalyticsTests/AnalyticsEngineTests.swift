@@ -370,24 +370,24 @@ final class AnalyticsEngineTests: XCTestCase {
     // MARK: - Rest composite (Charge/Effort/Rest)
 
     func testRestCompositePerfectNight() {
-        // Every sub-score saturates → 1.0, then restWhoopAlignScale 0.90 → 90.
+        // Every sub-score saturates → 1.0, then restWhoopAlignScale 0.78 → 78.
         let r = AnalyticsEngine.Rest.composite(
             tstSeconds: 8 * 3600, inBedSeconds: 8 * 3600, efficiency: 1.0,
             restorativeSeconds: 4 * 3600, needHours: 8.0, consistency: 1.0)
-        XCTAssertEqual(r, 90.0, accuracy: 1e-9)
+        XCTAssertEqual(r, 78.0, accuracy: 1e-9)
     }
 
     func testRestCompositeDurationDominatedAndClamped() {
-        // Duration term alone: 1.0 × 0.45 weight × 0.90 scale = 40.5.
+        // Duration term alone with zero restorative → quality floor 0.42 × 0.45 × 0.78.
         let r = AnalyticsEngine.Rest.composite(
             tstSeconds: 8 * 3600, inBedSeconds: 99_999, efficiency: 0.0,
             restorativeSeconds: 0.0, needHours: 8.0, consistency: 0.0)
-        XCTAssertEqual(r, 40.5, accuracy: 1e-9)
-        // Sleeping well over need does not push duration past 1.0; still scaled by 0.90.
+        XCTAssertEqual(r, 14.74, accuracy: 1e-2)
+        // Sleeping well over need does not push duration past 1.0; still scaled by 0.78.
         let over = AnalyticsEngine.Rest.composite(
             tstSeconds: 12 * 3600, inBedSeconds: 12 * 3600, efficiency: 1.0,
             restorativeSeconds: 6 * 3600, needHours: 8.0, consistency: 1.0)
-        XCTAssertEqual(over, 90.0, accuracy: 1e-9)
+        XCTAssertEqual(over, 78.0, accuracy: 1e-9)
     }
 
     func testRestCompositeNilConsistencyIsNeutral() {
@@ -399,8 +399,11 @@ final class AnalyticsEngineTests: XCTestCase {
             tstSeconds: 4 * 3600, inBedSeconds: 5 * 3600, efficiency: 0.8,
             restorativeSeconds: 1 * 3600, needHours: 8.0, consistency: 0.5)
         XCTAssertEqual(withNil, withHalf, accuracy: 1e-9)
-        // 0.56 raw × 0.90 align = 50.4
-        XCTAssertEqual(withNil, 50.4, accuracy: 1e-9)
+        // 0.56 raw with power-curve duration on 4h/8h need.
+        // durationRaw = 0.75^1.40 ≈ 0.660, weighted ≈ 0.45*0.660 + 0.20*0.8 + 0.25*0.5 + 0.10*0.5
+        let dur = pow(0.75, 1.40)
+        let raw = 0.45 * dur + 0.20 * 0.8 + 0.25 * 0.5 + 0.10 * 0.5
+        XCTAssertEqual(withNil, (raw * AnalyticsEngine.Rest.restWhoopAlignScale * 10000.0).rounded() / 100.0, accuracy: 1e-9)
     }
 
     func testAnalyzeDayPopulatesRestAndConfidence() {

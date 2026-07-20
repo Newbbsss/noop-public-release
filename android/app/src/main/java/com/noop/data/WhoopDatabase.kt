@@ -34,6 +34,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         SleepStateSampleEntity::class,
         RespSample::class,
         GravitySample::class,
+        ImuActivitySample::class,
         DailyMetric::class,
         SleepSession::class,
         MetricSeriesRow::class,
@@ -48,7 +49,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         LabMarkerRow::class,
         LiveSessionRow::class,
     ],
-    version = 18,
+    version = 20,
     exportSchema = false,
 )
 abstract class WhoopDatabase : RoomDatabase() {
@@ -56,6 +57,9 @@ abstract class WhoopDatabase : RoomDatabase() {
 
     companion object {
         const val DB_NAME = "noop_whoop.db"
+
+        /** Must match [@Database.version]. Used by backup reconcile when rewriting Room's identity hash. */
+        const val VERSION = 20
 
         @Volatile
         private var instance: WhoopDatabase? = null
@@ -457,6 +461,89 @@ abstract class WhoopDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * v18 -> v19: ADDITIVE, adds `imuActivitySample` for WHOOP 5/MG 1244-B offload IMU features
+         * (cadence / accel energy) so step estimates can densify when @57 is missing. CREATE TABLE only.
+         */
+        internal val IMU_ACTIVITY_SAMPLE_MIGRATION_SQL: List<String> = listOf(
+            "CREATE TABLE IF NOT EXISTS `imuActivitySample` (`deviceId` TEXT NOT NULL, " +
+                "`ts` INTEGER NOT NULL, `accelEnergyG` REAL NOT NULL, `gyroEnergyDps` REAL NOT NULL, " +
+                "`jerkRms` REAL NOT NULL, `cadenceHz` REAL, `cadenceStrength` REAL NOT NULL, " +
+                "`sampleCount` INTEGER NOT NULL, PRIMARY KEY(`deviceId`, `ts`))",
+        )
+
+        internal val MIGRATION_18_19 = object : Migration(18, 19) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                for (stmt in IMU_ACTIVITY_SAMPLE_MIGRATION_SQL) db.execSQL(stmt)
+            }
+        }
+
+        /**
+         * v19 -> v20: ADDITIVE — `sleepStateSample.aux82` (MG `@82` raw beside sleep_state) +
+         * `dailyMetric.spo2OpticalAux` (overnight optical present flag). Never SpO₂ %.
+         */
+        internal val SLEEP_STATE_AUX82_MIGRATION_SQL: List<String> = listOf(
+            "ALTER TABLE `sleepStateSample` ADD COLUMN `aux82` INTEGER",
+            "ALTER TABLE `dailyMetric` ADD COLUMN `spo2OpticalAux` INTEGER",
+        )
+
+        internal val MIGRATION_19_20 = object : Migration(19, 20) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                for (stmt in SLEEP_STATE_AUX82_MIGRATION_SQL) db.execSQL(stmt)
+            }
+        }
+
+        /**
+         * Build a throwaway empty Room DB and read its `room_master_table.identity_hash` — the hash
+         * THIS process expects for [VERSION]. Used by [DataBackup.reconcileSiblingAndroidSchema] so a
+         * ryanbr/noop backup (same version, different schema/hash) can be rewritten to open here.
+         */
+        fun probeIdentityHash(context: Context): String? {
+            val name = "noop_idhash_probe_${System.nanoTime()}.db"
+            return try {
+                val db = buildNamed(context.applicationContext, name)
+                try {
+                    db.query("SELECT 1", null).use { it.moveToFirst() }
+                    val path = context.applicationContext.getDatabasePath(name)
+                    readRoomIdentityHash(path)
+                } finally {
+                    runCatching { db.close() }
+                    context.applicationContext.deleteDatabase(name)
+                }
+            } catch (t: Throwable) {
+                null
+            }
+        }
+
+        private fun readRoomIdentityHash(file: java.io.File): String? {
+            if (!file.exists()) return null
+            val sqlite = android.database.sqlite.SQLiteDatabase.openDatabase(
+                file.path, null, android.database.sqlite.SQLiteDatabase.OPEN_READONLY,
+            )
+            return try {
+                sqlite.rawQuery(
+                    "SELECT identity_hash FROM room_master_table WHERE id = 42 LIMIT 1",
+                    null,
+                ).use { c -> if (c.moveToFirst()) c.getString(0) else null }
+            } catch (_: Exception) {
+                null
+            } finally {
+                runCatching { sqlite.close() }
+            }
+        }
+
+        private fun buildNamed(appContext: Context, name: String): WhoopDatabase =
+            Room.databaseBuilder(appContext, WhoopDatabase::class.java, name)
+                .openHelperFactory(CorruptionPreservingOpenHelperFactory())
+                .addMigrations(
+                    MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5,
+                    MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10,
+                    MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14,
+                    MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18,
+                    MIGRATION_18_19, MIGRATION_19_20,
+                )
+                .build()
+
         private fun build(appContext: Context): WhoopDatabase =
             Room.databaseBuilder(appContext, WhoopDatabase::class.java, DB_NAME)
                 // #1014: replace ONLY the corruption handling of the default open-helper. The
@@ -472,6 +559,7 @@ abstract class WhoopDatabase : RoomDatabase() {
                     MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10,
                     MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14,
                     MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18,
+                    MIGRATION_18_19, MIGRATION_19_20,
                 )
                 // #1037: a FRESH install builds the schema straight at the current version and runs NO
                 // migrations, so the MIGRATION_7_8 "my-whoop" registry seed never fires and the WHOOP,

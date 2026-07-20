@@ -561,29 +561,44 @@ class TodayMetricTilesTest {
             null,
             effectiveEffortStrain(live = null, stored = 43.0, storedDayKey = "2026-07-14", selectedDayKey = "2026-07-15"),
         )
+        // Same-day: live wins (do not max with stale banked strain — Fold ~39 freeze after Effort retune).
         assertEquals(
-            43.0,
+            12.0,
             effectiveEffortStrain(live = 12.0, stored = 43.0, storedDayKey = "2026-07-15", selectedDayKey = "2026-07-15"),
         )
         assertEquals(
             12.0,
             effectiveEffortStrain(live = 12.0, stored = null, storedDayKey = null, selectedDayKey = "2026-07-15"),
         )
+        assertEquals(
+            39.0,
+            effectiveEffortStrain(live = null, stored = 39.0, storedDayKey = "2026-07-17", selectedDayKey = "2026-07-17"),
+        )
     }
 
     @Test
-    fun effectiveEffortStrain_treatsZeroAsNoLoad_notFakeZeroPointZero() {
-        // Fold 2026-07-16 / Gilbert P0: calm resting-only TRIMP → StrainScorer 0.0 must not paint "0.0 load".
-        assertNull(effectiveEffortStrain(live = 0.0, stored = null, storedDayKey = null, selectedDayKey = "2026-07-16"))
+    fun effectiveEffortStrain_keepsLiveCalmZero_andIgnoresBankedZeroLock() {
+        // Live calm 0.0 (enough HR, no zone load) is a real score — surface it. Banked ≤0 alone is a
+        // lock artifact → null so pending / live can heal (Fold 2026-07-19).
+        assertEquals(
+            0.0,
+            effectiveEffortStrain(live = 0.0, stored = null, storedDayKey = null, selectedDayKey = "2026-07-16"),
+        )
         assertNull(
             effectiveEffortStrain(live = null, stored = 0.0, storedDayKey = "2026-07-16", selectedDayKey = "2026-07-16"),
         )
-        assertNull(
+        assertEquals(
+            0.0,
             effectiveEffortStrain(live = 0.0, stored = 0.0, storedDayKey = "2026-07-16", selectedDayKey = "2026-07-16"),
         )
+        // Live wins over same-day stored (no max freeze).
         assertEquals(
-            8.0,
+            0.0,
             effectiveEffortStrain(live = 0.0, stored = 8.0, storedDayKey = "2026-07-16", selectedDayKey = "2026-07-16"),
+        )
+        assertEquals(
+            12.0,
+            effectiveEffortStrain(live = 12.0, stored = 8.0, storedDayKey = "2026-07-16", selectedDayKey = "2026-07-16"),
         )
     }
 

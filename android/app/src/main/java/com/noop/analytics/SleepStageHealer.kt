@@ -61,11 +61,11 @@ object SleepStageHealer {
     ): String? {
         val lo = start - 3_600L
         val hi = end + 3_600L
-        val grav = repo.gravitySamples(deviceId, lo, hi, IntelligenceEngine.STREAM_LIMIT)
+        val grav = repo.gravitySamplesUnion(deviceId, lo, hi, IntelligenceEngine.STREAM_LIMIT)
         // Cheap density gate FIRST (count only) so a sparse imported night skips the three further reads.
         if (!isDense(grav, start, end)) return null
-        val hr = repo.hrSamples(deviceId, lo, hi, IntelligenceEngine.STREAM_LIMIT)
-        val rr = repo.rrIntervals(deviceId, lo, hi, IntelligenceEngine.STREAM_LIMIT)
+        val hr = repo.hrSamplesUnion(deviceId, lo, hi, IntelligenceEngine.STREAM_LIMIT)
+        val rr = repo.rrIntervalsUnion(deviceId, lo, hi, IntelligenceEngine.STREAM_LIMIT)
         val resp = repo.respSamples(deviceId, lo, hi, IntelligenceEngine.STREAM_LIMIT)
         return restageFromSamples(start, end, grav, hr, rr, resp, useExperimentalSleepV2)
     }

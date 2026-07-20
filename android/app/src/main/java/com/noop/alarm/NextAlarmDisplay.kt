@@ -11,21 +11,34 @@ object NextAlarmDisplay {
     /** Shared wake presets for Today Quick alarm + Sleep|Alarm summary (6:30 / 7 / 7:30 / 8). */
     val WAKE_PRESET_MINUTES: List<Int> = listOf(6 * 60 + 30, 7 * 60, 7 * 60 + 30, 8 * 60)
 
-    fun formatMinuteOfDay(minutes: Int, is24Hour: Boolean): String {
+    /**
+     * Split wall-clock for dual Bedtime|Wake faces: large digits + optional smaller AM/PM.
+     * 24-hour leaves [meridiem] null so UI never invents a period label.
+     */
+    data class ClockParts(val digits: String, val meridiem: String?)
+
+    fun clockParts(minutes: Int, is24Hour: Boolean): ClockParts {
         val m = ((minutes % (24 * 60)) + (24 * 60)) % (24 * 60)
         val h = m / 60
         val mm = m % 60
         return if (is24Hour) {
-            "%d:%02d".format(h, mm)
+            ClockParts("%d:%02d".format(h, mm), meridiem = null)
         } else {
             val h12 = when {
                 h == 0 -> 12
                 h > 12 -> h - 12
                 else -> h
             }
-            val ampm = if (h < 12) "AM" else "PM"
-            "%d:%02d %s".format(h12, mm, ampm)
+            ClockParts(
+                digits = "%d:%02d".format(h12, mm),
+                meridiem = if (h < 12) "AM" else "PM",
+            )
         }
+    }
+
+    fun formatMinuteOfDay(minutes: Int, is24Hour: Boolean): String {
+        val parts = clockParts(minutes, is24Hour)
+        return if (parts.meridiem == null) parts.digits else "${parts.digits} ${parts.meridiem}"
     }
 
     fun wakeWindowTitle(targetMinutes: Int, windowMinutes: Int, is24Hour: Boolean): String {

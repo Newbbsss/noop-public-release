@@ -209,6 +209,11 @@ object AnalyticsEngine {
         // empty keeps pure-function callers/tests free of it; IntelligenceEngine threads the night window's
         // persisted band state. Mirrors Swift. (#531 / H8 consume)
         bandSleepState: List<Pair<Long, Int>> = emptyList(),
+        /**
+         * MG sleep-offload: nonzero `@82` while band asleep. Banks [DailyMetric.spo2OpticalAux] only —
+         * never a SpO₂ %. Default false keeps pure callers unchanged.
+         */
+        opticalAuxOvernight: Boolean = false,
         // Opt-in experimental sleep staging (V2). When true, detected nights are staged by [SleepStagerV2]
         // instead of V1. Default false keeps V1 the byte-identical default for pure-function callers/tests;
         // IntelligenceEngine threads PuffinExperiment.from(context).experimentalSleepV2. Mirrors Swift. (V7 / #690)
@@ -219,12 +224,21 @@ object AnalyticsEngine {
     ): DayResult {
 
         // ── Sleep detection + staging ─────────────────────────────────────────
-        val allSessions = SleepStager.detectSleep(
-            hr = hr, rr = rr, resp = resp, gravity = gravity, tzOffsetSeconds = tzOffsetSeconds,
-            wristOff = wristOff, bandSleepState = bandSleepState,
-            useSleepStagerV2 = useSleepStagerV2,
-            traceSink = traceSink,
+        val priorSoft = SleepStager.softPriors
+        SleepStager.softPriors = SleepStager.SoftPriors(
+            ageYears = profile.age.takeIf { it > 0.0 },
+            bmi = SleepNeedEstimator.bmi(profile.heightCm, profile.weightKg),
         )
+        val allSessions = try {
+            SleepStager.detectSleep(
+                hr = hr, rr = rr, resp = resp, gravity = gravity, tzOffsetSeconds = tzOffsetSeconds,
+                wristOff = wristOff, bandSleepState = bandSleepState,
+                useSleepStagerV2 = useSleepStagerV2,
+                traceSink = traceSink,
+            )
+        } finally {
+            SleepStager.softPriors = priorSoft
+        }
         // Sessions attributed to `day` = those whose end falls on `day` (LOCAL day, #277). `day` is
         // the caller's local-day key; attribute by the same offset so the bucket and the key agree.
         val matched = allSessions.filter { dayString(it.end, tzOffsetSeconds) == day }
@@ -410,7 +424,7 @@ object AnalyticsEngine {
         val effMaxHR: Double? = maxHROverride
             ?: if (profile.age > 0) StrainScorer.tanakaHRmax(profile.age) else null
         val restForStrain = restingHRDaily?.toDouble() ?: StrainScorer.defaultRestingHR
-        val strain = StrainScorer.strain(
+        val trimpStrain = StrainScorer.strain(
             hr = dayHr ?: hr,
             maxHR = effMaxHR,
             restingHR = restForStrain,
@@ -489,6 +503,13 @@ object AnalyticsEngine {
             )
         }
 
+        // Effort = max(cardio TRIMP, steps/kcal movement floor). Floor raises calm walks without
+        // inventing hard cardio; TRIMP still wins when higher (ANALYTICS.md / Scoring Guide).
+        // Never bank ≤0: a morning calm 0.0 locks the row (strain != null) and blocks later
+        // backfill / live walks from healing the day (Fold 2026-07-19 strain=0.0 @ 1070 steps).
+        val strain = StrainScorer.withMovementFloor(trimpStrain, stepsTotal, activeKcalEst)
+            ?.takeIf { it > 0.0 }
+
         // ── Assemble DailyMetric ──────────────────────────────────────────────
         // deviceId is stamped by the caller (IntelligenceEngine persists under
         // "<deviceId>-noop"); use the imported source id as a placeholder here so
@@ -515,6 +536,7 @@ object AnalyticsEngine {
             activeKcalEst = activeKcalEst,
             spo2Red = nightlySpo2Raw?.first,
             spo2Ir = nightlySpo2Raw?.second,
+            spo2OpticalAux = if (opticalAuxOvernight) true else null,
         )
 
         // ── Per-score confidence tiers (mirror Swift ScoreConfidence.derive decisions) ──
@@ -750,25 +772,34 @@ object RestScorer {
     const val defaultSleepNeedHours: Double = 8.0
 
     /**
-     * Floor for refined personal need (hours). Matches Sleep UI `needMin` (≥ 7.5 h) so Rest
-     * duration scoring and the debt ledger share one baseline. Fable Rest #24.
+     * Legacy constant retained for call-site compatibility. Physiology floor is now age-banded
+     * via [SleepNeedEstimator] (adult 8.0, ≥65 → 7.5); do not use this as a habit-mean clamp.
      */
     const val minPersonalNeedHours: Double = 7.5
 
     /**
-     * Personal sleep need (hours) from banked asleep minutes.
+     * Personal sleep need (hours) from banked asleep minutes + optional physiology.
      *
-     * - No positive nights → [defaultSleepNeedHours] (8 h), nightsUsed = 0.
-     * - Else mean asleep hours, floored at [minPersonalNeedHours] (Sleep tab parity).
-     *
-     * Spec: "8 h default, refined by recent average". Research may revise default; keep 9h settable.
+     * Delegates to [SleepNeedEstimator]: NSF age band + BMI/waist/prior Effort bumps, blended
+     * with learned mean, clamped so need never falls below physiology. Empty pool → phys alone
+     * (adult cold-start 8 h when profile age is null).
      */
-    fun personalNeedHours(asleepMinutes: Collection<Double>): Pair<Double, Int> {
-        val mins = asleepMinutes.filter { it > 0.0 }
-        if (mins.isEmpty()) return defaultSleepNeedHours to 0
-        val meanHours = mins.sum() / mins.size / 60.0
-        return maxOf(minPersonalNeedHours, meanHours) to mins.size
-    }
+    fun personalNeedHours(asleepMinutes: Collection<Double>): Pair<Double, Int> =
+        SleepNeedEstimator.personalNeedHours(asleepMinutes)
+
+    fun personalNeedHours(
+        asleepMinutes: Collection<Double>,
+        profile: UserProfile?,
+        priorDayStrain: Double? = null,
+    ): Pair<Double, Int> = SleepNeedEstimator.personalNeedHours(
+        asleepMinutes = asleepMinutes,
+        ageYears = profile?.age?.takeIf { it > 0.0 },
+        heightCm = profile?.heightCm,
+        weightKg = profile?.weightKg,
+        waistCm = profile?.waistCm?.takeIf { it > 0.0 },
+        sex = profile?.sex,
+        priorDayStrain = priorDayStrain,
+    )
 
     /**
      * Healthy restorative (deep + REM) share of asleep time. A share at/above this earns full
@@ -800,10 +831,10 @@ object RestScorer {
     const val durationQualityFloor: Double = 0.42
 
     /**
-     * Final Rest scale vs WHOOP Sleep Performance on matched good nights (Gilbert: Rest ~+10).
-     * Applied after the weighted composite; does not touch staging or stage minutes.
+     * Gilbert honesty scale on the weighted Rest composite (does not touch staging).
+     * 8.6.234: 0.78 — V1-only product path; Rest was still reading high vs lived nights / V2 number feel.
      */
-    const val restWhoopAlignScale: Double = 0.90
+    const val restWhoopAlignScale: Double = 0.78
 
     /**
      * Single asleep-minutes source of truth for Rest / debt / trends.
@@ -868,8 +899,8 @@ object RestScorer {
         val needHours = (sleepNeedHours ?: defaultSleepNeedHours).coerceAtLeast(1e-9)
 
         val restorativeShare = (deepSeconds + remSeconds) / asleepSeconds
-        // Duration vs personal need (clamped at 100), then quality-gated when restorative is thin.
-        val durationScore = min(100.0, asleepHours / needHours * 100.0) *
+        // Duration vs personal need with power-curve shortfall (missing the goal does not pay linearly).
+        val durationScore = SleepNeedEstimator.durationScoreRaw(asleepHours, needHours) *
             durationQualityFactor(restorativeShare)
         // Efficiency (0..1 -> 0..100), clamped.
         val efficiencyScore = (efficiency * 100.0).coerceIn(0.0, 100.0)

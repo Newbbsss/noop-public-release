@@ -68,4 +68,16 @@ class RecoveryScorerRestingHrTest {
     fun nullWhenNoSamples() {
         assertEquals(null, RecoveryScorer.restingHR(emptyList(), 0L, 1000L))
     }
+
+    @Test
+    fun chargeWeights_sumToOne() {
+        // Science audit cheat-sheet lock — composite Charge z weights.
+        val sum = RecoveryScorer.wHRV + RecoveryScorer.wRHR + RecoveryScorer.wResp +
+            RecoveryScorer.wSleep + RecoveryScorer.wSkinTemp
+        assertEquals(1.0, sum, 1e-9)
+        assertEquals(1.6, RecoveryScorer.logisticK, 1e-9)
+        assertEquals(0.00, RecoveryScorer.logisticZ0, 1e-9)
+        assertEquals(0.85, RecoveryScorer.sleepPerfCenter, 1e-9)
+        assertEquals(0.12, RecoveryScorer.sleepPerfScale, 1e-9)
+    }
 }

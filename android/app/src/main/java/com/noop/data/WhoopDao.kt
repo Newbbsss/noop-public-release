@@ -79,6 +79,10 @@ interface WhoopDao : DeviceRegistryDao {
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertGravity(rows: List<GravitySample>): List<Long>
 
+    /** WHOOP 5/MG 1244-B IMU activity windows (v19). Idempotent by (deviceId, ts). */
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertImuActivity(rows: List<ImuActivitySample>): List<Long>
+
     /** PPG-derived HR from the v26 optical waveform. Idempotent by (deviceId, ts). (#156) */
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertPpgHr(rows: List<PpgHrSample>): List<Long>
@@ -292,6 +296,12 @@ interface WhoopDao : DeviceRegistryDao {
             "ORDER BY ts ASC LIMIT :limit"
     )
     suspend fun gravitySamples(deviceId: String, from: Long, to: Long, limit: Int): List<GravitySample>
+
+    @Query(
+        "SELECT * FROM imuActivitySample WHERE deviceId = :deviceId AND ts >= :from AND ts <= :to " +
+            "ORDER BY ts ASC LIMIT :limit"
+    )
+    suspend fun imuActivitySamples(deviceId: String, from: Long, to: Long, limit: Int): List<ImuActivitySample>
 
     // MARK: - Daily metrics / sleep reads (mirror MetricsCache.swift)
 
@@ -640,6 +650,9 @@ interface WhoopDao : DeviceRegistryDao {
 
     @Query("DELETE FROM gravitySample WHERE ts < :minTs OR ts > :maxTs")
     suspend fun pruneGravityByTs(minTs: Long, maxTs: Long): Int
+
+    @Query("DELETE FROM imuActivitySample WHERE ts < :minTs OR ts > :maxTs")
+    suspend fun pruneImuActivityByTs(minTs: Long, maxTs: Long): Int
 
     @Query("DELETE FROM spo2Sample WHERE ts < :minTs OR ts > :maxTs")
     suspend fun pruneSpo2ByTs(minTs: Long, maxTs: Long): Int

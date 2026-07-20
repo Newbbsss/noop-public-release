@@ -27,6 +27,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.res.stringResource
+import com.noop.R
 import com.noop.data.JournalEntry
 import java.time.LocalDate
 
@@ -119,7 +121,10 @@ internal fun mergeJournalEntries(
 /** Importer convention (WhoopCsvImporter.parseJournal): journal day = the wake/cycle day whose
  *  morning recovery the previous ~24 h affected. "Log today" = answers about yesterday / last
  *  night, attributed to TODAY's local day key; daysBack=1 edits yesterday; daysBack=-1 logs ahead
- *  for TOMORROW (today's activities inform tomorrow's recovery). */
+ *  for TOMORROW (today's activities inform tomorrow's recovery).
+ *
+ *  Callers that honour awake-past-midnight should pass [today] = presentation day (prior calendar
+ *  day while still awake after midnight) so the journal does not reset to an empty fresh day. */
 internal fun journalDayKey(daysBack: Long = 0L, today: LocalDate = LocalDate.now()): String =
     today.minusDays(daysBack).toString()
 
@@ -180,6 +185,10 @@ fun JournalLogCard(
     onSetKind: (String, JournalKind) -> Unit = { _, _ -> },
     onRemoveQuestion: (String) -> Unit = {},
     onRestoreQuestion: (String) -> Unit = {},
+    /** When true, the offset-0 chip uses [todayChipLabel] (awake-past-midnight span). */
+    extendsAwakePastMidnight: Boolean = false,
+    /** Language-owned label for offset-0 when [extendsAwakePastMidnight]; defaults to "Today". */
+    todayChipLabel: String = "Today",
 ) {
     var editing by remember { mutableStateOf(false) }
     var renaming by remember { mutableStateOf<JournalCatalogItem?>(null) }
@@ -206,7 +215,10 @@ fun JournalLogCard(
                 // Chronological left→right: Yesterday · Today · Tomorrow (#443).
                 JournalChip("Yesterday", selected = dayOffset == 1L) { onDayOffset(1L) }
                 Spacer(Modifier.width(6.dp))
-                JournalChip("Today", selected = dayOffset == 0L) { onDayOffset(0L) }
+                JournalChip(
+                    if (extendsAwakePastMidnight) todayChipLabel else "Today",
+                    selected = dayOffset == 0L,
+                ) { onDayOffset(0L) }
                 Spacer(Modifier.width(6.dp))
                 JournalChip("Tomorrow", selected = dayOffset == -1L) { onDayOffset(-1L) }
             }
@@ -232,6 +244,8 @@ fun JournalLogCard(
                             "Logging ahead for tomorrow: today's activities inform tomorrow's " +
                                 "recovery, just as yesterday's are reflected in today's. Tomorrow's " +
                                 "answers line up with tomorrow's morning."
+                        extendsAwakePastMidnight && dayOffset == 0L ->
+                            stringResource(R.string.journal_awake_span_help)
                         else ->
                             "Answers are about the night and day leading into this morning, the " +
                                 "same attribution a WHOOP export uses, so logged and imported days " +

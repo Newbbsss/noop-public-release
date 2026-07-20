@@ -175,6 +175,11 @@ data class SleepStateSampleEntity(
     val deviceId: String,
     val ts: Long,
     val state: Int,   // 0 wake / 1 still / 2 asleep / 3 up (band's own high-nibble code)
+    /**
+     * WHOOP 5/MG v18 `@82` raw optical/subsystem footprint (`aux_byte_82`). Sleep-gated on-device;
+     * **never** SpO₂ %. Nullable — absent on WHOOP 4.0 and pre-migration rows. Added MIGRATION_19_20.
+     */
+    val aux82: Int? = null,
 )
 
 /** Respiration raw-ADC sample (type-47). Swift `respSample` (v3). PK (deviceId, ts). */
@@ -195,6 +200,24 @@ data class GravitySample(
     val y: Double,
     val z: Double,
     val synced: Int = 0,
+)
+
+/**
+ * One second of WHOOP 5/MG 1244-B offload (or rare live type-51) IMU activity features.
+ * Persisted so step estimates can use cadence / accel energy when @57 is missing or sparse.
+ * Added by MIGRATION_18_19. PK (deviceId, ts) = strap unix second of the buffer.
+ * [cadenceHz] null when no rhythmic peak cleared ImuFeatureExtractor.minCadenceStrength.
+ */
+@Entity(tableName = "imuActivitySample", primaryKeys = ["deviceId", "ts"])
+data class ImuActivitySample(
+    val deviceId: String,
+    val ts: Long,
+    val accelEnergyG: Double,
+    val gyroEnergyDps: Double,
+    val jerkRms: Double,
+    val cadenceHz: Double? = null,
+    val cadenceStrength: Double = 0.0,
+    val sampleCount: Int = 0,
 )
 
 /**
@@ -238,6 +261,11 @@ data class DailyMetric(
     // (imports/cloud never carry them), so old rows + non-4.0 nights stay null.
     val spo2Red: Int? = null,           // mean raw red PPG ADC during detected sleep
     val spo2Ir: Int? = null,            // mean raw IR PPG ADC during detected sleep
+    /**
+     * WHOOP 5/MG: sleep offload banked nonzero `@82` optical aux while band reported asleep.
+     * Honest “overnight optical present” flag — **never** a SpO₂ %. Null on older rows / WHOOP 4.
+     */
+    val spo2OpticalAux: Boolean? = null,
 )
 
 /**

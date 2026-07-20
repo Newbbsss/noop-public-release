@@ -10,6 +10,28 @@ import java.util.TimeZone
 class NextAlarmDisplayTest {
 
     @Test
+    fun clockPartsSplitsMeridiemIn12hOnly() {
+        assertEquals(
+            NextAlarmDisplay.ClockParts("7:00", "AM"),
+            NextAlarmDisplay.clockParts(7 * 60, is24Hour = false),
+        )
+        assertEquals(
+            NextAlarmDisplay.ClockParts("7:00", "PM"),
+            NextAlarmDisplay.clockParts(19 * 60, is24Hour = false),
+        )
+        assertEquals(
+            NextAlarmDisplay.ClockParts("12:00", "AM"),
+            NextAlarmDisplay.clockParts(0, is24Hour = false),
+        )
+        assertEquals(
+            NextAlarmDisplay.ClockParts("19:00", null),
+            NextAlarmDisplay.clockParts(19 * 60, is24Hour = true),
+        )
+        assertEquals("7:00 AM", NextAlarmDisplay.formatMinuteOfDay(7 * 60, is24Hour = false))
+        assertEquals("19:00", NextAlarmDisplay.formatMinuteOfDay(19 * 60, is24Hour = true))
+    }
+
+    @Test
     fun wakeWindowTitleUsesMinuteOfDayNotEpoch() {
         // Same configured minutes must read identically regardless of how an old epoch would format.
         assertEquals(

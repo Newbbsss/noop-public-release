@@ -1,5 +1,7 @@
 # NOOP Analytics
 
+> **Product-owner cheat-sheet:** [`docs/agent/research/SCORE_ALGORITHM_REPORT.md`](agent/research/SCORE_ALGORITHM_REPORT.md) — Charge, Stress Now vs daily load, Sleep HR/HRV, stages, Rest, Effort, skin temp (verified against current Kotlin).
+
 On-device analytics for **NOOP** — a standalone, fully offline companion app for WHOOP straps (4.0 and 5.0/MG). NOOP talks to *your own* strap over Bluetooth, stores everything locally in SQLite, and computes its three daily scores plus HRV and sleep staging on-device. There is no cloud and no account involved in any of the math described here.
 
 ## NOOP's three daily scores — Charge / Effort / Rest
@@ -194,10 +196,10 @@ Missing terms are dropped and weights renormalized. The weighted-mean z is squas
 ```
 score = 100 / (1 + exp(−logisticK · (z − logisticZ0)))
         logisticK  = 1.6     (±2 z ≈ the full red–green band)
-        logisticZ0 = −0.20   (anchors z = 0 → ~58 %)
+        logisticZ0 = −0.05   (anchors z = 0 → ~52 %; Gilbert honesty floor)
 ```
 
-The `58%` anchor matches WHOOP's published population-average recovery (`populationMean = 58.0`).
+The `52%` anchor is Gilbert’s cooler trust floor (`populationMean = 52.0`), not a WHOOP population-mean clone.
 
 ### Cold-start ("Calibrating")
 
@@ -240,7 +242,7 @@ Effort = 100 · ln(TRIMP + 1) / ln(D),    D = strainDenominator = 7201
 
 ### Steps / active-energy floor
 
-A long walk with little cardio still counts: when cardio TRIMP is low but step / active-kcal load is high, Effort is raised to a movement-derived floor so non-cardio activity still registers. (5/MG continuity: Effort already reads `COALESCE(measured HR, ppg_hr)` via hrBuckets, so 5-series users get Effort from live + PPG HR.)
+A long walk with little cardio still counts **modestly**: when cardio TRIMP is low but step load is high, Effort is raised to a **steps-only** movement-derived floor so non-cardio activity still registers. The floor is **convex in steps** (near zero under a ~5k noise floor / desk mornings; low single digits around a typical 10–12k walk; steeper toward a hard cap ~22 only on very high step days). Whole-day calorie estimates are **not** used for the floor (they were saturating the cap on rest mornings). Edwards TRIMP ignores samples below **60% HRR** so ambulatory daytime HR does not mint Effort while WHOOP Strain stays near 0.1. Cardio TRIMP still wins when higher. (5/MG continuity: Effort already reads `COALESCE(measured HR, ppg_hr)` via hrBuckets, so 5-series users get Effort from live + PPG HR.)
 
 ### HRmax estimation (`estimateHRmax`)
 
@@ -317,14 +319,15 @@ Source: assembled in `AnalyticsEngine` from the `SleepStager` outputs above. Res
 
 | Component | Weight | What it measures |
 |---|---|---|
-| Duration vs personal need | 0.50 (biggest factor) | how long you slept against your own sleep need |
+| Duration vs personal need | 0.45 (biggest factor) | how long you slept against your own sleep need (discounted when restorative share is thin) |
 | Efficiency (asleep / in-bed) | 0.20 | how efficiently you slept |
-| Restorative share (deep + REM) / asleep | 0.20 | how much of the night was restorative |
+| Restorative share (deep + REM) / asleep | 0.25 | how much of the night was **deep+REM** (not deep alone); scaled by deep-adequacy |
 | Consistency (sleep/wake regularity) | 0.10 | how consistent your sleep and wake timing is |
 
-- **Personal sleep need:** 8 h default, refined by your recent average; the hours-vs-need term clamps at 100.
+- **Personal sleep need:** 8 h default, refined by your recent average (floor 7.5 h); the hours-vs-need term clamps at 100.
+- **Restorative honesty:** UI “Restorative sleep” = deep + REM minutes. A night can show ~10% Deep and still ~50%+ restorative if REM is large — that is definitional, not a staging bug by itself. Deep adequacy still reduces the Rest restorative term when deep alone is thin. We do **not** invent Deep/REM to match WHOOP.
 - Rest consumes whatever stages each device provides (v25 motion on 4.0; PPG/IMU on 5/MG as it unlocks) — the sleep-staging algorithm itself is unchanged.
-- The `sleep_performance` key now stores this 0–100 composite. The **Charge** "Rest quality" driver reads it (÷100) instead of raw efficiency.
+- The `sleep_performance` key now stores this 0–100 composite. The **Charge** "Sleep quality" driver reads it (÷100) instead of raw efficiency.
 
 This composite is similar *in spirit* to WHOOP's Sleep Performance %, but the blend is our own.
 

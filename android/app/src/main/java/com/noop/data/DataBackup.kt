@@ -1,8 +1,10 @@
 package com.noop.data
 
 import android.content.Context
+import android.content.Intent
 import android.database.sqlite.SQLiteDatabase
 import android.net.Uri
+import android.os.Process
 import android.util.Log
 import androidx.sqlite.db.SupportSQLiteDatabase
 import androidx.sqlite.db.SupportSQLiteOpenHelper
@@ -63,8 +65,12 @@ object DataBackup {
         /** The new database is in place; tell the user to relaunch NOOP. */
         data object NeedsRestart : ImportResult
 
-        /** Import failed and the original database is untouched. */
-        data class Failed(val message: String) : ImportResult
+        /**
+         * Import failed. When [mustRelaunch] is true, [WhoopDatabase.close] already ran — the
+         * process-wide repository is dead and the caller MUST [relaunchProcessAfterRestore] even
+         * though data was rolled back (otherwise the next query crashes).
+         */
+        data class Failed(val message: String, val mustRelaunch: Boolean = false) : ImportResult
     }
 
     /**
@@ -141,9 +147,46 @@ object DataBackup {
      * files so older backups keep working after the format upgrade.
      *
      * On any error the current database is left exactly as it was. On success the caller
-     * MUST instruct the user to fully restart the app.
+     * MUST call [relaunchProcessAfterRestore] — [WhoopDatabase.close] leaves the process-wide
+     * [com.noop.NoopApplication.repository] holding a dead DAO; continuing without a process
+     * restart crashes on the next query ("connection pool has been closed").
      */
     fun importFrom(context: Context, uri: Uri): ImportResult {
+        return try {
+            importFromUnguarded(context, uri)
+        } catch (t: Throwable) {
+            Log.e("DataBackup", "importFrom crashed", t)
+            ImportResult.Failed(
+                "Restore failed unexpectedly (${t.javaClass.simpleName}: ${t.message}). " +
+                    "Your current data was left untouched when possible.",
+            )
+        }
+    }
+
+    /**
+     * Relaunch NOOP after a successful restore. Required: the Application-scoped repository still
+     * points at the closed Room connection until the process dies. Call off the main thread after a
+     * short delay so a "restarting…" toast can paint.
+     */
+    fun relaunchProcessAfterRestore(context: Context) {
+        val app = context.applicationContext
+        runCatching {
+            app.packageManager.getLaunchIntentForPackage(app.packageName)
+                ?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+                ?.let { app.startActivity(it) }
+        }
+        // Prefer killProcess over Runtime.exit so Android tears down cleanly; either ends the
+        // process so the next launch rebuilds WhoopDatabase + WhoopRepository against the restored file.
+        Process.killProcess(Process.myPid())
+    }
+
+    /** True when [file] carries user-content tables (not just SQLite housekeeping). */
+    fun fileHoldsUserData(file: File): Boolean {
+        if (!file.exists() || file.length() < SQLITE_MAGIC.size) return false
+        return holdsData(sqliteTableNames(file))
+    }
+
+    private fun importFromUnguarded(context: Context, uri: Uri): ImportResult {
         val appContext = context.applicationContext
         val resolver = appContext.contentResolver
 
@@ -221,6 +264,15 @@ object DataBackup {
             BackupOrigin.ANDROID -> Unit // our own backup, proceed.
         }
 
+        // 3b2. Never wipe a populated live store with an empty backup (and never "restore" nothing).
+        if (!holdsData(backupTables)) {
+            tempSqlite.delete()
+            tempSettings.delete()
+            return ImportResult.Failed(
+                "This backup has no NOOP data in it. Your current data is untouched.",
+            )
+        }
+
         // 3c. #1014 defence-in-depth: gates 3 and 3b read only the FIRST pages of the file — the
         //     16-byte magic and sqlite_master both survive a backup that was truncated mid-upload or
         //     torn by a flaky drive/cloud client, and such a file then "restores" into a store that
@@ -239,6 +291,19 @@ object DataBackup {
             )
         }
 
+        // 3d. Sibling-fork Android schema reconcile (ryanbr/noop ↔ Gilbert). Both ship Room v20 but
+        // diverge: Ryan widened `rrInterval` with a `seq` PK column; Gilbert banks `imuActivitySample`
+        // and may lack Ryan's `ppgWaveformSample`. Same version + different identity_hash → Room
+        // refuses the open ("couldn't be opened after restore") even though the ZIP is a valid
+        // Android NOOP backup. Consolidation (CSV / Health Connect) still works because it never
+        // touches Room identity. Normalize the staged file in place BEFORE the live swap.
+        if (backupOriginOf(backupTables) == BackupOrigin.ANDROID) {
+            runCatching { reconcileSiblingAndroidSchema(appContext, tempSqlite) }
+                .onFailure { t ->
+                    Log.w("DataBackup", "sibling schema reconcile skipped: ${t.message}")
+                }
+        }
+
         val dbFile = appContext.getDatabasePath(WhoopDatabase.DB_NAME)
         val walFile = File(dbFile.path + "-wal")
         val shmFile = File(dbFile.path + "-shm")
@@ -254,7 +319,10 @@ object DataBackup {
         } catch (e: IOException) {
             tempSqlite.delete()
             tempSettings.delete()
-            return ImportResult.Failed("Could not back up the current data: ${e.message}")
+            return ImportResult.Failed(
+                "Could not back up the current data: ${e.message}",
+                mustRelaunch = true,
+            )
         }
 
         // 6. Overwrite the db file with the extracted backup, then drop the stale sidecars.
@@ -268,7 +336,10 @@ object DataBackup {
             rollbackFile.delete()
             tempSqlite.delete()
             tempSettings.delete()
-            return ImportResult.Failed("Import failed, your data is unchanged: ${e.message}")
+            return ImportResult.Failed(
+                "Import failed, your data is unchanged: ${e.message}",
+                mustRelaunch = true,
+            )
         }
 
         // 6b. #1014 defence-in-depth, post-swap: re-verify the file that actually LANDED at the live
@@ -302,7 +373,7 @@ object DataBackup {
                 message = "The backup failed its integrity check after the copy (SQLite reports: " +
                     "$complaint). There was no previous data to roll back."
             }
-            return ImportResult.Failed(message)
+            return ImportResult.Failed(message, mustRelaunch = true)
         }
 
         // 7. #1000: re-apply the backup's whitelisted profile/display settings (weight, height, age,
@@ -315,6 +386,38 @@ object DataBackup {
                 BackupSettingsBridge.apply(appContext, tempSettings.readText(Charsets.UTF_8))
             }
             tempSettings.delete()
+        }
+
+        // 7b. Prove Room can open the landed file (schema migrate / corrupt schema) BEFORE we declare
+        //     success. On failure, roll back to the pre-import snapshot so a bad backup never bricks
+        //     the next launch. Then close again — the Application repository still holds the old DAO
+        //     until [relaunchProcessAfterRestore] kills the process.
+        val openedOk = runCatching {
+            WhoopDatabase.get(appContext).query("SELECT 1", null).use { it.moveToFirst() }
+            WhoopDatabase.close()
+        }
+        if (openedOk.isFailure) {
+            walFile.delete()
+            shmFile.delete()
+            val complaint = openedOk.exceptionOrNull()?.message ?: "could not open restored database"
+            val message: String
+            if (rollbackFile.exists()) {
+                if (runCatching { rollbackFile.copyTo(dbFile, overwrite = true) }.isSuccess) {
+                    rollbackFile.delete()
+                    runCatching { WhoopDatabase.get(appContext) } // best-effort reopen pre-import store
+                    message = "This backup couldn't be opened after restore ($complaint). " +
+                        "Your previous data was rolled back automatically."
+                } else {
+                    message = "This backup couldn't be opened after restore ($complaint), and rolling " +
+                        "back also failed. Your previous data is preserved at ${rollbackFile.name}."
+                }
+            } else {
+                dbFile.delete()
+                message = "This backup couldn't be opened after restore ($complaint). " +
+                    "There was no previous data to roll back."
+            }
+            tempSqlite.delete()
+            return ImportResult.Failed(message, mustRelaunch = true)
         }
 
         rollbackFile.delete()
@@ -479,6 +582,104 @@ object DataBackup {
     fun holdsData(tableNames: Set<String>): Boolean {
         val housekeeping = setOf("android_metadata", "sqlite_sequence", "room_master_table", "grdb_migrations")
         return tableNames.any { it !in housekeeping && !it.startsWith("sqlite_") }
+    }
+
+    /**
+     * Normalize a sibling Android NOOP backup so THIS app's Room can open it.
+     *
+     * Pure-SQL on the staged file (plus a throwaway Room probe for the expected identity hash).
+     * Public so unit tests can drive the SQL half with a hand-built SQLite. Idempotent when the file
+     * already matches Gilbert's shape.
+     *
+     * Steps:
+     *  1. Drop Ryan's `rrInterval.seq` PK widening (keep one row per (deviceId, ts, rrMs)).
+     *  2. Ensure Gilbert-only tables/columns exist (`imuActivitySample`, `aux82`, `spo2OpticalAux`).
+     *  3. Rewrite `room_master_table.identity_hash` to THIS process's expected hash and pin
+     *     `user_version` to [WhoopDatabase.VERSION] (Ryan's extra tables like `ppgWaveformSample`
+     *     stay — Room ignores unknown tables).
+     */
+    fun reconcileSiblingAndroidSchema(context: Context, file: File) {
+        val expectedHash = WhoopDatabase.probeIdentityHash(context)
+            ?: throw IllegalStateException("could not probe Room identity hash")
+        val db = SQLiteDatabase.openDatabase(
+            file.path, null, SQLiteDatabase.OPEN_READWRITE, PRESERVE_ON_CORRUPTION,
+        )
+        try {
+            stripRrIntervalSeqIfPresent(db)
+            ensureGilbertTablesAndColumns(db)
+            db.execSQL("PRAGMA user_version = ${WhoopDatabase.VERSION}")
+            // Room keys the hash row at id=42. Upsert so a wiped/missing row still lands.
+            db.execSQL("DELETE FROM room_master_table")
+            db.execSQL(
+                "INSERT INTO room_master_table (id, identity_hash) VALUES (42, ?)",
+                arrayOf(expectedHash),
+            )
+        } finally {
+            runCatching { db.close() }
+        }
+    }
+
+    /**
+     * SQL-only half of [reconcileSiblingAndroidSchema] for JVM unit tests (no Room probe).
+     * Applies the rrInterval strip + Gilbert table/column ensures; caller supplies the hash.
+     */
+    fun applySiblingSchemaSql(db: SQLiteDatabase, expectedIdentityHash: String) {
+        stripRrIntervalSeqIfPresent(db)
+        ensureGilbertTablesAndColumns(db)
+        db.execSQL("PRAGMA user_version = ${WhoopDatabase.VERSION}")
+        db.execSQL("DELETE FROM room_master_table")
+        db.execSQL(
+            "INSERT INTO room_master_table (id, identity_hash) VALUES (42, ?)",
+            arrayOf(expectedIdentityHash),
+        )
+    }
+
+    /** True when [table] has a column named [column] (case-insensitive). */
+    fun tableHasColumn(db: SQLiteDatabase, table: String, column: String): Boolean {
+        db.rawQuery("PRAGMA table_info(`$table`)", null).use { c ->
+            val nameIdx = c.getColumnIndex("name")
+            if (nameIdx < 0) return false
+            while (c.moveToNext()) {
+                if (c.getString(nameIdx).equals(column, ignoreCase = true)) return true
+            }
+        }
+        return false
+    }
+
+    private fun tableExists(db: SQLiteDatabase, table: String): Boolean {
+        db.rawQuery(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=? LIMIT 1",
+            arrayOf(table),
+        ).use { return it.moveToFirst() }
+    }
+
+    private fun stripRrIntervalSeqIfPresent(db: SQLiteDatabase) {
+        if (!tableExists(db, "rrInterval")) return
+        if (!tableHasColumn(db, "rrInterval", "seq")) return
+        db.execSQL("DROP TABLE IF EXISTS `rrInterval__gilbert`")
+        db.execSQL(
+            "CREATE TABLE `rrInterval__gilbert` (`deviceId` TEXT NOT NULL, `ts` INTEGER NOT NULL, " +
+                "`rrMs` INTEGER NOT NULL, `synced` INTEGER NOT NULL, " +
+                "PRIMARY KEY(`deviceId`, `ts`, `rrMs`))",
+        )
+        // Equal same-second beats that only differed by seq collapse to one row — better than
+        // rejecting the whole backup. INSERT OR IGNORE keeps the first (lowest seq) survivor.
+        db.execSQL(
+            "INSERT OR IGNORE INTO `rrInterval__gilbert` (`deviceId`, `ts`, `rrMs`, `synced`) " +
+                "SELECT `deviceId`, `ts`, `rrMs`, `synced` FROM `rrInterval`",
+        )
+        db.execSQL("DROP TABLE `rrInterval`")
+        db.execSQL("ALTER TABLE `rrInterval__gilbert` RENAME TO `rrInterval`")
+    }
+
+    private fun ensureGilbertTablesAndColumns(db: SQLiteDatabase) {
+        for (stmt in WhoopDatabase.IMU_ACTIVITY_SAMPLE_MIGRATION_SQL) db.execSQL(stmt)
+        if (tableExists(db, "sleepStateSample") && !tableHasColumn(db, "sleepStateSample", "aux82")) {
+            db.execSQL("ALTER TABLE `sleepStateSample` ADD COLUMN `aux82` INTEGER")
+        }
+        if (tableExists(db, "dailyMetric") && !tableHasColumn(db, "dailyMetric", "spo2OpticalAux")) {
+            db.execSQL("ALTER TABLE `dailyMetric` ADD COLUMN `spo2OpticalAux` INTEGER")
+        }
     }
 
     /** Every table name in [file], opened READ-ONLY so the probed file is never mutated. Empty on

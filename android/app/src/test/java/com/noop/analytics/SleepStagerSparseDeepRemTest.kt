@@ -73,6 +73,19 @@ class SleepStagerSparseDeepRemTest {
     }
 
     @Test
+    fun denseNight_finiteRmssdAtLowerBar_classifiesDeep() {
+        // Jul-20 pack: stageHRVHighPct 70→58 — finite RMSSD just above the bar still clears parasympOK.
+        val label = SleepStager.classifyOne(
+            feat(hr = 48.0, rmssd = 60.0, clock = 0.15),
+            hrLo = 52.0, hrHi = 70.0,
+            rmssdHi = 58.0, hrvarHi = 120.0,
+            rrvHi = 1.0, rrvLo = 0.5,
+            cardiacSparse = false,
+        )
+        assertEquals("deep", label)
+    }
+
+    @Test
     fun onsetPersistEpochs_tightenedToFive() {
         assertEquals(5, SleepStager.onsetPersistEpochs)
     }

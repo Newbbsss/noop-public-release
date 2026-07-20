@@ -93,11 +93,14 @@ import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.res.stringResource
+import androidx.annotation.StringRes
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.core.app.NotificationManagerCompat
+import com.noop.R
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -211,7 +214,7 @@ fun SleepScreen(
                 .sortedByDescending { (_, dayBlocks) -> dayBlocks.maxOf { it.endTs } }
                 .map { it.key }
             nightOffset = SharedDayBrowse.sleepNightOffset(
-                navKeys, browse, logicalDayKeyNow(), snapStalePrior = !userPinnedBrowse,
+                navKeys, browse, vm.presentationDayKey.value, snapStalePrior = !userPinnedBrowse,
             )
         }
         // Paint from local bank first — never wait on BLE/HC before stage chart + session chrome.
@@ -292,7 +295,7 @@ fun SleepScreen(
     val windDownForSky by vm.windDownEnabled.collectAsStateWithLifecycle()
     val nextAlarmForWind by vm.phoneAlarmEnabled.collectAsStateWithLifecycle()
     val alarmTargetForWind by vm.phoneAlarmTargetMinutes.collectAsStateWithLifecycle()
-    val is24Wind = remember(context) { android.text.format.DateFormat.is24HourFormat(context) }
+    val is24Wind = remember(context) { NoopPrefs.use24HourClock(context) }
 
     // Sleep tab hosts two pages: Sleep (night) and Alarm (unified wake controls — no Wake settings hop).
     var sleepPage by remember { mutableStateOf(SleepInnerPage.Sleep) }
@@ -345,9 +348,9 @@ fun SleepScreen(
                 modifier = Modifier.fillMaxWidth().padding(Metrics.space24),
                 verticalArrangement = Arrangement.spacedBy(Metrics.space16),
             ) {
-                Text(LifeChapterLacquer.SLEEP_GOOD_MORNING, style = NoopType.title2, color = Palette.textPrimary)
+                Text(stringResource(R.string.sleep_good_morning), style = NoopType.title2, color = Palette.textPrimary)
                 Text(
-                    LifeChapterLacquer.SLEEP_JOURNAL_PROMPT_BODY,
+                    stringResource(R.string.sleep_journal_prompt_body),
                     style = NoopType.subhead,
                     color = Palette.textSecondary,
                 )
@@ -356,13 +359,13 @@ fun SleepScreen(
                     modifier = Modifier.fillMaxWidth(),
                     colors = ButtonDefaults.buttonColors(containerColor = Palette.accent),
                 ) {
-                    Text(LifeChapterLacquer.SLEEP_OPEN_JOURNAL, style = NoopType.headline, color = Palette.surfaceBase)
+                    Text(stringResource(R.string.sleep_open_journal), style = NoopType.headline, color = Palette.surfaceBase)
                 }
                 TextButton(
                     onClick = { showJournalPrompt = false },
                     modifier = Modifier.fillMaxWidth(),
                 ) {
-                    Text(LifeChapterLacquer.SLEEP_MAYBE_LATER, style = NoopType.subhead, color = Palette.textTertiary)
+                    Text(stringResource(R.string.sleep_maybe_later), style = NoopType.subhead, color = Palette.textTertiary)
                 }
             }
         }
@@ -405,19 +408,21 @@ fun SleepScreen(
     // Never push an *older* wake-day over a newer browse (Today's today / a just-banked morning
     // night) — that left Sleep stuck on Tuesday after Wed's session landed.
     val browseDayKey by vm.browseDayKey.collectAsStateWithLifecycle()
+    val presentationDayKey by vm.presentationDayKey.collectAsStateWithLifecycle()
+    val extendsAwakePastMidnight by vm.extendsAwakePastMidnight.collectAsStateWithLifecycle()
     LaunchedEffect(night?.dayKey) {
         val key = night?.dayKey ?: return@LaunchedEffect
         val cur = browseDayKey
         if (cur != null && key < cur) return@LaunchedEffect
         if (browseDayKey != key) vm.setBrowseDayKey(key)
     }
-    LaunchedEffect(browseDayKey, navDays, userPinnedBrowse) {
+    LaunchedEffect(browseDayKey, navDays, userPinnedBrowse, presentationDayKey) {
         val key = browseDayKey ?: return@LaunchedEffect
         val navKeys = navDays.map { blocks ->
             localDayString(blocks.maxBy { it.endTs }.endTs)
         }
         val idx = SharedDayBrowse.sleepNightOffset(
-            navKeys, key, logicalDayKeyNow(), snapStalePrior = !userPinnedBrowse,
+            navKeys, key, presentationDayKey, snapStalePrior = !userPinnedBrowse,
         )
         if (idx != nightOffset) nightOffset = idx
     }
@@ -426,9 +431,21 @@ fun SleepScreen(
     // at-a-glance TILES, the debt ledger, the personal need and the trend stay full-history /
     // latest-anchored, matching iOS SleepView. `selectedDay` re-points only the hero. Model is null
     // when the selected day has no stage minutes. (#5)
-    val model = remember(days, night, imported) {
-        buildSleepModel(days, night?.session, imported, selectedDay = night?.dayKey,
-            heroStages = night?.groupStages, heroSegments = night?.groupSegments)
+    val profileStore = remember { ProfileStore.from(context) }
+    val analyticsProfile = remember(
+        profileStore.age, profileStore.weightKg, profileStore.heightCm,
+        profileStore.waistCm, profileStore.sex,
+    ) { profileStore.toAnalyticsProfile() }
+    val priorStrain = remember(days, night?.dayKey) {
+        com.noop.analytics.priorDayStrainForNeed(days, night?.dayKey ?: days.lastOrNull()?.day)
+    }
+    val model = remember(days, night, imported, analyticsProfile, priorStrain) {
+        buildSleepModel(
+            days, night?.session, imported, selectedDay = night?.dayKey,
+            heroStages = night?.groupStages, heroSegments = night?.groupSegments,
+            profile = analyticsProfile,
+            priorDayStrain = priorStrain,
+        )
     }
     val display = remember(model, night) { heroDisplay(model, night) }
 
@@ -439,7 +456,9 @@ fun SleepScreen(
     // newest stage-bearing day instead of vanishing. The HERO stays on `model`/`display` (an
     // honest no-stage-data fallback for the bad day, edit pencil reachable). Null only when NO day
     // has stage data: the true first-run empty state.
-    val tilesModel = remember(model, days, imported) { model ?: fallbackSleepModel(days, imported) }
+    val tilesModel = remember(model, days, imported, analyticsProfile, priorStrain) {
+        model ?: fallbackSleepModel(days, imported, profile = analyticsProfile, priorDayStrain = priorStrain)
+    }
 
     // Jump straight to a night by its (local) wake-day — the center date block opens a picker.
     // navDays is newest-day-first, so the day's index IS its offset (0 = last night). (#160, #59)
@@ -481,13 +500,17 @@ fun SleepScreen(
     val alarmSubtitle = alarmWakeLiveSubtitle(alarmEnabledForSubtitle, alarmExactOk)
 
     LazyScreenScaffold(
-        title = if (sleepPage == SleepInnerPage.Sleep) "Sleep" else "Alarm",
+        title = if (sleepPage == SleepInnerPage.Sleep) {
+            stringResource(R.string.nav_sleep)
+        } else {
+            stringResource(R.string.sleep_tab_alarm)
+        },
         subtitle = if (sleepPage == SleepInnerPage.Sleep) {
             if (windDownForSky && nextAlarmForWind) {
                 val wake = com.noop.alarm.NextAlarmDisplay.formatMinuteOfDay(alarmTargetForWind, is24Wind)
                 "Wind-down · next wake $wake"
             } else {
-                LifeChapterLacquer.SLEEP_CHAPTER_SUBTITLE
+                stringResource(R.string.sleep_chapter_subtitle)
             }
         } else {
             alarmSubtitle
@@ -567,7 +590,7 @@ fun SleepScreen(
                     // One Alarm home — full editor embedded (no separate Wake settings hop).
                     SmartAlarmScreen(vm = vm, embedded = true)
                     Text(
-                        LifeChapterLacquer.ALARM_TRAVEL_CLOCK_NOTE,
+                        stringResource(R.string.alarm_travel_clock_note),
                         style = NoopType.footnote,
                         color = Palette.textTertiary,
                     )
@@ -610,23 +633,23 @@ fun SleepScreen(
         item(key = "sleep_tz_note") {
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(
-                    LifeChapterLacquer.ALARM_TRAVEL_NIGHT_NOTE,
+                    stringResource(R.string.alarm_travel_night_note),
                     style = NoopType.footnote,
                     color = Palette.textTertiary,
                 )
                 Text(
-                    LifeChapterLacquer.SLEEP_DST_NIGHT_NOTE,
+                    stringResource(R.string.sleep_dst_night_note),
                     style = NoopType.caption,
                     color = Palette.textTertiary,
                 )
                 if (sleepPage == SleepInnerPage.Sleep) {
                     Text(
-                        LifeChapterLacquer.SLEEP_VS_TODAY_EMOTION,
+                        stringResource(R.string.sleep_vs_today_emotion),
                         style = NoopType.caption,
                         color = Palette.textTertiary,
                     )
                     Text(
-                        LifeChapterLacquer.SLEEP_READY_CHECKLIST,
+                        stringResource(R.string.sleep_ready_checklist),
                         style = NoopType.caption,
                         color = Palette.textSecondary,
                     )
@@ -700,13 +723,21 @@ fun SleepScreen(
                 val alarmEnabled by vm.phoneAlarmEnabled.collectAsStateWithLifecycle()
                 val alarmTarget by vm.phoneAlarmTargetMinutes.collectAsStateWithLifecycle()
                 val alarmWindow by vm.phoneAlarmWindowMinutes.collectAsStateWithLifecycle()
-                val needMin = sleepNeedMinutesForAlarm((model ?: tilesModel)?.typicalTotalMin)
+                val needMin = remember(days, analyticsProfile, priorStrain) {
+                    sleepNeedMinutesForAlarm(
+                        asleepMinutes = days.mapNotNull {
+                            RestScorer.canonicalAsleepMin(it)?.takeIf { m -> m > 0.0 }
+                        },
+                        profile = analyticsProfile,
+                        priorDayStrain = priorStrain,
+                    )
+                }
                 val wakeDeadline = (alarmTarget + alarmWindow) % (24 * 60)
                 val wakeClock = remember(wakeDeadline, context) {
                     val m = ((wakeDeadline % (24 * 60)) + (24 * 60)) % (24 * 60)
                     val h = m / 60
                     val mm = m % 60
-                    if (android.text.format.DateFormat.is24HourFormat(context)) {
+                    if (NoopPrefs.use24HourClock(context)) {
                         String.format(Locale.getDefault(), "%d:%02d", h, mm)
                     } else {
                         val h12 = when {
@@ -723,7 +754,6 @@ fun SleepScreen(
                     // Asleep minutes only — never fall back to time-in-bed (export / #1/#7 honesty).
                     asleepMin = display?.stages?.asleep?.takeIf { it > 0 }
                         ?: model?.stages?.asleep?.takeIf { it > 0 },
-                    source = restHeroSource(imported, night?.dayKey ?: days.lastOrNull()?.day),
                     clockLabel = night?.clockLabel ?: model?.clockLabel,
                     nightOffset = nightOffset,
                     lastIndex = max(navDays.lastIndex, 0),
@@ -737,7 +767,14 @@ fun SleepScreen(
                         needMin = needMin,
                         alarmEnabled = alarmEnabled,
                         wakeClockLabel = if (alarmEnabled) wakeClock else null,
+                        priorDayStrain = priorStrain,
+                        effortRaisedSuffix = stringResource(R.string.sleep_need_raised_after_effort),
                     ),
+                    awakeSpanCaption = if (extendsAwakePastMidnight && nightOffset == 0) {
+                        stringResource(R.string.day_span_yesterday_til_now)
+                    } else {
+                        null
+                    },
                     onUpdateTimes = { s, start, end ->
                         val safe = SleepEditGuard.clampedEditWindow(start, end, System.currentTimeMillis() / 1000L)
                         if (safe != null) {
@@ -783,7 +820,7 @@ fun SleepScreen(
                         .bringIntoViewRequester(stagesBring),
                     verticalArrangement = Arrangement.spacedBy(Metrics.space8),
                 ) {
-                    Text("Stages", style = NoopType.overline, color = Palette.textTertiary)
+                    Text(stringResource(R.string.sleep_stages), style = NoopType.overline, color = Palette.textPrimary.copy(alpha = 0.72f))
                     // Empty-stage copy lives only in Hero — avoid duplicate section lead (8.6.138).
                     Hero(
                         display = display,
@@ -851,12 +888,19 @@ fun SleepScreen(
                 val dayKey = night?.dayKey ?: days.lastOrNull()?.day
                 val restDay = dayKey?.let { key -> days.firstOrNull { it.day == key } }
                 if (restDay != null) {
-                    val needHours = RestScorer.personalNeedHours(
-                        listOfNotNull((model ?: tilesModel)?.typicalTotalMin?.takeIf { it > 0.0 }),
-                    ).first
+                    val needHours = remember(days, analyticsProfile, priorStrain) {
+                        RestScorer.personalNeedHours(
+                            asleepMinutes = days.mapNotNull {
+                                RestScorer.canonicalAsleepMin(it)?.takeIf { m -> m > 0.0 }
+                            },
+                            profile = analyticsProfile,
+                            priorDayStrain = priorStrain,
+                        ).first
+                    }
                     RestDriversSection(
                         daily = restDay,
                         sleepNeedHours = needHours,
+                        priorDayStrain = priorStrain,
                         scoredRestNights = days.count { d ->
                             ((d.deepMin ?: 0.0) + (d.remMin ?: 0.0)) > 0.0 || (d.totalSleepMin ?: 0.0) > 0.0
                         }.coerceAtLeast(1),
@@ -984,6 +1028,8 @@ fun SleepScreen(
                     SleepToolsStrip(
                         typicalMinutes = tilesModel?.typicalTotalMin,
                         recordedNights = days.count { (it.totalSleepMin ?: 0.0) > 0.0 },
+                        days = days,
+                        priorDayStrain = priorStrain,
                         onLogNap = {
                             if (night?.session != null) {
                                 requestAddNap = true
@@ -1040,19 +1086,25 @@ fun SleepScreen(
 
 @Composable
 private fun SleepMarkCard(onMark: (SleepMarkType) -> Unit) {
+    val logBedA11y = stringResource(R.string.sleep_a11y_log_bed)
+    val logWakeA11y = stringResource(R.string.sleep_a11y_log_wake)
     Column(verticalArrangement = Arrangement.spacedBy(Metrics.gap)) {
-        SectionHeader(title = LifeChapterLacquer.SLEEP_MARKS_TITLE, overline = LifeChapterLacquer.SLEEP_MARKS_OVERLINE, trailing = "Phase 1")
+        SectionHeader(
+            title = stringResource(R.string.sleep_marks_title),
+            overline = stringResource(R.string.sleep_marks_overline),
+            trailing = stringResource(R.string.sleep_marks_phase1),
+        )
         NoopCard(tint = Palette.restColor) {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text(
-                    "Tap when you're heading to bed or when you wake. Each tap is logged with the time. It doesn't change tonight's detected sleep.",
+                    stringResource(R.string.sleep_marks_body),
                     style = NoopType.footnote,
                     color = Palette.textTertiary,
                 )
                 Row(horizontalArrangement = Arrangement.spacedBy(Metrics.gap)) {
                     Button(
                         onClick = { onMark(SleepMarkType.BEDTIME) },
-                        modifier = Modifier.weight(1f).semantics { contentDescription = "Log going to sleep" },
+                        modifier = Modifier.weight(1f).semantics { contentDescription = logBedA11y },
                         colors = ButtonDefaults.buttonColors(
                             containerColor = Palette.surfaceInset,
                             contentColor = Palette.textPrimary,
@@ -1060,11 +1112,11 @@ private fun SleepMarkCard(onMark: (SleepMarkType) -> Unit) {
                     ) {
                         Icon(Icons.Filled.Bedtime, contentDescription = null, modifier = Modifier.size(18.dp))
                         Spacer(Modifier.width(8.dp))
-                        Text(LifeChapterLacquer.SLEEP_GOING_TO_SLEEP, style = NoopType.subhead)
+                        Text(stringResource(R.string.sleep_going_to_sleep), style = NoopType.subhead)
                     }
                     Button(
                         onClick = { onMark(SleepMarkType.WAKE) },
-                        modifier = Modifier.weight(1f).semantics { contentDescription = "Log waking up" },
+                        modifier = Modifier.weight(1f).semantics { contentDescription = logWakeA11y },
                         colors = ButtonDefaults.buttonColors(
                             containerColor = Palette.surfaceInset,
                             contentColor = Palette.textPrimary,
@@ -1072,7 +1124,7 @@ private fun SleepMarkCard(onMark: (SleepMarkType) -> Unit) {
                     ) {
                         Icon(Icons.Filled.WbSunny, contentDescription = null, modifier = Modifier.size(18.dp))
                         Spacer(Modifier.width(8.dp))
-                        Text(LifeChapterLacquer.SLEEP_IM_AWAKE, style = NoopType.subhead)
+                        Text(stringResource(R.string.sleep_im_awake), style = NoopType.subhead)
                     }
                 }
             }
@@ -1101,6 +1153,8 @@ private fun SleepUndoBanner(session: SleepSession, onUndo: () -> Unit) {
         "Sleep deleted. NOOP won't detect sleep between $startText and $endText again."
     }
     NoopCard(tint = Palette.restColor) {
+        val undoLabel = stringResource(R.string.sleep_undo)
+        val undoA11y = stringResource(R.string.sleep_undo_a11y)
         Row(
             modifier = Modifier.fillMaxWidth().semantics { contentDescription = message },
             verticalAlignment = Alignment.CenterVertically,
@@ -1114,9 +1168,9 @@ private fun SleepUndoBanner(session: SleepSession, onUndo: () -> Unit) {
             )
             TextButton(
                 onClick = onUndo,
-                modifier = Modifier.semantics { contentDescription = "Undo sleep deletion" },
+                modifier = Modifier.semantics { contentDescription = undoA11y },
             ) {
-                Text("Undo", style = NoopType.subhead, color = Palette.restColor)
+                Text(undoLabel, style = NoopType.subhead, color = Palette.restColor)
             }
         }
     }
@@ -1130,17 +1184,16 @@ private fun SleepUndoBanner(session: SleepSession, onUndo: () -> Unit) {
 // The Rest world's opening, restyled to the liquid pilot: a frosted translucent-black hero card floating on
 // the screen-level liquid sky (the scaffold's topBackground), carrying — when the night has a 0–100
 // sleep-performance score — a [LiquidVessel] filled to score/100 in the Rest colour with the number counting
-// up over it (the Today HeroScoreVessel idiom). No score → the big count-up hours-slept headline. A
-// [SourceBadge] states whether the score is WHOOP's imported figure or NOOP's on-device estimate. The
-// figures, fraction math and Rest tint are UNCHANGED from the BevelGauge this replaced — presentation-only.
+// up over it (the Today HeroScoreVessel idiom). No score → the big count-up hours-slept headline.
+// Source provenance is not badged here (no WHOOP APP / NOOP pill on the sky hero). Figures, fraction
+// math and Rest tint are UNCHANGED from the BevelGauge this replaced — presentation-only.
 
 @Composable
-private fun RestHero(score: Double?, asleepMin: Double?, source: String) {
+private fun RestHero(score: Double?, asleepMin: Double?) {
     // Kept for call-site compatibility; new composition uses SleepNightHero.
     SleepNightHero(
         score = score,
         asleepMin = asleepMin,
-        source = source,
         clockLabel = null,
         nightOffset = 0,
         lastIndex = 0,
@@ -1158,7 +1211,6 @@ private fun RestHero(score: Double?, asleepMin: Double?, source: String) {
 private fun SleepNightHero(
     score: Double?,
     asleepMin: Double?,
-    source: String,
     clockLabel: String?,
     nightOffset: Int,
     lastIndex: Int,
@@ -1168,6 +1220,8 @@ private fun SleepNightHero(
     confidence: ScoreConfidence = ScoreConfidence.CALIBRATING,
     /** Fable Rest #25 — one-line Rest vs hours honesty. */
     truthCaption: String? = null,
+    /** Awake-past-midnight span label (Language owns copy); null when not extending. */
+    awakeSpanCaption: String? = null,
     onUpdateTimes: (SleepSession, Long, Long) -> Unit = { _, _, _ -> },
     onDeleteSession: (SleepSession) -> Unit = {},
     onAddNap: (Long, Long) -> Unit = { _, _ -> },
@@ -1192,6 +1246,14 @@ private fun SleepNightHero(
             requestAddNap = requestAddNap,
             onRequestAddNapConsumed = onRequestAddNapConsumed,
         )
+        awakeSpanCaption?.let { caption ->
+            Text(
+                caption,
+                style = NoopType.caption,
+                color = Palette.textPrimary.copy(alpha = 0.72f),
+                textAlign = TextAlign.Center,
+            )
+        }
         // #88 — hours asleep always primary; Rest % demoted to secondary pill when scored.
         CountUpText(
             value = asleepMin ?: 0.0,
@@ -1199,7 +1261,8 @@ private fun SleepNightHero(
             style = NoopType.number(44f),
             color = Palette.restBright,
         )
-        Text("asleep", style = NoopType.subhead, color = Palette.textSecondary)
+        // Primary ink on Rest sky — textSecondary washed out on domain wash.
+        Text("asleep", style = NoopType.subhead, color = Palette.textPrimary.copy(alpha = 0.88f))
         if (score != null) {
             Row(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -1220,11 +1283,10 @@ private fun SleepNightHero(
             Text(
                 footnote,
                 style = NoopType.footnote,
-                color = Palette.textTertiary,
+                color = Palette.textPrimary.copy(alpha = 0.72f),
                 textAlign = TextAlign.Center,
                 modifier = Modifier.padding(horizontal = 24.dp),
             )
-            SourceBadge(text = source, tint = Palette.restColor)
         } else {
             // Hours-only night: BUILDING pill when staging is thin; hours caption explains Rest % lives on Today.
             if (confidence != ScoreConfidence.CALIBRATING) {
@@ -1237,12 +1299,11 @@ private fun SleepNightHero(
                 Text(
                     hoursFoot,
                     style = NoopType.footnote,
-                    color = Palette.textTertiary,
+                    color = Palette.textPrimary.copy(alpha = 0.72f),
                     textAlign = TextAlign.Center,
                     modifier = Modifier.padding(horizontal = 24.dp),
                 )
             }
-            SourceBadge(text = source, tint = Palette.restColor)
         }
     }
 }
@@ -1320,13 +1381,32 @@ internal fun restSleepTruthCaption(showingRestPct: Boolean, asleepMin: Double?):
     else -> null
 }
 
-/** Personal sleep-need minutes for Alarm + Rest bridge (#392). Floors match RestScorer. */
-internal fun sleepNeedMinutesForAlarm(typicalTotalMin: Double?): Int {
-    val hours = if (typicalTotalMin != null && typicalTotalMin > 0.0) {
-        maxOf(RestScorer.minPersonalNeedHours, typicalTotalMin / 60.0)
-    } else {
-        RestScorer.defaultSleepNeedHours
-    }
+/**
+ * Personal sleep-need minutes for Alarm + Rest bridge (#392).
+ * Uses physiology-blended [RestScorer.personalNeedHours] (NSF age / BMI / waist / prior Effort);
+ * never the old habit-only `max(7.5, mean)` floor.
+ */
+internal fun sleepNeedMinutesForAlarm(
+    typicalTotalMin: Double?,
+    profile: com.noop.analytics.UserProfile? = null,
+    priorDayStrain: Double? = null,
+): Int = sleepNeedMinutesForAlarm(
+    asleepMinutes = listOfNotNull(typicalTotalMin?.takeIf { it > 0.0 }),
+    profile = profile,
+    priorDayStrain = priorDayStrain,
+)
+
+/** Same as the single-typical overload, but prefers a full asleep-minutes pool when available. */
+internal fun sleepNeedMinutesForAlarm(
+    asleepMinutes: Collection<Double>,
+    profile: com.noop.analytics.UserProfile? = null,
+    priorDayStrain: Double? = null,
+): Int {
+    val hours = RestScorer.personalNeedHours(
+        asleepMinutes = asleepMinutes,
+        profile = profile,
+        priorDayStrain = priorDayStrain,
+    ).first
     return (hours * 60.0).roundToInt().coerceIn(6 * 60, 10 * 60)
 }
 
@@ -1347,13 +1427,23 @@ internal fun restAlarmBridgeCaption(
     needMin: Int,
     alarmEnabled: Boolean,
     wakeClockLabel: String?,
+    priorDayStrain: Double? = null,
+    effortRaisedSuffix: String? = null,
 ): String {
     val rest = restSleepTruthCaption(showingRestPct, asleepMin)
     val aim = formatAimSleepDuration(needMin)
-    val bridge = if (alarmEnabled && !wakeClockLabel.isNullOrBlank()) {
-        "Aim for $aim by $wakeClockLabel wake"
+    val raised = if (
+        com.noop.analytics.priorEffortRaisedNeed(priorDayStrain) &&
+        !effortRaisedSuffix.isNullOrBlank()
+    ) {
+        " · $effortRaisedSuffix"
     } else {
-        "Aim for $aim sleep for Rest"
+        ""
+    }
+    val bridge = if (alarmEnabled && !wakeClockLabel.isNullOrBlank()) {
+        "Aim for $aim by $wakeClockLabel wake$raised"
+    } else {
+        "Aim for $aim sleep for Rest$raised"
     }
     return if (rest != null) "$rest · $bridge" else bridge
 }
@@ -1479,6 +1569,7 @@ private fun WhoopLikeQuickAlarmCard(
     sleepNeedMinutes: Int,
     asleepMinForBridge: Double? = null,
     showingRestPct: Boolean = false,
+    priorDayStrain: Double? = null,
 ) {
     val enabled by vm.phoneAlarmEnabled.collectAsStateWithLifecycle()
     val targetMinutes by vm.phoneAlarmTargetMinutes.collectAsStateWithLifecycle()
@@ -1489,6 +1580,10 @@ private fun WhoopLikeQuickAlarmCard(
     val wakeRested by vm.wakeWhenRested.collectAsStateWithLifecycle()
     val windDown by vm.windDownEnabled.collectAsStateWithLifecycle()
     val live by vm.live.collectAsStateWithLifecycle()
+    val days by vm.recentDays.collectAsStateWithLifecycle()
+    val livePrior = priorDayStrain ?: remember(days) {
+        com.noop.analytics.priorDayStrainForNeed(days, days.lastOrNull()?.day)
+    }
     val canExactInitial = remember { vm.canScheduleExactAlarms() }
     var canExact by remember { mutableStateOf(canExactInitial) }
     var sawExactDenied by remember { mutableStateOf(!canExactInitial) }
@@ -1536,7 +1631,7 @@ private fun WhoopLikeQuickAlarmCard(
     val needMin = sleepNeedMinutes.coerceIn(6 * 60, 10 * 60)
     val windowMinQuick = 15
     val windowMax = com.noop.alarm.SmartAlarmStore.WINDOW_MAX
-    val is24 = remember(context) { android.text.format.DateFormat.is24HourFormat(context) }
+    val is24 = remember(context) { NoopPrefs.use24HourClock(context) }
     fun labelFor(mins: Int): String = com.noop.alarm.NextAlarmDisplay.formatMinuteOfDay(mins, is24)
     val deadline = (targetMinutes + windowMinutes) % (24 * 60)
     // Bed cue from earliest wake so it matches PersonalSleepPlanCard / wind-down math.
@@ -1574,7 +1669,7 @@ private fun WhoopLikeQuickAlarmCard(
                 alarmNextCustomCue(com.noop.alarm.NextAlarmDisplay.formatMinuteOfDay(a.minutes, is24))
             }
     }
-    val statusLabel = alarmArmStatusLabel(enabled, canExact)
+    val statusLabel = alarmArmStatusLabel(LocalContext.current, enabled, canExact)
     val statusColor = alarmArmStatusColor(enabled, canExact)
     val statusShape = RoundedCornerShape(50)
     val armSettle by animateFloatAsState(
@@ -1593,6 +1688,8 @@ private fun WhoopLikeQuickAlarmCard(
         alarmEnabled = enabled,
         // ALARM_PAGE #87 — use earliest wake (same as bed cue / sleep plan), not deadline.
         wakeClockLabel = if (enabled) labelFor(targetMinutes) else null,
+        priorDayStrain = livePrior,
+        effortRaisedSuffix = stringResource(R.string.sleep_need_raised_after_effort),
     )
     val buzzAckLine = live.statusNote?.takeIf { note ->
         note.contains("Buzz ACK", ignoreCase = true) ||
@@ -1614,7 +1711,7 @@ private fun WhoopLikeQuickAlarmCard(
         verticalArrangement = Arrangement.spacedBy(10.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Overline(LifeChapterLacquer.ALARM_GLANCE_OVERLINE, color = DomainTheme.Rest.color)
+        Overline(stringResource(R.string.alarm_overline_glance), color = DomainTheme.Rest.color)
         val glanceShape = RoundedCornerShape(LifeChapterLacquer.CORNER_DP.dp)
         // One composition: Bedtime | Wake times under labels, Arm at card bottom (frost kept).
         Box(
@@ -1746,7 +1843,7 @@ private fun WhoopLikeQuickAlarmCard(
                         )
                         // SHIP #65 — Sleep banked night vs Alarm tomorrow wake are not one schedule.
                         Text(
-                            LifeChapterLacquer.ALARM_VS_SLEEP_SCHEDULE,
+                            stringResource(R.string.alarm_vs_sleep_schedule),
                             style = NoopType.caption,
                             color = Palette.textTertiary,
                             textAlign = TextAlign.Center,
@@ -1776,17 +1873,17 @@ private fun WhoopLikeQuickAlarmCard(
                         verticalArrangement = Arrangement.spacedBy(4.dp),
                     ) {
                         Text(
-                            LifeChapterLacquer.ALARM_EDIT_BEDTIME_OVERLINE,
+                            stringResource(R.string.alarm_overline_bedtime),
                             style = NoopType.overline,
                             color = alarmBedChromeColor().copy(alpha = 0.85f),
                         )
-                        Text(
-                            labelFor(suggestedBed),
-                            style = NoopType.number(
-                                LifeChapterLacquer.ALARM_GLANCE_CLOCK_SP,
-                                weight = FontWeight.Bold,
-                            ),
+                        AlarmWallClockText(
+                            minutes = suggestedBed,
+                            is24Hour = is24,
+                            digitSp = LifeChapterLacquer.ALARM_GLANCE_CLOCK_SP,
                             color = alarmBedChromeColor(),
+                            modifier = Modifier.fillMaxWidth(),
+                            contentAlignment = Alignment.CenterStart,
                         )
                         Text(
                             formatAimSleepDuration(needMin),
@@ -1810,16 +1907,14 @@ private fun WhoopLikeQuickAlarmCard(
                         verticalArrangement = Arrangement.spacedBy(4.dp),
                     ) {
                         Text(
-                            LifeChapterLacquer.ALARM_WAKE_OVERLINE,
+                            stringResource(R.string.alarm_overline_wake),
                             style = NoopType.overline,
                             color = wakeAccent.copy(alpha = 0.9f),
                         )
-                        Text(
-                            labelFor(targetMinutes),
-                            style = NoopType.number(
-                                LifeChapterLacquer.ALARM_GLANCE_CLOCK_SP,
-                                weight = FontWeight.Bold,
-                            ),
+                        AlarmWallClockText(
+                            minutes = targetMinutes,
+                            is24Hour = is24,
+                            digitSp = LifeChapterLacquer.ALARM_GLANCE_CLOCK_SP,
                             color = if (enabled && canExact) {
                                 Palette.textPrimary
                             } else if (enabled) {
@@ -1828,6 +1923,7 @@ private fun WhoopLikeQuickAlarmCard(
                                 Palette.textPrimary
                             },
                             modifier = Modifier
+                                .fillMaxWidth()
                                 .heightIn(min = 48.dp)
                                 .clickable {
                                     // #119 — if exact isn't granted yet, remember to reopen picker after grant.
@@ -1836,6 +1932,7 @@ private fun WhoopLikeQuickAlarmCard(
                                     haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                                 }
                                 .semantics { contentDescription = alarmWakeUpTimeA11y() },
+                            contentAlignment = Alignment.CenterEnd,
                         )
                         Text(
                             "by ${labelFor(deadline)} · ${windowMinutes}m",
@@ -2057,7 +2154,7 @@ private fun WhoopLikeQuickAlarmCard(
             }
         }
 
-        Overline(LifeChapterLacquer.ALARM_STRAP_OVERLINE, color = DomainTheme.Rest.color)
+        Overline(stringResource(R.string.alarm_overline_band), color = DomainTheme.Rest.color)
         // Band remote — inset slab, not a frosted twin of Glance. Status owns the top;
         // Test buzz is the one primary; arm-buzz + wall-clock sit as secondary actions.
         val bandShape = RoundedCornerShape(12.dp)
@@ -2144,6 +2241,7 @@ private fun WhoopLikeQuickAlarmCard(
                         !connected -> Toast.makeText(
                             context,
                             alarmTestBuzzToast(
+                                context = context,
                                 canBuzz = canBuzz,
                                 whoop5 = live.whoop5Detected,
                                 connected = false,
@@ -2155,6 +2253,7 @@ private fun WhoopLikeQuickAlarmCard(
                             Toast.makeText(
                                 context,
                                 alarmTestBuzzToast(
+                                    context = context,
                                     canBuzz = canBuzz,
                                     whoop5 = live.whoop5Detected,
                                     connected = true,
@@ -2167,21 +2266,21 @@ private fun WhoopLikeQuickAlarmCard(
                 kind = NoopButtonKind.Primary,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .semantics { contentDescription = alarmTestBuzzA11y() },
+                    .semantics { contentDescription = alarmTestBuzzA11y(context) },
             )
             TextButton(
                 onClick = {
                     when {
-                        !connected -> Toast.makeText(context, alarmConnectStrapToast(), Toast.LENGTH_SHORT).show()
+                        !connected -> Toast.makeText(context, alarmConnectStrapToast(context), Toast.LENGTH_SHORT).show()
                         else -> {
                             vm.ble.buzzTimeNow(
-                                is24h = android.text.format.DateFormat.is24HourFormat(context),
+                                is24h = NoopPrefs.use24HourClock(context),
                                 speed = NoopPrefs.hapticClockSpeed(context),
                                 announce = NoopPrefs.hapticClockAnnounce(context),
                             )
                             Toast.makeText(
                                 context,
-                                alarmBuzzTimeToast(),
+                                alarmBuzzTimeToast(context),
                                 Toast.LENGTH_SHORT,
                             ).show()
                         }
@@ -2190,7 +2289,7 @@ private fun WhoopLikeQuickAlarmCard(
                 modifier = Modifier
                     .fillMaxWidth()
                     .heightIn(min = 48.dp)
-                    .semantics { contentDescription = alarmBuzzTimeA11y() },
+                    .semantics { contentDescription = alarmBuzzTimeA11y(context) },
             ) {
                 Text(
                     LifeChapterLacquer.ALARM_BUZZ_TIME_LABEL,
@@ -2200,7 +2299,7 @@ private fun WhoopLikeQuickAlarmCard(
             }
             if (!buzzAckLine.isNullOrBlank()) {
                 Text(
-                    alarmTestBuzzStatusCaption(buzzAckLine),
+                    alarmTestBuzzStatusCaption(context, buzzAckLine),
                     style = NoopType.caption,
                     color = wakeAccent,
                     textAlign = TextAlign.Center,
@@ -2236,7 +2335,7 @@ private fun WhoopLikeQuickAlarmCard(
             }
         }
 
-        Overline(LifeChapterLacquer.ALARM_CUES_OVERLINE, color = DomainTheme.Rest.color)
+        Overline(stringResource(R.string.alarm_overline_cues), color = DomainTheme.Rest.color)
         // Cues — vertical switch list, not three equal tertiary buttons. Quiet raised strip.
         val cuesShape = RoundedCornerShape(20.dp)
         Column(
@@ -2388,12 +2487,35 @@ private fun AlarmCueSwitchRow(
 private fun SleepToolsStrip(
     typicalMinutes: Double?,
     recordedNights: Int,
+    days: List<DailyMetric> = emptyList(),
+    priorDayStrain: Double? = null,
     onLogNap: () -> Unit,
     onOpenSources: () -> Unit,
     onMark: (SleepMarkType) -> Unit,
     onPreviewChime: () -> Unit = {},
 ) {
-    val need = typicalMinutes?.coerceAtLeast(RestScorer.minPersonalNeedHours * 60.0)
+    val context = LocalContext.current
+    val profileStore = remember { ProfileStore.from(context) }
+    val analyticsProfile = remember(
+        profileStore.age, profileStore.weightKg, profileStore.heightCm,
+        profileStore.waistCm, profileStore.sex,
+    ) { profileStore.toAnalyticsProfile() }
+    val need = remember(typicalMinutes, days, analyticsProfile, priorDayStrain) {
+        when {
+            days.isNotEmpty() -> com.noop.analytics.liveSleepNeedMinutes(
+                days = days,
+                profile = analyticsProfile,
+                anchorDay = days.lastOrNull()?.day,
+                takeLastNights = 28,
+            ).toDouble()
+            typicalMinutes != null && typicalMinutes > 0.0 -> sleepNeedMinutesForAlarm(
+                asleepMinutes = listOf(typicalMinutes),
+                profile = analyticsProfile,
+                priorDayStrain = priorDayStrain,
+            ).toDouble()
+            else -> null
+        }
+    }
     Column(
         Modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -2613,12 +2735,12 @@ private fun HcSleepCompareCard(
             .padding(horizontal = 16.dp, vertical = 14.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        Text("Sleep · NOOP vs phone", style = NoopType.footnote, color = Palette.textSecondary)
+        Text(stringResource(R.string.sleep_compare_title), style = NoopType.footnote, color = Palette.textSecondary)
         if (wakeDayLabel != null || noopWindowLabel != null) {
             Text(
                 listOfNotNull(
-                    wakeDayLabel?.let { "Wake day · $it" },
-                    noopWindowLabel?.let { "NOOP $it" },
+                    wakeDayLabel?.let { stringResource(R.string.sleep_compare_wake_day, it) },
+                    noopWindowLabel?.let { stringResource(R.string.sleep_compare_noop_window, it) },
                 ).joinToString(" · "),
                 style = NoopType.caption,
                 color = Palette.textTertiary,
@@ -2630,13 +2752,14 @@ private fun HcSleepCompareCard(
             verticalAlignment = Alignment.Bottom,
         ) {
             Column {
-                Text("NOOP asleep", style = NoopType.caption, color = Palette.textTertiary)
+                Text(stringResource(R.string.sleep_compare_noop_asleep), style = NoopType.caption, color = Palette.textTertiary)
                 Text(
                     if (noopMin > 0) durationText(noopMin) else "—",
                     style = NoopType.title2,
                     color = if (noopMin > 0) Palette.textPrimary else Palette.textTertiary,
                 )
             }
+            val openSourcesLabel = stringResource(R.string.sleep_compare_open_sources)
             Column(
                 horizontalAlignment = Alignment.End,
                 modifier = Modifier
@@ -2645,7 +2768,7 @@ private fun HcSleepCompareCard(
                             Modifier
                                 .clip(RoundedCornerShape(8.dp))
                                 .clickable(
-                                    onClickLabel = "Open sleep sources",
+                                    onClickLabel = openSourcesLabel,
                                     onClick = onOpenPhoneSources,
                                 )
                         } else {
@@ -2654,10 +2777,10 @@ private fun HcSleepCompareCard(
                     ),
             ) {
                 val rightCaption = when {
-                    whoopSleepPct != null -> "WHOOP sleep %"
-                    hcIsTimeInBed -> "HC in bed"
-                    hcMin != null && hcMin > 0 -> "HC asleep"
-                    else -> "Phone"
+                    whoopSleepPct != null -> stringResource(R.string.sleep_compare_whoop_pct)
+                    hcIsTimeInBed -> stringResource(R.string.sleep_compare_hc_in_bed)
+                    hcMin != null && hcMin > 0 -> stringResource(R.string.sleep_compare_hc_asleep)
+                    else -> stringResource(R.string.sleep_compare_phone)
                 }
                 Text(rightCaption, style = NoopType.caption, color = Palette.textTertiary)
                 val whoopLine = when {
@@ -2674,7 +2797,7 @@ private fun HcSleepCompareCard(
         }
         if (windowsDiffer) {
             Text(
-                "Phone night window differs from NOOP bed–wake — may not be the same sleep.",
+                stringResource(R.string.sleep_compare_windows_differ),
                 style = NoopType.footnote,
                 color = Palette.textTertiary,
             )
@@ -2682,7 +2805,7 @@ private fun HcSleepCompareCard(
         // Onset/window honesty vs WHOOP app “Today” night (sleep-export / Fable) — no invented stages.
         if (noopWindowLabel != null) {
             Text(
-                "NOOP bed–wake is on-device for this wake-day. WHOOP app’s night for the same wake-day may use a different onset even when wake times look close.",
+                stringResource(R.string.sleep_compare_bed_wake_note),
                 style = NoopType.footnote,
                 color = Palette.textTertiary,
             )
@@ -2690,21 +2813,21 @@ private fun HcSleepCompareCard(
         when {
             whoopSleepPct != null && noopMin <= 0 -> {
                 Text(
-                    "WHOOP sleep performance ${whoopSleepPct.roundToInt()}% — NOOP Rest still needs a tracked night.",
+                    stringResource(R.string.sleep_compare_whoop_needs_night, whoopSleepPct.roundToInt()),
                     style = NoopType.footnote,
                     color = Palette.textTertiary,
                 )
             }
             whoopSleepPct != null && noopMin > 0 -> {
                 Text(
-                    "WHOOP % is sleep performance, not hours asleep — different construct from NOOP duration. Sources → Import to refresh WHOOP history.",
+                    stringResource(R.string.sleep_compare_whoop_pct_note),
                     style = NoopType.footnote,
                     color = Palette.textTertiary,
                 )
             }
             hcIsTimeInBed && hcMin != null && hcMin > 0 && noopMin > 0 -> {
                 Text(
-                    "Phone side is time in bed (no staged asleep in HC) — not comparable to NOOP hours asleep.",
+                    stringResource(R.string.sleep_compare_hc_tib_note),
                     style = NoopType.footnote,
                     color = Palette.textTertiary,
                 )
@@ -2713,9 +2836,9 @@ private fun HcSleepCompareCard(
                 val delta = (noopMin - hcMin).roundToInt()
                 Text(
                     when {
-                        kotlin.math.abs(delta) <= 15 -> "Within ~15 min — good alignment on asleep minutes."
-                        delta > 0 -> "NOOP reads ~${delta} min more asleep than HC for this wake-day."
-                        else -> "NOOP reads ~${-delta} min less asleep than HC for this wake-day."
+                        kotlin.math.abs(delta) <= 15 -> stringResource(R.string.sleep_compare_aligned)
+                        delta > 0 -> stringResource(R.string.sleep_compare_noop_more, delta)
+                        else -> stringResource(R.string.sleep_compare_noop_less, -delta)
                     },
                     style = NoopType.footnote,
                     color = Palette.textTertiary,
@@ -2726,7 +2849,7 @@ private fun HcSleepCompareCard(
             }
             else -> {
                 Text(
-                    "Allow Health Connect sleep stages or log WHOOP Sleep % so phone nights show beside NOOP.",
+                    stringResource(R.string.sleep_compare_allow_hc),
                     style = NoopType.footnote,
                     color = Palette.textTertiary,
                 )
@@ -2810,8 +2933,9 @@ private fun sleepScoreWord(score: Double): String = when {
 /**
  * Whether the night's sleep-performance score is WHOOP's own imported figure or NOOP's on-device
  * approximation — navigated wake-day, not always days.last (Fable 200 #30).
+ * Kept for tests / callers; Sleep hero no longer badges this as a pill.
  */
-private fun restHeroSource(imported: ImportedSleepSeries, dayKey: String?): String {
+internal fun restHeroSource(imported: ImportedSleepSeries, dayKey: String?): String {
     if (dayKey != null && imported.performance[dayKey] != null) return "WHOOP app"
     return "NOOP"
 }
@@ -2877,7 +3001,7 @@ private fun Hero(
                 Text(
                     LifeChapterLacquer.SLEEP_NO_STAGE_DATA,
                     style = NoopType.subhead,
-                    color = Palette.textTertiary,
+                    color = Palette.textPrimary.copy(alpha = 0.78f),
                     modifier = Modifier.padding(top = Metrics.space8),
                 )
                 Text(
@@ -2938,10 +3062,10 @@ private fun Hero(
                             viewModel = viewModel,
                         )
                         Row(horizontalArrangement = Arrangement.spacedBy(Metrics.space16)) {
-                            StageLegend(LifeChapterLacquer.SLEEP_STAGE_AWAKE, Palette.sleepAwake)
-                            StageLegend(LifeChapterLacquer.SLEEP_STAGE_LIGHT, Palette.sleepLight)
-                            StageLegend(LifeChapterLacquer.SLEEP_STAGE_DEEP, Palette.sleepDeep)
-                            StageLegend(LifeChapterLacquer.SLEEP_STAGE_REM, Palette.sleepREM)
+                            StageLegend(stringResource(R.string.sleep_stage_awake), Palette.sleepAwake)
+                            StageLegend(stringResource(R.string.sleep_stage_light), Palette.sleepLight)
+                            StageLegend(stringResource(R.string.sleep_stage_deep), Palette.sleepDeep)
+                            StageLegend(stringResource(R.string.sleep_stage_rem), Palette.sleepREM)
                         }
                         if (timeline.stages.deep + timeline.stages.rem <= 0.0 && timeline.stages.light > 0.0) {
                             Text(
@@ -2977,10 +3101,10 @@ private fun Hero(
                             )
                             MotionStrip(motionEpochs)
                             Row(horizontalArrangement = Arrangement.spacedBy(Metrics.space16)) {
-                                StageLegend(LifeChapterLacquer.SLEEP_STAGE_AWAKE, Palette.sleepAwake)
-                                StageLegend(LifeChapterLacquer.SLEEP_STAGE_LIGHT, Palette.sleepLight)
-                                StageLegend(LifeChapterLacquer.SLEEP_STAGE_DEEP, Palette.sleepDeep)
-                                StageLegend(LifeChapterLacquer.SLEEP_STAGE_REM, Palette.sleepREM)
+                                StageLegend(stringResource(R.string.sleep_stage_awake), Palette.sleepAwake)
+                                StageLegend(stringResource(R.string.sleep_stage_light), Palette.sleepLight)
+                                StageLegend(stringResource(R.string.sleep_stage_deep), Palette.sleepDeep)
+                                StageLegend(stringResource(R.string.sleep_stage_rem), Palette.sleepREM)
                             }
                         }
                     }
@@ -3037,13 +3161,13 @@ private fun NapsCard(
             verticalArrangement = Arrangement.spacedBy(Metrics.space8),
         ) {
             Text(
-                "No naps · overnight block above is main sleep",
+                stringResource(R.string.sleep_naps_empty),
                 style = NoopType.footnote,
                 color = Palette.textTertiary,
             )
             // Fable 300 #84 — merge rule visible without opening Why (longest overnight / habitual).
             Text(
-                "Main sleep = longest overnight block (naps stay separate).",
+                stringResource(R.string.sleep_naps_merge_blurb),
                 style = NoopType.footnote,
                 color = Palette.textTertiary,
             )
@@ -3053,18 +3177,18 @@ private fun NapsCard(
     }
     NoopCard(padding = Metrics.space14, tint = Palette.restColor) {
         Column(verticalArrangement = Arrangement.spacedBy(Metrics.space12)) {
-            Text("DAYTIME SLEEP", style = NoopType.overline, color = Palette.textTertiary)
-            Text("Naps", style = NoopType.subhead, color = Palette.textPrimary)
+            Text(stringResource(R.string.sleep_daytime_overline), style = NoopType.overline, color = Palette.textTertiary)
+            Text(stringResource(R.string.sleep_naps_title), style = NoopType.subhead, color = Palette.textPrimary)
             // Fable Sleep #13 — merge rule visible without opening Why.
             Text(
-                "Main sleep = longest overnight block · naps stay separate.",
+                stringResource(R.string.sleep_naps_merge_blurb),
                 style = NoopType.footnote,
                 color = Palette.textTertiary,
             )
             Row(modifier = Modifier.fillMaxWidth()) {
-                NapSummaryCell("Main sleep", durationText(mainMin), Modifier.weight(1f))
-                NapSummaryCell("Nap(s)", durationText(napMin), Modifier.weight(1f))
-                NapSummaryCell("Total", durationText(mainMin + napMin), Modifier.weight(1f))
+                NapSummaryCell(stringResource(R.string.sleep_naps_main), durationText(mainMin), Modifier.weight(1f))
+                NapSummaryCell(stringResource(R.string.sleep_naps_plural), durationText(napMin), Modifier.weight(1f))
+                NapSummaryCell(stringResource(R.string.sleep_naps_total), durationText(mainMin + napMin), Modifier.weight(1f))
             }
             naps.forEachIndexed { i, nap ->
                 NapRow(nap, onEditNapTimes, onDeleteNap)
@@ -3305,10 +3429,10 @@ private fun NapRow(
 @Composable
 private fun StageBreakdownRows(s: Stages) {
     Column(verticalArrangement = Arrangement.spacedBy(Metrics.space12)) {
-        StageBreakdownRow(LifeChapterLacquer.SLEEP_STAGE_REM, s.rem, s.total, Palette.sleepREM)
-        StageBreakdownRow(LifeChapterLacquer.SLEEP_STAGE_DEEP, s.deep, s.total, Palette.sleepDeep)
-        StageBreakdownRow(LifeChapterLacquer.SLEEP_STAGE_LIGHT, s.light, s.total, Palette.sleepLight)
-        StageBreakdownRow(LifeChapterLacquer.SLEEP_STAGE_AWAKE, s.awake, s.total, Palette.sleepAwake)
+        StageBreakdownRow(stringResource(R.string.sleep_stage_rem), s.rem, s.total, Palette.sleepREM)
+        StageBreakdownRow(stringResource(R.string.sleep_stage_deep), s.deep, s.total, Palette.sleepDeep)
+        StageBreakdownRow(stringResource(R.string.sleep_stage_light), s.light, s.total, Palette.sleepLight)
+        StageBreakdownRow(stringResource(R.string.sleep_stage_awake), s.awake, s.total, Palette.sleepAwake)
     }
 }
 
@@ -3576,8 +3700,12 @@ private fun IphoneStageTimeline(
     var nightHr by remember(onsetTs, wakeTs) { mutableStateOf<List<HrBucket>>(emptyList()) }
     LaunchedEffect(onsetTs, wakeTs, viewModel?.activeStrapId) {
         val vm = viewModel ?: return@LaunchedEffect
+        // Pad ±2 min so bucket edges at onset/wake still land; MAIN empty HR was often a
+        // half-open window miss when intervals origin ≠ session onset by a few seconds.
+        val from = minOf(onsetTs, wakeTs) - 120L
+        val to = maxOf(onsetTs, wakeTs) + 120L
         nightHr = runCatching {
-            vm.repo.hrBucketsUnion(vm.activeStrapId, onsetTs, wakeTs, bucketSeconds = 60L)
+            vm.repo.hrBucketsUnion(vm.activeStrapId, from, to, bucketSeconds = 60L)
         }.getOrDefault(emptyList())
     }
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -3585,18 +3713,23 @@ private fun IphoneStageTimeline(
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Column(modifier = Modifier.weight(1f)) {
                 Text(durationText(stages.asleep), style = NoopType.title2, color = Palette.textPrimary)
-                Text(LifeChapterLacquer.SLEEP_HOURS_OF_SLEEP, style = NoopType.overline, color = Palette.textTertiary)
+                Text(stringResource(R.string.sleep_hours_of_sleep), style = NoopType.overline, color = Palette.textSecondary)
                 typicalAsleepMin?.let {
-                    Text(sleepTypicallyCaption(durationText(it)), style = NoopType.footnote, color = Palette.textTertiary)
+                    Text(sleepTypicallyCaption(durationText(it)), style = NoopType.footnote, color = Palette.textSecondary)
                 }
             }
             Column(modifier = Modifier.weight(1f)) {
                 val restorative = stages.deep + stages.rem
                 Text(durationText(restorative), style = NoopType.title2, color = Palette.sleepREM)
-                Text(LifeChapterLacquer.SLEEP_RESTORATIVE_SLEEP, style = NoopType.overline, color = Palette.textTertiary)
+                Text(stringResource(R.string.sleep_restorative_sleep), style = NoopType.overline, color = Palette.textSecondary)
                 typicalRestorativeMin?.let {
-                    Text(sleepTypicallyCaption(durationText(it)), style = NoopType.footnote, color = Palette.textTertiary)
+                    Text(sleepTypicallyCaption(durationText(it)), style = NoopType.footnote, color = Palette.textSecondary)
                 }
+                Text(
+                    stringResource(R.string.sleep_restorative_caption),
+                    style = NoopType.caption,
+                    color = Palette.textSecondary,
+                )
             }
         }
         SleepHrChart(
@@ -3608,7 +3741,6 @@ private fun IphoneStageTimeline(
             selectedStage = selected,
             modifier = Modifier
                 .fillMaxWidth()
-                .height(124.dp)
                 .padding(horizontal = 4.dp),
         )
         listOf(
@@ -3639,7 +3771,7 @@ private fun IphoneStageTimeline(
             if (selected == null) {
                 LifeChapterLacquer.SLEEP_TAP_STAGE_HINT
             } else {
-                val label = sleepStageLabel(selected!!)
+                val label = sleepStageLabel(LocalContext.current, selected!!)
                 val mins = when (selected) {
                     "awake" -> stages.awake
                     "light" -> stages.light
@@ -3672,7 +3804,7 @@ private fun StageTimelineRow(
     val dimmed = selected != null && !isSelected
     val percent = if (total > 0) ((minutes / total) * 100.0).roundToInt() else 0
     val shape = RoundedCornerShape(10.dp)
-    val label = sleepStageLabel(stage)
+    val label = sleepStageLabel(LocalContext.current, stage)
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -3768,98 +3900,121 @@ private fun SleepHrChart(
         }
         return
     }
-    Canvas(modifier = modifier) {
-        val w = size.width
-        val h = size.height
-        if (w <= 0f || h <= 0f) return@Canvas
-        val inWindow = buckets.filter {
-            it.bucket >= (origin - 60).toLong() && it.bucket <= (origin + span + 60).toLong()
+    val inWindow = remember(buckets, origin, span) {
+        buckets.filter {
+            it.bucket >= (origin - 120).toLong() && it.bucket <= (origin + span + 120).toLong()
         }.ifEmpty { buckets }
-        val bpms = inWindow.map { it.avgBpm }
-        val lo = (bpms.minOrNull() ?: 40.0) - 5.0
-        val hi = (bpms.maxOrNull() ?: 90.0) + 5.0
-        val range = (hi - lo).coerceAtLeast(1.0)
-        fun point(b: HrBucket): Offset {
-            val rel = b.bucket - origin
-            val x = ((rel / span) * w).toFloat()
-            val y = (h * (1f - ((b.avgBpm - lo) / range).toFloat())).toFloat()
-            return Offset(x, y)
-        }
-        // Selected-stage column washes
-        if (selectedStage != null) {
-            val wash = stageColorFor(selectedStage).copy(alpha = 0.13f)
-            intervals.filter {
-                it.stage.equals(selectedStage, ignoreCase = true) ||
-                    (selectedStage == "awake" && it.stage.equals("wake", ignoreCase = true))
-            }.forEach { iv ->
-                val x0 = (((iv.start - origin) / span) * w).toFloat()
-                val segW = maxOf(1f, (((iv.end - iv.start) / span) * w).toFloat())
-                drawRect(wash, topLeft = Offset(x0, 0f), size = Size(segW, h))
-            }
-        }
-        // bpm gridlines
-        val step = maxOf(10.0, ((((hi - lo) / 3) / 10).toInt() * 10.0))
-        var grid = kotlin.math.ceil(lo / step) * step
-        while (grid < hi) {
-            val y = (h * (1f - ((grid - lo) / range).toFloat())).toFloat()
-            drawLine(Palette.hairline.copy(alpha = 0.5f), Offset(0f, y), Offset(w, y), strokeWidth = 1f)
-            grid += step
-        }
-        val baseColor = if (selectedStage == null) Palette.restColor.copy(alpha = 0.9f)
-        else Palette.textTertiary.copy(alpha = 0.45f)
-        val path = Path()
-        var prev: Pair<Long, Offset>? = null
-        for (b in inWindow) {
-            val p = point(b)
-            val pr = prev
-            if (pr != null && b.bucket - pr.first <= 300) {
-                path.lineTo(p.x, p.y)
-            } else {
-                path.moveTo(p.x, p.y)
-            }
-            prev = b.bucket to p
-        }
-        drawPath(path, color = baseColor, style = Stroke(width = 1.5f, cap = StrokeCap.Round))
-        if (selectedStage != null) {
-            val ranges = intervals.filter {
-                it.stage.equals(selectedStage, ignoreCase = true) ||
-                    (selectedStage == "awake" && it.stage.equals("wake", ignoreCase = true))
-            }
-            val overlay = Path()
-            var lastIn: Long? = null
-            for (b in inWindow) {
-                val inside = ranges.any { b.bucket >= it.start && b.bucket <= it.end }
-                if (inside) {
-                    val p = point(b)
-                    if (lastIn != null && b.bucket - lastIn!! <= 300) overlay.lineTo(p.x, p.y)
-                    else overlay.moveTo(p.x, p.y)
-                    lastIn = b.bucket
-                } else {
-                    lastIn = null
-                }
-            }
-            drawPath(
-                overlay,
-                color = stageColorFor(selectedStage),
-                style = Stroke(width = 1.8f, cap = StrokeCap.Round),
+    }
+    val bpms = inWindow.map { it.avgBpm }
+    val lo = (bpms.minOrNull() ?: 40.0) - 5.0
+    val hi = (bpms.maxOrNull() ?: 90.0) + 5.0
+    val meanBpm = bpms.average().roundToInt()
+    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                "Sleeping HR",
+                style = NoopType.overline,
+                color = Palette.textTertiary,
+            )
+            Text(
+                "avg $meanBpm · ${lo.roundToInt()}–${hi.roundToInt()} bpm",
+                style = NoopType.captionNumber,
+                color = Palette.textSecondary,
             )
         }
-        // Dashed onset / wake rules
-        val dash = PathEffect.dashPathEffect(floatArrayOf(4f, 4f), 0f)
-        drawLine(
-            Palette.hairlineStrong,
-            Offset(0.75f, 0f),
-            Offset(0.75f, h),
-            strokeWidth = 1f,
-            pathEffect = dash,
-        )
-        drawLine(
-            Palette.hairlineStrong,
-            Offset(w - 0.75f, 0f),
-            Offset(w - 0.75f, h),
-            strokeWidth = 1f,
-            pathEffect = dash,
-        )
+        Box(modifier = Modifier.fillMaxWidth().height(100.dp)) {
+            Canvas(modifier = Modifier.fillMaxSize()) {
+                val w = size.width
+                val h = size.height
+                if (w <= 0f || h <= 0f) return@Canvas
+                val range = (hi - lo).coerceAtLeast(1.0)
+                fun point(b: HrBucket): Offset {
+                    val rel = b.bucket - origin
+                    val x = ((rel / span) * w).toFloat()
+                    val y = (h * (1f - ((b.avgBpm - lo) / range).toFloat())).toFloat()
+                    return Offset(x, y)
+                }
+                // Selected-stage column washes
+                if (selectedStage != null) {
+                    val wash = stageColorFor(selectedStage).copy(alpha = 0.13f)
+                    intervals.filter {
+                        it.stage.equals(selectedStage, ignoreCase = true) ||
+                            (selectedStage == "awake" && it.stage.equals("wake", ignoreCase = true))
+                    }.forEach { iv ->
+                        val x0 = (((iv.start - origin) / span) * w).toFloat()
+                        val segW = maxOf(1f, (((iv.end - iv.start) / span) * w).toFloat())
+                        drawRect(wash, topLeft = Offset(x0, 0f), size = Size(segW, h))
+                    }
+                }
+                // bpm gridlines
+                val step = maxOf(10.0, ((((hi - lo) / 3) / 10).toInt() * 10.0))
+                var grid = kotlin.math.ceil(lo / step) * step
+                while (grid < hi) {
+                    val y = (h * (1f - ((grid - lo) / range).toFloat())).toFloat()
+                    drawLine(Palette.hairline.copy(alpha = 0.5f), Offset(0f, y), Offset(w, y), strokeWidth = 1f)
+                    grid += step
+                }
+                val baseColor = if (selectedStage == null) Palette.restColor.copy(alpha = 0.9f)
+                else Palette.textTertiary.copy(alpha = 0.45f)
+                val path = Path()
+                var prev: Pair<Long, Offset>? = null
+                for (b in inWindow) {
+                    val p = point(b)
+                    val pr = prev
+                    if (pr != null && b.bucket - pr.first <= 300) {
+                        path.lineTo(p.x, p.y)
+                    } else {
+                        path.moveTo(p.x, p.y)
+                    }
+                    prev = b.bucket to p
+                }
+                drawPath(path, color = baseColor, style = Stroke(width = 1.5f, cap = StrokeCap.Round))
+                if (selectedStage != null) {
+                    val ranges = intervals.filter {
+                        it.stage.equals(selectedStage, ignoreCase = true) ||
+                            (selectedStage == "awake" && it.stage.equals("wake", ignoreCase = true))
+                    }
+                    val overlay = Path()
+                    var lastIn: Long? = null
+                    for (b in inWindow) {
+                        val inside = ranges.any { b.bucket >= it.start && b.bucket <= it.end }
+                        if (inside) {
+                            val p = point(b)
+                            if (lastIn != null && b.bucket - lastIn!! <= 300) overlay.lineTo(p.x, p.y)
+                            else overlay.moveTo(p.x, p.y)
+                            lastIn = b.bucket
+                        } else {
+                            lastIn = null
+                        }
+                    }
+                    drawPath(
+                        overlay,
+                        color = stageColorFor(selectedStage),
+                        style = Stroke(width = 1.8f, cap = StrokeCap.Round),
+                    )
+                }
+                // Dashed onset / wake rules
+                val dash = PathEffect.dashPathEffect(floatArrayOf(4f, 4f), 0f)
+                drawLine(
+                    Palette.hairlineStrong,
+                    Offset(0.75f, 0f),
+                    Offset(0.75f, h),
+                    strokeWidth = 1f,
+                    pathEffect = dash,
+                )
+                drawLine(
+                    Palette.hairlineStrong,
+                    Offset(w - 0.75f, 0f),
+                    Offset(w - 0.75f, h),
+                    strokeWidth = 1f,
+                    pathEffect = dash,
+                )
+            }
+        }
     }
 }
 
@@ -4034,7 +4189,7 @@ private fun NightNavHeader(
             containerColor = Palette.surfaceRaised,
             titleContentColor = Palette.textPrimary,
             textContentColor = Palette.textSecondary,
-            title = { Text("Adjust sleep times", style = NoopType.headline) },
+            title = { Text(stringResource(R.string.sleep_adjust_times_title), style = NoopType.headline) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(Metrics.space6)) {
                     Row(
@@ -4047,7 +4202,7 @@ private fun NightNavHeader(
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
-                            Overline(LifeChapterLacquer.ALARM_EDIT_BEDTIME_OVERLINE, color = Palette.textTertiary)
+                            Overline(stringResource(R.string.alarm_overline_bedtime), color = Palette.textTertiary)
                             Spacer(Modifier.height(Metrics.space4))
                             Text(bedText, style = NoopType.headline, color = Palette.textPrimary)
                         }
@@ -4063,7 +4218,7 @@ private fun NightNavHeader(
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
-                            Overline(LifeChapterLacquer.ALARM_WAKE_UP_SHORT_OVERLINE, color = Palette.textTertiary)
+                            Overline(stringResource(R.string.alarm_overline_wake_up), color = Palette.textTertiary)
                             Spacer(Modifier.height(Metrics.space4))
                             Text(wakeText, style = NoopType.headline, color = Palette.textPrimary)
                         }
@@ -4226,10 +4381,10 @@ private fun NightNavHeader(
             containerColor = Palette.surfaceRaised,
             titleContentColor = Palette.textPrimary,
             textContentColor = Palette.textSecondary,
-            title = { Text("Move this sleep?", style = NoopType.headline) },
+            title = { Text(stringResource(R.string.sleep_move_title), style = NoopType.headline) },
             text = {
                 Text(
-                    "This moves the night to a time with no recorded data. Stages can't be derived there, so it may show as empty until data covers it.",
+                    stringResource(R.string.sleep_move_body),
                     style = NoopType.subhead,
                 )
             },
@@ -4237,7 +4392,13 @@ private fun NightNavHeader(
                 TextButton(onClick = {
                     onUpdateTimes(session, pendingTimes.first, pendingTimes.second)
                     pendingDisjointTimes = null
-                }) { Text("Move anyway", style = NoopType.subhead, color = Palette.statusWarning) }
+                }) {
+                    Text(
+                        stringResource(R.string.sleep_move_anyway),
+                        style = NoopType.subhead,
+                        color = Palette.statusWarning,
+                    )
+                }
             },
             dismissButton = {
                 TextButton(onClick = { pendingDisjointTimes = null }) {
@@ -4248,9 +4409,9 @@ private fun NightNavHeader(
     }
 
     val nightLabel = when (offset) {
-        0 -> "Last night"
-        1 -> "1 night ago"
-        else -> "$offset nights ago"
+        0 -> stringResource(R.string.sleep_night_last)
+        1 -> stringResource(R.string.sleep_night_one_ago)
+        else -> stringResource(R.string.sleep_night_n_ago, offset)
     }
     val nightOrdinal = if (lastIndex > 0) " · ${offset + 1}/${lastIndex + 1}" else ""
     val blockShape = RoundedCornerShape(Metrics.cornerSm)
@@ -4273,8 +4434,8 @@ private fun NightNavHeader(
             } else {
                 null
             },
-            olderContentDescription = "Previous night",
-            newerContentDescription = "Next night",
+            olderContentDescription = stringResource(R.string.sleep_night_prev_a11y),
+            newerContentDescription = stringResource(R.string.sleep_night_next_a11y),
         )
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -4292,14 +4453,14 @@ private fun NightNavHeader(
                 Spacer(Modifier.width(Metrics.space6))
                 Icon(
                     Icons.Filled.Edit,
-                    contentDescription = "Adjust sleep times",
+                    contentDescription = stringResource(R.string.sleep_adjust_times_a11y),
                     tint = Palette.textTertiary,
                     modifier = Modifier.size(14.dp).clickable { showTimeChoice = true },
                 )
                 Spacer(Modifier.width(Metrics.space12))
                 Icon(
                     Icons.Filled.DeleteOutline,
-                    contentDescription = "Delete this sleep session",
+                    contentDescription = stringResource(R.string.sleep_delete_a11y),
                     tint = Palette.textTertiary,
                     modifier = Modifier.size(14.dp).clickable { showDeleteConfirm = true },
                 )
@@ -4308,7 +4469,7 @@ private fun NightNavHeader(
                 Spacer(Modifier.width(Metrics.space12))
                 Icon(
                     Icons.Filled.Add,
-                    contentDescription = "Add a nap",
+                    contentDescription = stringResource(R.string.sleep_add_nap_a11y),
                     tint = Palette.textTertiary,
                     modifier = Modifier.size(14.dp).clickable { addingNapStart = true },
                 )
@@ -4319,7 +4480,7 @@ private fun NightNavHeader(
         if (!canGoOlder) {
             Text(
                 if (lastIndex == 0) {
-                    "No earlier night stored yet. Earlier nights sync in the morning."
+                    stringResource(R.string.sleep_no_earlier_stored)
                 } else {
                     LifeChapterLacquer.SLEEP_OLDEST_IN_BANK
                 },
@@ -4339,15 +4500,15 @@ private fun NightNavHeader(
             containerColor = Palette.surfaceRaised,
             titleContentColor = Palette.textPrimary,
             textContentColor = Palette.textSecondary,
-            title = { Text("Delete this sleep session?", style = NoopType.headline) },
+            title = { Text(stringResource(R.string.sleep_delete_title), style = NoopType.headline) },
             text = {
                 // A detected night is tombstoned so it won't re-detect; a userEdited/nap row writes no
                 // tombstone, so its copy drops that (false) promise. Mirrors the undo banner. (#65)
                 Text(
                     if (session.userEdited) {
-                        "Removes this sleep and recomputes the day without it. You can undo for a few seconds after."
+                        stringResource(R.string.sleep_delete_body_edited)
                     } else {
-                        "Removes this recorded sleep and recomputes the day without it. NOOP won't re-detect sleep in this window. You can undo for a few seconds after."
+                        stringResource(R.string.sleep_delete_body_detected)
                     },
                     style = NoopType.subhead,
                 )
@@ -4382,7 +4543,7 @@ private fun StageLegend(label: String, color: Color) {
                 .clip(RoundedCornerShape(Metrics.cornerXs))
                 .background(color),
         )
-        Text(label, style = NoopType.footnote, color = Palette.textTertiary)
+        Text(label, style = NoopType.footnote, color = Palette.textPrimary.copy(alpha = 0.78f))
     }
 }
 
@@ -4395,35 +4556,38 @@ private fun MetricGrid(
     onOpenTrends: () -> Unit = {},
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-        Text("Trends", style = NoopType.overline, color = Palette.textTertiary)
+        Text(stringResource(R.string.sleep_trends_overline), style = NoopType.overline, color = Palette.textTertiary)
         Text(
-            "Night metrics for this sleep — not the Trends tab.",
+            stringResource(R.string.sleep_trends_night_caption),
             style = NoopType.caption,
             color = Palette.textTertiary,
             modifier = Modifier.padding(bottom = 4.dp),
         )
+        val openTrendsLabel = stringResource(R.string.sleep_trends_open_label)
+        val openTrendsA11y = stringResource(R.string.sleep_trends_open_a11y)
         Text(
-            "Open Trends for Charge · Effort · Rest week view",
+            stringResource(R.string.sleep_trends_open_week),
             style = NoopType.footnote,
             color = Palette.restColor,
             modifier = Modifier
                 .padding(bottom = 8.dp)
                 .clickable(
-                    onClickLabel = "Open Trends tab",
+                    onClickLabel = openTrendsLabel,
                     onClick = onOpenTrends,
                 )
-                .semantics { contentDescription = "Open Trends tab for Charge Effort Rest" },
+                .semantics { contentDescription = openTrendsA11y },
         )
         // Consistency demoted until ≥5 nights (Fable 200 #189) — footnote, not a peer tile.
         val consistencyNights = m.consistency.series.size
+        val spo2RawNotPct = stringResource(R.string.sleep_metric_spo2_raw_not_pct)
         val rows = buildList {
-            add(Triple("Rest", pctValue(m.performance.latest), "performance"))
-            add(Triple("Efficiency", pctValue(m.efficiency.latest), "efficiency"))
-            add(Triple("Hours vs needed", pctValue(m.hoursVsNeeded.latest), "hours_vs_needed"))
-            add(Triple("Restorative", pctValue(m.restorative.latest), "restorative"))
+            add(Triple(stringResource(R.string.sleep_metric_rest), pctValue(m.performance.latest), "performance"))
+            add(Triple(stringResource(R.string.sleep_metric_efficiency), pctValue(m.efficiency.latest), "efficiency"))
+            add(Triple(stringResource(R.string.sleep_metric_hours_vs_needed), pctValue(m.hoursVsNeeded.latest), "hours_vs_needed"))
+            add(Triple(stringResource(R.string.sleep_metric_restorative), pctValue(m.restorative.latest), "restorative"))
             add(
                 Triple(
-                    "Respiratory",
+                    stringResource(R.string.sleep_metric_respiratory),
                     m.respiratory.latest?.let { String.format(Locale.US, "%.1f", it) } ?: "—",
                     "respiratory",
                 ),
@@ -4431,7 +4595,7 @@ private fun MetricGrid(
             // Fable Sleep #30 — night skin-temp deviation when banked (display only; no invented value).
             add(
                 Triple(
-                    "Skin temp",
+                    stringResource(R.string.sleep_metric_skin_temp),
                     m.skinTemp.latest?.let {
                         val sign = if (it > 0) "+" else ""
                         String.format(Locale.US, "%s%.1f°C", sign, it)
@@ -4439,11 +4603,13 @@ private fun MetricGrid(
                     "skin_temp",
                 ),
             )
-            // Fable Sleep #29 — night SpO₂ when banked (display only; never invent %).
+            // Fable Sleep #29 — night SpO₂ % when banked; else sleep-offload raw ADC (never invent %).
             add(
                 Triple(
-                    "SpO₂",
-                    m.spo2.latest?.let { String.format(Locale.US, "%.0f%%", it) } ?: "—",
+                    stringResource(R.string.sleep_metric_spo2),
+                    m.spo2.latest?.let { String.format(Locale.US, "%.0f%%", it) }
+                        ?: m.spo2RawAdc?.let { stringResource(R.string.sleep_metric_spo2_adc, it) }
+                        ?: if (m.spo2OpticalAux) spo2RawNotPct else "—",
                     "spo2",
                 ),
             )
@@ -4480,7 +4646,11 @@ private fun MetricGrid(
         }
         if (consistencyNights >= 5 && m.consistency.latest != null) {
             Text(
-                "Consistency · ${m.consistency.latest.roundToInt()}% · $consistencyNights nights",
+                stringResource(
+                    R.string.sleep_metric_consistency_unlocked,
+                    m.consistency.latest.roundToInt(),
+                    consistencyNights,
+                ),
                 style = NoopType.footnote,
                 color = Palette.textTertiary,
                 modifier = Modifier
@@ -4489,7 +4659,7 @@ private fun MetricGrid(
             )
         } else if (consistencyNights in 1..4) {
             Text(
-                "Consistency unlocks after 5 nights ($consistencyNights/5).",
+                stringResource(R.string.sleep_metric_consistency_locked, consistencyNights),
                 style = NoopType.footnote,
                 color = Palette.textTertiary,
                 modifier = Modifier.padding(top = 10.dp),
@@ -4516,11 +4686,15 @@ private fun MetricGrid(
 @Composable
 internal fun SleepDebtLedgerCard(ledger: SleepDebtLedger) {
     Column(verticalArrangement = Arrangement.spacedBy(Metrics.gap)) {
-        SectionHeader("Sleep hours ledger", overline = "Last 14 nights", trailing = "behind / ahead of need")
+        SectionHeader(
+            stringResource(R.string.sleep_hours_ledger_title),
+            overline = stringResource(R.string.sleep_ledger_14_nights),
+            trailing = stringResource(R.string.sleep_ledger_behind_ahead),
+        )
         NoopCard(padding = Metrics.cardPadding, tint = Palette.restColor) {
             if (ledger.nightCount == 0) {
                 Text(
-                    "No nights with sleep data yet. Your ledger fills in as you wear the strap to bed.",
+                    stringResource(R.string.sleep_ledger_empty),
                     style = NoopType.subhead,
                     color = Palette.textTertiary,
                 )
@@ -4529,7 +4703,7 @@ internal fun SleepDebtLedgerCard(ledger: SleepDebtLedger) {
                     // Headline: net balance + the short tag (sleep debt / surplus / balanced).
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(
-                            debtHeadline(ledger),
+                            debtHeadlineLocalized(ledger),
                             style = NoopType.tileValueLarge,
                             color = debtBalanceColor(ledger),
                             maxLines = 1,
@@ -4537,14 +4711,14 @@ internal fun SleepDebtLedgerCard(ledger: SleepDebtLedger) {
                             modifier = Modifier.weight(1f),
                         )
                         Text(
-                            debtTag(ledger),
+                            debtTagLocalized(ledger),
                             style = NoopType.captionNumber,
                             color = debtBalanceColor(ledger),
                         )
                     }
-                    // Plain-English read.
+                    // Plain-language read.
                     Text(
-                        debtRead(ledger),
+                        debtReadLocalized(ledger),
                         style = NoopType.subhead,
                         color = Palette.textSecondary,
                     )
@@ -4553,14 +4727,17 @@ internal fun SleepDebtLedgerCard(ledger: SleepDebtLedger) {
                     Hairline()
                     ChartFooter(
                         listOf(
-                            "Balance" to debtSigned(ledger.balanceMin),
-                            "Per-night need" to durationText(ledger.needMin),
-                            "Nights" to "${ledger.nightCount}",
+                            stringResource(R.string.sleep_ledger_balance) to debtSigned(ledger.balanceMin),
+                            stringResource(R.string.sleep_ledger_per_night_need) to durationText(ledger.needMin),
+                            stringResource(R.string.sleep_ledger_nights) to "${ledger.nightCount}",
                         ),
                     )
                     // Fable Sleep #52 — personal need baseline always visible in plain hours.
                     Text(
-                        "Your baseline need: ${durationText(ledger.needMin)} per night (slept − need builds the ledger).",
+                        stringResource(
+                            R.string.sleep_ledger_baseline_need,
+                            durationText(ledger.needMin),
+                        ),
                         style = NoopType.footnote,
                         color = Palette.textTertiary,
                     )
@@ -4583,14 +4760,18 @@ private fun DebtDeltaBars(ledger: SleepDebtLedger) {
     val accentColor = Palette.accent
     val deficitColor = Palette.metricRose
     val centreColor = Palette.hairline
+    val barsA11y = stringResource(
+        R.string.sleep_debt_bars_a11y,
+        ledger.nightCount,
+        debtSigned(ledger.balanceMin),
+        scaleAbs,
+    )
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .height(56.dp)
             .semantics {
-                contentDescription =
-                    "Per-night sleep balance: ${ledger.nightCount} nights, net ${debtSigned(ledger.balanceMin)}, " +
-                        "scale ±$scaleAbs"
+                contentDescription = barsA11y
             },
         horizontalArrangement = Arrangement.spacedBy(4.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -4645,11 +4826,11 @@ private fun StagesVsTypical(m: SleepModel) {
         SectionHeader("Stages vs typical", overline = "Selected night", trailing = "marker = your mean")
         NoopCard(tint = Palette.restColor) {
             Column(verticalArrangement = Arrangement.spacedBy(Metrics.space10)) {
-                StageRow(LifeChapterLacquer.SLEEP_STAGE_DEEP, last = s.deep, typical = m.typicalDeepMin, color = Palette.sleepDeep)
+                StageRow(stringResource(R.string.sleep_stage_deep), last = s.deep, typical = m.typicalDeepMin, color = Palette.sleepDeep)
                 Hairline()
-                StageRow(LifeChapterLacquer.SLEEP_STAGE_REM, last = s.rem, typical = m.typicalRemMin, color = Palette.sleepREM)
+                StageRow(stringResource(R.string.sleep_stage_rem), last = s.rem, typical = m.typicalRemMin, color = Palette.sleepREM)
                 Hairline()
-                StageRow(LifeChapterLacquer.SLEEP_STAGE_LIGHT, last = s.light, typical = m.typicalLightMin, color = Palette.sleepLight)
+                StageRow(stringResource(R.string.sleep_stage_light), last = s.light, typical = m.typicalLightMin, color = Palette.sleepLight)
             }
         }
     }
@@ -5105,6 +5286,10 @@ internal data class SleepModel(
     val skinTemp: Metric,
     /** Night SpO₂ % when banked (Fable Sleep #29); null when unset — never invented. */
     val spo2: Metric,
+    /** WHOOP 4.0 sleep-offload raw ADC mean (red+IR)/2 when % absent — never labeled as %. */
+    val spo2RawAdc: Int? = null,
+    /** MG `@82` overnight optical banked (asleep + nonzero) — show "raw", never as %. */
+    val spo2OpticalAux: Boolean = false,
     val sleepDebt: Metric,
     val typicalTotalMin: Double?,
     val typicalDeepMin: Double?,
@@ -5542,6 +5727,8 @@ internal fun buildSleepModel(
     // single-block day → the session/DailyMetric path below is unchanged.
     heroStages: StageMins? = null,
     heroSegments: List<PersistedSegment>? = null,
+    profile: com.noop.analytics.UserProfile? = null,
+    priorDayStrain: Double? = null,
 ): SleepModel? {
     val effectiveDay = selectedDay ?: days.lastOrNull()?.day ?: return null
     // The HERO night = the selected day's stage-bearing row. The TILE / debt / need / trend
@@ -5623,9 +5810,12 @@ internal fun buildSleepModel(
     val typicalRemMin = mean(days.mapNotNull { it.remMin }.filter { it > 0.0 })
     val typicalLightMin = mean(days.mapNotNull { it.lightMin }.filter { it > 0.0 })
 
-    // Personal sleep need (minutes): mean asleep floored at minPersonalNeedHours; empty → RestScorer default.
+    // Personal sleep need (minutes): physiology-blended estimator (profile + prior Effort when provided).
+    val needPool = days.mapNotNull { RestScorer.canonicalAsleepMin(it)?.takeIf { m -> m > 0.0 } }
     val needMin = RestScorer.personalNeedHours(
-        listOfNotNull(typicalTotalMin?.takeIf { it > 0.0 }),
+        asleepMinutes = needPool,
+        profile = profile,
+        priorDayStrain = priorDayStrain,
     ).first * 60.0
 
     // Per-tile metrics — each a full pass over the FULL day history (asleep totals, no in-bed
@@ -5679,6 +5869,13 @@ internal fun buildSleepModel(
     val respiratory = metric(days) { it.respRateBpm }
     val skinTemp = metric(days) { it.skinTempDevC }
     val spo2 = metric(days) { it.spo2Pct }
+    val spo2Day = days.lastOrNull { it.day == effectiveDay } ?: latest
+    val spo2RawAdc = spo2Day?.let { d ->
+        if (d.spo2Pct != null) null
+        else if (d.spo2Red != null && d.spo2Ir != null) (d.spo2Red + d.spo2Ir) / 2
+        else null
+    }
+    val spo2OpticalAux = spo2Day?.spo2OpticalAux == true && spo2RawAdc == null && spo2Day.spo2Pct == null
     val sleepDebt = run {
         val series = days.mapNotNull { d ->
             imported.debtMin[d.day]   // minutes, export-verbatim
@@ -5740,6 +5937,8 @@ internal fun buildSleepModel(
         respiratory = respiratory,
         skinTemp = skinTemp,
         spo2 = spo2,
+        spo2RawAdc = spo2RawAdc,
+        spo2OpticalAux = spo2OpticalAux,
         sleepDebt = sleepDebt,
         typicalTotalMin = typicalTotalMin,
         typicalDeepMin = typicalDeepMin,
@@ -5765,11 +5964,16 @@ internal fun buildSleepModel(
 internal fun fallbackSleepModel(
     days: List<DailyMetric>,
     imported: ImportedSleepSeries = ImportedSleepSeries(),
+    profile: com.noop.analytics.UserProfile? = null,
+    priorDayStrain: Double? = null,
 ): SleepModel? {
     val anchorDay = days.lastOrNull {
         (it.deepMin ?: 0.0) + (it.remMin ?: 0.0) + (it.lightMin ?: 0.0) > 0.0
     }?.day ?: return null
-    return buildSleepModel(days, null, imported, selectedDay = anchorDay)
+    return buildSleepModel(
+        days, null, imported, selectedDay = anchorDay,
+        profile = profile, priorDayStrain = priorDayStrain,
+    )
 }
 
 /** Build a metric from a per-day transform, keeping only finite values. */
@@ -5962,29 +6166,39 @@ private fun debtColor(debt: Double?): Color = when {
  * "≈2h 10m" magnitude headline — leading "≈" because it's an accumulated estimate. Reads
  * "On target" inside the deadband so a few stray minutes don't show as debt.
  */
-private fun debtHeadline(ledger: SleepDebtLedger): String =
-    if (ledger.magnitudeMin < SleepDebt.ON_TARGET_BAND_MIN) "On target"
-    else "≈${durationText(ledger.magnitudeMin)}"
+@Composable
+private fun debtHeadlineLocalized(ledger: SleepDebtLedger): String =
+    if (ledger.magnitudeMin < SleepDebt.ON_TARGET_BAND_MIN) {
+        stringResource(R.string.sleep_debt_on_target)
+    } else {
+        stringResource(R.string.sleep_debt_approx, durationText(ledger.magnitudeMin))
+    }
 
 /** Short tag beside the headline: sleep debt / surplus / balanced. */
-private fun debtTag(ledger: SleepDebtLedger): String = when {
-    ledger.magnitudeMin < SleepDebt.ON_TARGET_BAND_MIN -> "on need"
-    ledger.isDebt -> "behind need"
-    else -> "ahead of need"
+@Composable
+private fun debtTagLocalized(ledger: SleepDebtLedger): String = when {
+    ledger.magnitudeMin < SleepDebt.ON_TARGET_BAND_MIN -> stringResource(R.string.sleep_debt_tag_on_need)
+    ledger.isDebt -> stringResource(R.string.sleep_debt_tag_behind)
+    else -> stringResource(R.string.sleep_debt_tag_ahead)
 }
 
-/** Plain-English read of the running balance over the window. */
-private fun debtRead(ledger: SleepDebtLedger): String {
+/** Localized plain read of the running balance over the window. */
+@Composable
+private fun debtReadLocalized(ledger: SleepDebtLedger): String {
     val nights = ledger.nightCount
-    val span = "the last $nights night${if (nights == 1) "" else "s"}"
+    val span = if (nights == 1) {
+        stringResource(R.string.sleep_debt_span_one)
+    } else {
+        stringResource(R.string.sleep_debt_span_many, nights)
+    }
     if (ledger.magnitudeMin < SleepDebt.ON_TARGET_BAND_MIN) {
-        return "Hours slept roughly match what you usually need across $span."
+        return stringResource(R.string.sleep_debt_read_match, span)
     }
     val mag = durationText(ledger.magnitudeMin)
     return if (ledger.isDebt) {
-        "About $mag less than you usually need across $span. Extra sleep nights pay it back."
+        stringResource(R.string.sleep_debt_read_behind, mag, span)
     } else {
-        "About $mag more than you usually need across $span."
+        stringResource(R.string.sleep_debt_read_ahead, mag, span)
     }
 }
 
@@ -6218,9 +6432,14 @@ private suspend fun loadBrowseSleepBlocks(
 
     val immediate = mergeFromBank()
     if (!refreshBank) return immediate
-    // Soft refresh with timeouts — never block Sleep chrome on BLE offload / HC import.
-    kotlinx.coroutines.withTimeoutOrNull(2_500L) {
+    // Soft refresh with timeouts — never block Sleep chrome forever on BLE/HC.
+    // Overnight seed import (15k+ HR rows) needs more than a few seconds; 8s was cancelling
+    // recovery mid-insert so Fri/Sat nights never landed (Gilbert Fold 2026-07-18).
+    kotlinx.coroutines.withTimeoutOrNull(90_000L) {
         runCatching { vm.ensureStrapSleepBanked() }
+            .onFailure {
+                android.util.Log.w("NoopSleep", "ensureStrapSleepBanked failed: ${it.message}")
+            }
     }
     kotlinx.coroutines.withTimeoutOrNull(4_000L) {
         runCatching { vm.ensureHealthConnectSleepFresh() }
@@ -6359,8 +6578,8 @@ internal fun HoursVsNeededCard(m: SleepModel) {
         Column(verticalArrangement = Arrangement.spacedBy(Metrics.space14)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(modifier = Modifier.weight(1f)) {
-                    Overline("Sleep")
-                    Text("Hours vs Needed", style = NoopType.headline, color = Palette.textPrimary)
+                    Overline(stringResource(R.string.nav_sleep))
+                    Text(stringResource(R.string.sleep_hours_vs_needed), style = NoopType.headline, color = Palette.textPrimary)
                 }
                 Text(trendArrow, style = NoopType.title2, color = arrowColor)
                 Spacer(Modifier.width(Metrics.space6))
@@ -6368,13 +6587,14 @@ internal fun HoursVsNeededCard(m: SleepModel) {
             }
 
             // Gradient progress bar: slept / needed.
+            val hoursVsNeededA11y = stringResource(R.string.sleep_hours_vs_needed_a11y, score.roundToInt())
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(Metrics.progressHeight)
                     .clip(RoundedCornerShape(Metrics.cornerPill))
                     .background(Palette.surfaceInset)
-                    .semantics { contentDescription = "Hours vs Needed progress bar, ${score.roundToInt()} percent" },
+                    .semantics { contentDescription = hoursVsNeededA11y },
             ) {
                 Box(
                     modifier = Modifier
@@ -6396,20 +6616,20 @@ internal fun HoursVsNeededCard(m: SleepModel) {
                 if (tonightShort > 0) Box(modifier = Modifier.weight((tonightShort / totalBar).toFloat()).fillMaxHeight().background(Palette.statusCritical))
             }
             Row(horizontalArrangement = Arrangement.spacedBy(Metrics.space14)) {
-                LegendDot("Healthy Min", Palette.metricPurple)
-                LegendDot("Strain", Palette.strain066)
-                LegendDot("Tonight short", Palette.statusCritical)
+                LegendDot(stringResource(R.string.sleep_hv_legend_healthy_min), Palette.metricPurple)
+                LegendDot(stringResource(R.string.sleep_hv_legend_strain), Palette.strain066)
+                LegendDot(stringResource(R.string.sleep_hv_legend_tonight_short), Palette.statusCritical)
             }
 
             Hairline()
             Row(modifier = Modifier.fillMaxWidth()) {
                 listOf(
-                    "Slept" to String.format(Locale.US, "%.1f h", sleptH),
-                    "Needed" to String.format(Locale.US, "%.1f h", neededH),
-                    "Ledger" to if (ledgerDebtH > 0.05) {
+                    stringResource(R.string.sleep_hv_slept) to String.format(Locale.US, "%.1f h", sleptH),
+                    stringResource(R.string.sleep_hv_needed) to String.format(Locale.US, "%.1f h", neededH),
+                    stringResource(R.string.sleep_hv_ledger) to if (ledgerDebtH > 0.05) {
                         String.format(Locale.US, "%.1f h", ledgerDebtH)
                     } else {
-                        "Balanced"
+                        stringResource(R.string.sleep_hv_balanced)
                     },
                 ).forEach { (lbl, v) ->
                     Column(modifier = Modifier.weight(1f)) {
@@ -6419,7 +6639,10 @@ internal fun HoursVsNeededCard(m: SleepModel) {
                 }
             }
             Text(
-                "Ledger = last ${ledger.nightCount.coerceAtLeast(1)} nights (slept − need). Same as Sleep-debt ledger.",
+                stringResource(
+                    R.string.sleep_hv_ledger_footnote,
+                    ledger.nightCount.coerceAtLeast(1),
+                ),
                 style = NoopType.footnote,
                 color = Palette.textTertiary,
             )
@@ -6445,12 +6668,17 @@ private fun LegendDot(label: String, color: Color) {
  */
 @Composable
 internal fun SleepConsistencyCard(sleeps: List<SleepSession>) {
-    val recent = sleeps.takeLast(14)
-    if (recent.size < 3) return
+    if (sleeps.size < 3) return
 
     data class NightTiming(val label: String, val bedHour: Float, val wakeHour: Float)
     val sdf = SimpleDateFormat("EEE", Locale.US)
-    val timings = recent.map { s ->
+    // One bar per wake-day (main night only) — naps / stub twins used to mint a second Fri/Sat/Sun.
+    val byWakeDay = sleeps.groupBy { localDayString(it.endTs) }
+    val mainNights = byWakeDay.values.map { blocks ->
+        blocks.maxByOrNull { it.endTs - it.effectiveStartTs }!!
+    }.sortedBy { it.endTs }.takeLast(14)
+    if (mainNights.size < 3) return
+    val timings = mainNights.map { s ->
         val bedCal = Calendar.getInstance().apply { timeInMillis = s.effectiveStartTs * 1000L } // edited bedtime (PR #395)
         val wakeCal = Calendar.getInstance().apply { timeInMillis = s.endTs * 1000L }
         val bedH = bedCal.get(Calendar.HOUR_OF_DAY) + bedCal.get(Calendar.MINUTE) / 60f
@@ -6493,9 +6721,9 @@ internal fun SleepConsistencyCard(sleeps: List<SleepSession>) {
             // Header: title + trend-score.
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(modifier = Modifier.weight(1f)) {
-                    Overline("Schedule")
-                    Text("Bedtime & wake time", style = NoopType.headline, color = Palette.textPrimary)
-                    Text("Sleep window over recent nights", style = NoopType.footnote, color = Palette.textSecondary)
+                    Overline(stringResource(R.string.sleep_schedule_overline))
+                    Text(stringResource(R.string.sleep_bedtime_wake_title), style = NoopType.headline, color = Palette.textPrimary)
+                    Text(stringResource(R.string.sleep_bedtime_wake_blurb), style = NoopType.footnote, color = Palette.textSecondary)
                 }
                 Text("${consistencyPct.roundToInt()}%", style = NoopType.chartValue, color = Palette.restColor)
             }
@@ -6594,7 +6822,7 @@ internal fun SleepConsistencyCard(sleeps: List<SleepSession>) {
                 listOf(
                     "Score" to "${consistencyPct.roundToInt()}%",
                     "Typical" to "${((bedSdH + wakeSdH) / 2f * 60f).roundToInt()} min SD",
-                    "Nights" to "${recent.size}",
+                    "Nights" to "${timings.size}",
                 ).forEach { (lbl, v) ->
                     Column(modifier = Modifier.weight(1f)) {
                         Overline(lbl, color = Palette.textTertiary)
@@ -6614,40 +6842,50 @@ private enum class SleepMetricRange(val label: String, val days: Long?) {
 }
 
 private data class SleepMetricSpec(
-    val title: String,
+    @StringRes val titleRes: Int,
     val unit: String,
     val color: Color,
     val format: (Double) -> String,
 )
 
 private fun sleepMetricSpec(key: String): SleepMetricSpec = when (key) {
-    "performance"     -> SleepMetricSpec("Rest", "%", Palette.restColor) { "${it.roundToInt()}" }
-    "efficiency"      -> SleepMetricSpec("Sleep Efficiency", "%", Palette.statusPositive) { "${it.roundToInt()}" }
-    "consistency"     -> SleepMetricSpec("Consistency", "%", Palette.metricCyan) { "${it.roundToInt()}" }
-    "hours_vs_needed" -> SleepMetricSpec("Hours vs Needed", "%", Palette.restColor) { "${it.roundToInt()}" }
-    "restorative"     -> SleepMetricSpec("Restorative", "%", Palette.sleepREM) { "${it.roundToInt()}" }
-    "respiratory"     -> SleepMetricSpec("Respiratory Rate", "rpm", Palette.metricPurple) { String.format(Locale.US, "%.1f", it) }
-    "skin_temp"       -> SleepMetricSpec("Skin Temp", "°C", Palette.metricAmber) {
+    "performance"     -> SleepMetricSpec(R.string.sleep_metric_rest, "%", Palette.restColor) { "${it.roundToInt()}" }
+    "efficiency"      -> SleepMetricSpec(R.string.sleep_metric_efficiency_full, "%", Palette.statusPositive) { "${it.roundToInt()}" }
+    "consistency"     -> SleepMetricSpec(R.string.sleep_metric_consistency, "%", Palette.metricCyan) { "${it.roundToInt()}" }
+    "hours_vs_needed" -> SleepMetricSpec(R.string.sleep_hours_vs_needed, "%", Palette.restColor) { "${it.roundToInt()}" }
+    "restorative"     -> SleepMetricSpec(R.string.sleep_metric_restorative, "%", Palette.sleepREM) { "${it.roundToInt()}" }
+    "respiratory"     -> SleepMetricSpec(R.string.sleep_metric_respiratory_rate, "rpm", Palette.metricPurple) { String.format(Locale.US, "%.1f", it) }
+    "skin_temp"       -> SleepMetricSpec(R.string.sleep_metric_skin_temp_full, "°C", Palette.metricAmber) {
         val sign = if (it > 0) "+" else ""
         String.format(Locale.US, "%s%.1f", sign, it)
     }
-    "spo2"            -> SleepMetricSpec("SpO₂", "%", Palette.metricCyan) {
+    "spo2"            -> SleepMetricSpec(R.string.sleep_metric_spo2, "%", Palette.metricCyan) {
         String.format(Locale.US, "%.0f", it)
     }
-    "sleep_debt"      -> SleepMetricSpec("Sleep-debt ledger", "h", Palette.metricRose) {
+    "sleep_debt"      -> SleepMetricSpec(R.string.sleep_metric_sleep_debt, "h", Palette.metricRose) {
         String.format(Locale.US, "%+.1f", it)
     }
-    else              -> SleepMetricSpec(key, "", Palette.accent) { "${it.roundToInt()}" }
+    else              -> SleepMetricSpec(R.string.nav_sleep, "", Palette.accent) { "${it.roundToInt()}" }
 }
 
-private fun buildSleepMetricPoints(days: List<DailyMetric>, key: String): List<Pair<String, Double>> {
+private fun buildSleepMetricPoints(
+    days: List<DailyMetric>,
+    key: String,
+    profile: com.noop.analytics.UserProfile? = null,
+    priorDayStrain: Double? = null,
+): List<Pair<String, Double>> {
+    val needPool = days.mapNotNull { it.totalSleepMin?.takeIf { m -> m > 0.0 } }
     val needMin = RestScorer.personalNeedHours(
-        days.mapNotNull { it.totalSleepMin?.takeIf { m -> m > 0.0 } },
+        asleepMinutes = needPool,
+        profile = profile,
+        priorDayStrain = priorDayStrain,
     ).first * 60.0
     // Fable #375 — sleep_debt detail = running Σ(slept − need) hours, same ledger as SleepDebtLedgerCard.
     if (key == "sleep_debt") {
         val needHours = RestScorer.personalNeedHours(
-            days.mapNotNull { RestScorer.canonicalAsleepMin(it)?.takeIf { m -> m > 0.0 } },
+            asleepMinutes = days.mapNotNull { RestScorer.canonicalAsleepMin(it)?.takeIf { m -> m > 0.0 } },
+            profile = profile,
+            priorDayStrain = priorDayStrain,
         ).first
         val ledger = SleepDebt.ledger(
             series = days.map { it.day to RestScorer.canonicalAsleepMin(it) },
@@ -6710,9 +6948,21 @@ private fun filterSleepMetricPoints(
 @Composable
 private fun SleepMetricDetailSheetContent(vm: AppViewModel, key: String) {
     val days by vm.recentDays.collectAsStateWithLifecycle()
+    val context = LocalContext.current
+    val profileStore = remember { ProfileStore.from(context) }
+    val analyticsProfile = remember(
+        profileStore.age, profileStore.weightKg, profileStore.heightCm,
+        profileStore.waistCm, profileStore.sex,
+    ) { profileStore.toAnalyticsProfile() }
     var range by remember { mutableStateOf(SleepMetricRange.MONTH) }
     val spec = remember(key) { sleepMetricSpec(key) }
-    val allPoints = remember(days, key) { buildSleepMetricPoints(days, key) }
+    val specTitle = stringResource(spec.titleRes)
+    val priorStrain = remember(days) {
+        com.noop.analytics.priorDayStrainForNeed(days, days.lastOrNull()?.day)
+    }
+    val allPoints = remember(days, key, analyticsProfile, priorStrain) {
+        buildSleepMetricPoints(days, key, profile = analyticsProfile, priorDayStrain = priorStrain)
+    }
     val filteredPoints = remember(allPoints, range) { filterSleepMetricPoints(allPoints, range) }
 
     Column(
@@ -6720,17 +6970,17 @@ private fun SleepMetricDetailSheetContent(vm: AppViewModel, key: String) {
         verticalArrangement = Arrangement.spacedBy(Metrics.space16),
     ) {
         if (allPoints.size < 2) {
-            Text("Not enough history yet", style = NoopType.headline, color = Palette.textPrimary)
+            Text(stringResource(R.string.sleep_history_empty_title), style = NoopType.headline, color = Palette.textPrimary)
             Text(
-                "This metric needs at least two nights of data.",
+                stringResource(R.string.sleep_history_empty_body),
                 style = NoopType.subhead, color = Palette.textSecondary,
             )
             Spacer(Modifier.height(Metrics.space16))
         } else if (filteredPoints.size < 2) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(modifier = Modifier.weight(1f)) {
-                    Overline("Sleep")
-                    Text(spec.title, style = NoopType.title2, color = Palette.textPrimary)
+                    Overline(stringResource(R.string.nav_sleep))
+                    Text(specTitle, style = NoopType.title2, color = Palette.textPrimary)
                 }
             }
             SegmentedPillControl(
@@ -6739,7 +6989,7 @@ private fun SleepMetricDetailSheetContent(vm: AppViewModel, key: String) {
                 label = { it.label },
                 onSelect = { range = it },
             )
-            Text("Not enough history in this range. Try 3M, 6M, or ALL.", style = NoopType.subhead, color = Palette.textSecondary)
+            Text(stringResource(R.string.sleep_history_range_empty), style = NoopType.subhead, color = Palette.textSecondary)
             Spacer(Modifier.height(Metrics.space16))
         } else {
             val values = filteredPoints.map { it.second }
@@ -6748,12 +6998,13 @@ private fun SleepMetricDetailSheetContent(vm: AppViewModel, key: String) {
             val minV = values.minOrNull() ?: 0.0
             val maxV = values.maxOrNull() ?: 0.0
             val avgV = values.average()
+            val trendA11y = stringResource(R.string.sleep_metric_trend_a11y, specTitle)
 
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(modifier = Modifier.weight(1f)) {
-                    Overline("Sleep · ${filteredPoints.size} nights")
-                    Text(spec.title, style = NoopType.title2, color = Palette.textPrimary)
-                    Text("as of ${latest.first}", style = NoopType.footnote, color = Palette.textTertiary)
+                    Overline(stringResource(R.string.sleep_metric_nights_overline, filteredPoints.size))
+                    Text(specTitle, style = NoopType.title2, color = Palette.textPrimary)
+                    Text(stringResource(R.string.sleep_metric_as_of, latest.first), style = NoopType.footnote, color = Palette.textTertiary)
                 }
                 Text(
                     "${spec.format(latest.second)} ${spec.unit}".trim(),
@@ -6782,7 +7033,7 @@ private fun SleepMetricDetailSheetContent(vm: AppViewModel, key: String) {
                 LineChart(
                     values = values,
                     modifier = Modifier.weight(1f).height(Metrics.chartHeight)
-                        .semantics { contentDescription = "${spec.title} trend chart" },
+                        .semantics { contentDescription = trendA11y },
                     color = spec.color,
                     fill = true,
                     selectionEnabled = true,
@@ -6799,7 +7050,11 @@ private fun SleepMetricDetailSheetContent(vm: AppViewModel, key: String) {
             }
             Hairline()
             Row(modifier = Modifier.fillMaxWidth()) {
-                listOf("Min" to minV, "Avg" to avgV, "Max" to maxV).forEach { (lbl, v) ->
+                listOf(
+                    stringResource(R.string.today_hr_min) to minV,
+                    stringResource(R.string.today_hr_avg) to avgV,
+                    stringResource(R.string.today_hr_max) to maxV,
+                ).forEach { (lbl, v) ->
                     Column(modifier = Modifier.weight(1f)) {
                         Overline(lbl, color = Palette.textTertiary)
                         Text(
@@ -6820,6 +7075,7 @@ private fun RestDriversSection(
     daily: DailyMetric,
     sleepNeedHours: Double,
     scoredRestNights: Int = 1,
+    priorDayStrain: Double? = null,
 ) {
     val drivers = remember(daily, sleepNeedHours) {
         com.noop.analytics.RestDrivers.restDrivers(daily, sleepNeedHours = sleepNeedHours)
@@ -6828,6 +7084,7 @@ private fun RestDriversSection(
     val tier = remember(daily, scoredRestNights) {
         ScoreConfidence.forRestFromDaily(daily, hasSession = true, scoredRestNights = scoredRestNights)
     }
+    val raised = com.noop.analytics.priorEffortRaisedNeed(priorDayStrain)
     Column(
         verticalArrangement = Arrangement.spacedBy(Metrics.gap),
         modifier = Modifier
@@ -6836,7 +7093,11 @@ private fun RestDriversSection(
     ) {
         Row(verticalAlignment = Alignment.Top) {
             Box(modifier = Modifier.weight(1f)) {
-                SectionHeader("What shaped Rest", overline = "Rest", trailing = "vs a typical night")
+                SectionHeader(
+                    stringResource(R.string.sleep_what_shaped_rest),
+                    overline = "Rest",
+                    trailing = stringResource(R.string.sleep_vs_typical_night),
+                )
             }
             RestConfidencePill(tier)
         }
@@ -6845,7 +7106,19 @@ private fun RestDriversSection(
                 RestDriverRow(driver)
             }
             Text(
-                "Each line is how many points that part moved Rest versus a typical 50. Approximate, not medical advice.",
+                stringResource(R.string.sleep_need_honesty_footnote),
+                style = NoopType.footnote,
+                color = Palette.textTertiary,
+            )
+            if (raised) {
+                Text(
+                    stringResource(R.string.sleep_need_raised_after_effort),
+                    style = NoopType.footnote,
+                    color = Palette.textSecondary,
+                )
+            }
+            Text(
+                stringResource(R.string.sleep_rest_drivers_disclaimer),
                 style = NoopType.footnote,
                 color = Palette.textTertiary,
             )
@@ -6887,7 +7160,7 @@ private fun RestDriverRow(driver: com.noop.analytics.ChargeDriver) {
                 driver.baselineText.takeIf { it.isNotBlank() },
             ).joinToString(" · ")
             if (meta.isNotEmpty()) {
-                Text(meta, style = NoopType.caption, color = Palette.textTertiary)
+                Text(meta, style = NoopType.caption, color = Palette.textSecondary)
             }
         }
     }

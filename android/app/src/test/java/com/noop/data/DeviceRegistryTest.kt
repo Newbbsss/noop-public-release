@@ -82,6 +82,7 @@ class DeviceRegistryTest {
         override suspend fun deleteSkinTempFor(deviceId: String) { deletedTables += "skinTempSample" to deviceId }
         override suspend fun deleteRespFor(deviceId: String) { deletedTables += "respSample" to deviceId }
         override suspend fun deleteGravityFor(deviceId: String) { deletedTables += "gravitySample" to deviceId }
+        override suspend fun deleteImuActivityFor(deviceId: String) { deletedTables += "imuActivitySample" to deviceId }
         override suspend fun deleteStepsFor(deviceId: String) { deletedTables += "stepSample" to deviceId }
         override suspend fun deletePpgHrFor(deviceId: String) { deletedTables += "ppgHrSample" to deviceId }
         override suspend fun deleteEventsFor(deviceId: String) { deletedTables += "event" to deviceId }
@@ -193,9 +194,10 @@ class DeviceRegistryTest {
 
         reg.deleteDeviceData("apple-health")
 
-        // The same 17 device-scoped tables the Swift store clears, each targeted with "apple-health".
+        // Device-scoped tables fan-out (incl. imuActivitySample v19), each targeted with "apple-health".
         val expectedTables = setOf(
             "hrSample", "rrInterval", "spo2Sample", "skinTempSample", "respSample", "gravitySample",
+            "imuActivitySample",
             "stepSample", "ppgHrSample", "event", "battery", "dailyMetric", "sleepSession",
             "journal", "workout", "appleDaily", "metricSeries", "dayOwnership",
         )

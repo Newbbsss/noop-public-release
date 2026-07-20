@@ -87,6 +87,13 @@ class BackupSyncTest {
         assertTrue(BackupSync.isCatchUpDue(0L, last))                          // never-backed-up: due
     }
 
+    @Test fun autoRestoreOnlyWhenLiveEmptyAndBackupHasData() {
+        assertTrue(BackupSync.shouldAutoRestore(true, liveHoldsData = false, backupHoldsData = true))
+        assertFalse(BackupSync.shouldAutoRestore(true, liveHoldsData = true, backupHoldsData = true))
+        assertFalse(BackupSync.shouldAutoRestore(true, liveHoldsData = false, backupHoldsData = false))
+        assertFalse(BackupSync.shouldAutoRestore(false, liveHoldsData = false, backupHoldsData = true))
+    }
+
     // Restore listing accepts ANY .noopbak, including date-only manual names (#852).
 
     @Test fun isBackupFileAcceptsAnyNoopbakExtension() {

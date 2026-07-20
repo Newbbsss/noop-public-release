@@ -284,4 +284,4 @@ internal data class DialMote(
 /** Quiet cue under the dial — tap vs hold grammar, not a second menu. */
 fun radialHoldDialCaption(hasSelection: Boolean): String =
     if (hasSelection) "Release to open"
-    else "Choosing · swipe a shortcut · release centre to cancel · tab edge-swipe is separate"
+    else "Swipe to a shortcut · release centre to cancel"

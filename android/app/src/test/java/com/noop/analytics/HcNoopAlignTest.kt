@@ -72,6 +72,10 @@ class HcNoopAlignTest {
         assertEquals("est. · low", HcNoopAlign.stepsTileCaption(null, null, 900, "est. · low"))
         assertEquals("no band steps", HcNoopAlign.stepsTileCaption(null, 2831, null))
         assertNull(HcNoopAlign.stepsTileCaption(null, null, null))
+        // Legacy estimate→DailyMetric.steps backfill: strap==estimate → honest est caption, not "band".
+        assertEquals("est. · band motion", HcNoopAlign.stepsTileCaption(900, null, 900))
+        assertEquals(HcNoopAlign.StepsSource.ESTIMATE, HcNoopAlign.stepsSource(900, null, 900))
+        assertEquals(HcNoopAlign.StepsSource.STRAP, HcNoopAlign.stepsSource(9000, null, 7000))
     }
 
     @Test

@@ -5,6 +5,7 @@
 #   .\Tools\pull_fold_calibration.ps1 -Serial 100.91.234.88:5555
 #
 # Wireless ADB must already be listening (USB once: adb -s RFCX70E8RCD tcpip 5555).
+# Helper: Tools\connect_fold_tailscale_adb.ps1 (tcpip + adb connect 100.91.234.88:5555).
 
 param(
     [string]$Serial = "RFCX70E8RCD",

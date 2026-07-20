@@ -30,8 +30,10 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.noop.R
 import com.noop.analytics.CyclePhysiology
 import com.noop.analytics.PeriodCalendar
 import com.noop.data.PeriodCalendarStore
@@ -64,16 +66,10 @@ fun TodayCycleLifeCard(
     val phase = snapshot?.phase ?: PeriodCalendar.CalendarPhase.LEARNING
     val cycleDay = snapshot?.cycleDay
     val effect = CyclePhysiology.softEffectFromSnapshot(snapshot)
-    val phaseLabel = when (phase) {
-        PeriodCalendar.CalendarPhase.MENSTRUAL -> "Menstrual"
-        PeriodCalendar.CalendarPhase.FOLLICULAR -> "Follicular"
-        PeriodCalendar.CalendarPhase.PERI_OVULATORY -> "Mid-cycle"
-        PeriodCalendar.CalendarPhase.LUTEAL -> "Luteal"
-        PeriodCalendar.CalendarPhase.LEARNING -> "Learning"
-        PeriodCalendar.CalendarPhase.UNKNOWN -> "Cycle"
-    }
-    val dayBit = cycleDay?.let { " · day $it" }.orEmpty()
+    val phaseLabel = cyclePhaseLabel(context, phase)
+    val dayBit = cycleDayBit(context, cycleDay)
     val softBit = cycleSoftBitCaption(
+        context = context,
         needsMoreFuel = effect?.needsMoreFuel == true,
         takeItEasy = effect?.takeItEasy == true,
         recoveryCapacityFactor = effect?.recoveryCapacityFactor,
@@ -94,7 +90,7 @@ fun TodayCycleLifeCard(
                 onOpen()
             }
             .semantics {
-                contentDescription = cycleCardA11y(phaseLabel, dayBit, softBit)
+                contentDescription = cycleCardA11y(context, phaseLabel, dayBit, softBit)
             },
     ) {
         CycleStarLifeMotes(
@@ -119,7 +115,7 @@ fun TodayCycleLifeCard(
             )
             Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text(
-                    "CYCLE",
+                    stringResource(R.string.cycle_overline),
                     style = NoopType.overline,
                     color = accent,
                 )
@@ -129,7 +125,7 @@ fun TodayCycleLifeCard(
                     color = Palette.textPrimary,
                     maxLines = 1,
                 )
-                val cite = effect?.scienceCite.orEmpty()
+                val cite = cycleScienceCite(context, phase)
                 if (cite.isNotBlank()) {
                     Text(
                         cite,
@@ -140,7 +136,7 @@ fun TodayCycleLifeCard(
                 }
             }
             Text(
-                "Open",
+                stringResource(R.string.cycle_open),
                 style = NoopType.footnote,
                 color = accent,
             )

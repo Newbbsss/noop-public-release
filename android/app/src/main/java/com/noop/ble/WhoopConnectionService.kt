@@ -12,10 +12,14 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.ServiceInfo
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
+import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
+import com.noop.BuildConfig
 import com.noop.NoopApplication
 import com.noop.R
 import com.noop.alarm.RestedWakeEvaluator
@@ -145,6 +149,116 @@ class WhoopConnectionService : Service() {
      *  (which would later throw on a single unregister). */
     private var bluetoothReceiverRegistered = false
 
+    /**
+     * DEBUG-only: adb can fire SignalHunt / R22 without unlocking the Fold UI.
+     * ```
+     * adb shell am broadcast -a com.noop.debug.SIGNAL_HUNT --es mode ff|read|research|r22|hfs|all
+     * ```
+     * Refuses to arm when [NoopPrefs.lastDevice] is a stale `WHOOP 5AM…` sibling (worn MG pin only).
+     */
+    private var signalHuntReceiverRegistered = false
+    private val signalHuntHandler = Handler(Looper.getMainLooper())
+    private val signalHuntReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (!BuildConfig.DEBUG) return
+            if (intent?.action != ACTION_SIGNAL_HUNT) return
+            val mode = intent.getStringExtra(EXTRA_SIGNAL_HUNT_MODE)?.lowercase().orEmpty().ifBlank { "all" }
+            if (!ble.state.value.connected) {
+                Log.w(TAG_SIGNAL_HUNT, "refusing SignalHunt — not connected (mode=$mode)")
+                return
+            }
+            val liveName = ble.state.value.advertisingName
+            if (WhoopBleClient.isStaleUnwornSiblingName(liveName.orEmpty())) {
+                Log.w(TAG_SIGNAL_HUNT, "refusing SignalHunt — live strap looks like unworn 5AM ($liveName)")
+                return
+            }
+            val saved = NoopPrefs.lastDevice(this@WhoopConnectionService)
+            Log.i(
+                TAG_SIGNAL_HUNT,
+                "SignalHunt mode=$mode addr=${ble.lastDeviceAddress} name=$liveName saved=${saved?.first}/${saved?.second}",
+            )
+            fun fireAll() {
+                ble.fireSignalHuntFfReadSweep()
+                signalHuntHandler.postDelayed({ ble.fireSignalHuntReadBurst() }, 3_000L)
+                signalHuntHandler.postDelayed({ ble.fireSignalHuntResearchBurst() }, 8_000L)
+                signalHuntHandler.postDelayed({ ble.enableWhoop5DeepData() }, 14_000L)
+            }
+            when (mode) {
+                "ff", "get_ff", "128" -> ble.fireSignalHuntFfReadSweep()
+                "read" -> ble.fireSignalHuntReadBurst()
+                "research", "105", "106", "107", "108" -> ble.fireSignalHuntResearchBurst()
+                "r22", "deep" -> ble.enableWhoop5DeepData()
+                // EnterHighFreqHistoricalMode parity probe: cmd 96 with u16-LE duration, 97 exit after 90 s.
+                "hfs", "highfreq", "96" -> ble.fireSignalHuntHfsProbe()
+                else -> fireAll()
+            }
+        }
+    }
+
+    /**
+     * DEBUG-only: force a gated [WhoopBleClient.syncNow] hist offload (34→22→23 / type-47) over adb —
+     * same MANUAL path as UI “Sync now”. Safe no-op when disconnected / mid-backfill / policy floor.
+     * ```
+     * adb shell am broadcast -a com.noop.debug.SYNC_NOW -p com.noop.whoop.debug
+     * ```
+     * Does **not** bypass Backfiller trim-ack safety; when an offload runs, grab+trim wipe is the
+     * normal Backfiller path (not a separate destructive clear).
+     *
+     * Bond wait: auto-gather often fires SYNC_NOW while MG is still in alongside-open-only
+     * (`connected=true bonded=false`) a few seconds before CLIENT_HELLO acks. Softening the gate to
+     * connected-only would still no-op inside [WhoopBleClient.requestSync] (needs bonded). DEBUG
+     * defers briefly for that race; if still unbonded after wait, refuse — re-bond MG in Devices
+     * (alongside-only never carries hist).
+     */
+    private var syncNowReceiverRegistered = false
+    private val syncNowHandler = Handler(Looper.getMainLooper())
+    private val syncNowReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (!BuildConfig.DEBUG) return
+            if (intent?.action != ACTION_SYNC_NOW) return
+            // Cancel any in-flight defer from a prior broadcast so retries don't stack.
+            syncNowHandler.removeCallbacksAndMessages(null)
+            trySyncNowAfterBond(attempt = 0)
+        }
+    }
+
+    /** DEBUG-only: run [WhoopBleClient.syncNow] once bonded, or defer through the CLIENT_HELLO race. */
+    private fun trySyncNowAfterBond(attempt: Int) {
+        if (!BuildConfig.DEBUG) return
+        val s = ble.state.value
+        if (!s.connected) {
+            Log.w(TAG_SYNC_NOW, "refusing SYNC_NOW — connected=false bonded=${s.bonded}")
+            return
+        }
+        if (!s.bonded) {
+            if (attempt < SYNC_NOW_BOND_WAIT_ATTEMPTS) {
+                Log.i(
+                    TAG_SYNC_NOW,
+                    "SYNC_NOW defer — connected=true bonded=false " +
+                        "(await CLIENT_HELLO) attempt=${attempt + 1}/$SYNC_NOW_BOND_WAIT_ATTEMPTS",
+                )
+                syncNowHandler.postDelayed(
+                    { trySyncNowAfterBond(attempt + 1) },
+                    SYNC_NOW_BOND_WAIT_MS,
+                )
+                return
+            }
+            Log.w(
+                TAG_SYNC_NOW,
+                "refusing SYNC_NOW — connected=true bonded=false after wait " +
+                    "(alongside-only / re-bond MG in Devices)",
+            )
+            return
+        }
+        val liveName = s.advertisingName
+        if (WhoopBleClient.isStaleUnwornSiblingName(liveName.orEmpty())) {
+            Log.w(TAG_SYNC_NOW, "refusing SYNC_NOW — live strap looks like unworn 5AM ($liveName)")
+            return
+        }
+        Log.i(TAG_SYNC_NOW, "SYNC_NOW → ble.syncNow() name=$liveName addr=${ble.lastDeviceAddress}")
+        ble.syncNow()
+    }
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -176,6 +290,29 @@ class WhoopConnectionService : Service() {
                     ContextCompat.RECEIVER_NOT_EXPORTED,
                 )
             }.onSuccess { bluetoothReceiverRegistered = true }
+        }
+
+        // DEBUG AFK SignalHunt (Fold lock screen / Tailscale) — exported so adb can reach it.
+        if (BuildConfig.DEBUG && !signalHuntReceiverRegistered) {
+            runCatching {
+                ContextCompat.registerReceiver(
+                    this,
+                    signalHuntReceiver,
+                    IntentFilter(ACTION_SIGNAL_HUNT),
+                    ContextCompat.RECEIVER_EXPORTED,
+                )
+            }.onSuccess { signalHuntReceiverRegistered = true }
+        }
+        // DEBUG AFK hist Sync now — exported so auto-gather can force 34→22→23 without UI.
+        if (BuildConfig.DEBUG && !syncNowReceiverRegistered) {
+            runCatching {
+                ContextCompat.registerReceiver(
+                    this,
+                    syncNowReceiver,
+                    IntentFilter(ACTION_SYNC_NOW),
+                    ContextCompat.RECEIVER_EXPORTED,
+                )
+            }.onSuccess { syncNowReceiverRegistered = true }
         }
 
         // Keep the ongoing notification in step with the live connection state AND today's recovery
@@ -249,7 +386,7 @@ class WhoopConnectionService : Service() {
                 runCatching {
                     val prior = WidgetSnapshotStore.load(this@WhoopConnectionService)
                     val alarmStore = SmartAlarmStore.from(this@WhoopConnectionService)
-                    val is24 = android.text.format.DateFormat.is24HourFormat(this@WhoopConnectionService)
+                    val is24 = NoopPrefs.use24HourClock(this@WhoopConnectionService)
                     val nextAlarm = com.noop.alarm.NextAlarmDisplay.soonestShortLabel(
                         phoneEnabled = alarmStore.enabled,
                         targetMinutes = alarmStore.targetMinutes,
@@ -269,7 +406,9 @@ class WhoopConnectionService : Service() {
                             // ≤0 strain is calm TRIMP, not a scored load — match Today honesty (8.6.155/156).
                             effortPct = anchorRow?.strain?.takeIf { it > 0.0 }?.roundToInt(),
                             heartRate = state.heartRate,
-                            batteryPct = state.batteryPct?.roundToInt(),
+                            batteryPct = com.noop.ui.resolveStrapBatteryDisplay(
+                                this@WhoopConnectionService, state,
+                            )?.pctInt ?: state.batteryPct?.roundToInt(),
                             connected = state.connected,
                             updatedAtMs = System.currentTimeMillis(),
                             stressTipTenths = prior.stressTipTenths,
@@ -409,11 +548,13 @@ class WhoopConnectionService : Service() {
     private var lastNotificationKey: String? = null
 
     private fun postNotification(state: LiveState, recoveryPct: Double? = null) {
+        val stale5Am = WhoopBleClient.isStaleUnwornSiblingName(state.advertisingName.orEmpty())
         val key = listOf(
             state.connected,
             state.backfilling,
             recoveryPct?.roundToInt(),
             state.batteryPct?.roundToInt(),
+            stale5Am,
         ).joinToString("|")
         if (key == lastNotificationKey) return
         lastNotificationKey = key
@@ -430,21 +571,29 @@ class WhoopConnectionService : Service() {
         // foreground service to re-post (and wake the device) ~once a second all day, which is a real
         // battery cost for a number nobody reads off the lock screen. The title now reflects only the
         // connection / sync state, which changes rarely — see postNotification's dedup.
+        val stale5Am = WhoopBleClient.isStaleUnwornSiblingName(state.advertisingName.orEmpty())
         val title = when {
             !state.connected   -> "Reconnecting to your WHOOP…"
             state.backfilling  -> "Syncing strap history…"
+            stale5Am           -> "Connected · check strap"
             else               -> "Connected to your WHOOP"
         }
         val detail = buildList {
-            add(if (state.connected) "Streaming in the background" else "Keeping the link open")
+            when {
+                !state.connected -> add("Keeping the link open")
+                stale5Am -> add("Live name looks like an unworn 5AM sibling — tap · Use worn MG on the snackbar")
+                else -> add("Streaming in the background")
+            }
             recoveryPct?.let { add("Recovery ${it.roundToInt()}%") }
             state.batteryPct?.let { add("Strap ${it.roundToInt()}%") }
         }.joinToString("  ·  ")
 
+        // Request code 2 when deep-linking Devices so UPDATE_CURRENT does not clobber a prior
+        // plain-launch PendingIntent (and vice versa) while the sibling honesty flag flips.
         val openApp = PendingIntent.getActivity(
             this,
-            0,
-            appLaunchIntent(this),
+            if (stale5Am) 2 else 0,
+            appLaunchIntent(this, openDevices = stale5Am),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
         val stopAction = PendingIntent.getService(
@@ -497,6 +646,16 @@ class WhoopConnectionService : Service() {
             runCatching { unregisterReceiver(bluetoothStateReceiver) }
             bluetoothReceiverRegistered = false
         }
+        if (signalHuntReceiverRegistered) {
+            runCatching { unregisterReceiver(signalHuntReceiver) }
+            signalHuntReceiverRegistered = false
+        }
+        if (syncNowReceiverRegistered) {
+            runCatching { unregisterReceiver(syncNowReceiver) }
+            syncNowReceiverRegistered = false
+        }
+        signalHuntHandler.removeCallbacksAndMessages(null)
+        syncNowHandler.removeCallbacksAndMessages(null)
         scope.cancel()
         super.onDestroy()
     }
@@ -504,7 +663,17 @@ class WhoopConnectionService : Service() {
     companion object {
         private const val CHANNEL_ID = "noop_strap_connection"
         private const val NOTIF_ID = 4201
+        private const val TAG_SIGNAL_HUNT = "NoopSignalHunt"
+        private const val TAG_SYNC_NOW = "NoopSyncNow"
+        /** DEBUG: poll bond after SYNC_NOW while CLIENT_HELLO may still be in flight (~2s × 15 ≈ 30s). */
+        private const val SYNC_NOW_BOND_WAIT_ATTEMPTS = 15
+        private const val SYNC_NOW_BOND_WAIT_MS = 2_000L
         const val ACTION_STOP = "com.noop.ble.action.STOP_CONNECTION"
+        /** DEBUG AFK SignalHunt — `adb shell am broadcast -a com.noop.debug.SIGNAL_HUNT --es mode all` */
+        const val ACTION_SIGNAL_HUNT = "com.noop.debug.SIGNAL_HUNT"
+        const val EXTRA_SIGNAL_HUNT_MODE = "mode"
+        /** DEBUG AFK Sync now — `adb shell am broadcast -a com.noop.debug.SYNC_NOW -p com.noop.whoop.debug` */
+        const val ACTION_SYNC_NOW = "com.noop.debug.SYNC_NOW"
 
         /**
          * Promote the process to the foreground so the strap stays connected. Safe to call when

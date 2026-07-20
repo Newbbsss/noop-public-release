@@ -1,6 +1,8 @@
 package com.noop.ui
 
 import android.content.Context
+import androidx.annotation.StringRes
+import com.noop.R
 
 // MARK: - Editable Key-Metrics layout (#251)
 //
@@ -17,21 +19,24 @@ import android.content.Context
 /**
  * One of the Today screen's Key-Metric tiles. The [raw] is the stable persisted identifier — keep it
  * byte-identical to the macOS `KeyMetric` enum so a backup/restore reads the same layout on either OS.
+ * [title] is English fallback; UI should prefer [localizedTitle].
  */
-enum class KeyMetric(val raw: String, val title: String) {
-    CHARGE("charge", "Charge"),
-    EFFORT("effort", "Effort"),
-    REST("rest", "Rest"),
-    HRV("hrv", "HRV · RMSSD"),
-    RESTING_HR("restingHr", "Resting HR"),
-    BLOOD_OXYGEN("bloodOxygen", "Blood Oxygen"),
-    RESPIRATORY("respiratory", "Respiratory"),
-    STEPS("steps", "Steps"),
-    WEIGHT("weight", "Weight"),
-    CALORIES("calories", "Calories"),
-    STRESS("stress", "Stress"),
-    FITNESS_AGE("fitnessAge", "Fitness Age"),
-    VITALITY("vitality", "Vitality");
+enum class KeyMetric(val raw: String, val title: String, @StringRes val titleRes: Int) {
+    CHARGE("charge", "Charge", R.string.key_metric_charge),
+    EFFORT("effort", "Effort", R.string.key_metric_effort),
+    REST("rest", "Rest", R.string.key_metric_rest),
+    HRV("hrv", "HRV · RMSSD", R.string.key_metric_hrv),
+    RESTING_HR("restingHr", "Resting HR", R.string.key_metric_resting_hr),
+    BLOOD_OXYGEN("bloodOxygen", "Blood Oxygen", R.string.key_metric_blood_oxygen),
+    RESPIRATORY("respiratory", "Respiratory", R.string.key_metric_respiratory),
+    STEPS("steps", "Steps", R.string.key_metric_steps),
+    WEIGHT("weight", "Weight", R.string.key_metric_weight),
+    CALORIES("calories", "Calories", R.string.key_metric_calories),
+    STRESS("stress", "Stress", R.string.key_metric_stress),
+    FITNESS_AGE("fitnessAge", "Fitness Age", R.string.key_metric_fitness_age),
+    VITALITY("vitality", "Vitality", R.string.key_metric_vitality);
+
+    fun localizedTitle(context: Context): String = context.getString(titleRes)
 
     companion object {
         fun fromRaw(raw: String?): KeyMetric? = entries.firstOrNull { it.raw == raw }

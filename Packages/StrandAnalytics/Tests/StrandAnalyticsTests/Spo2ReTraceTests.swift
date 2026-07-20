@@ -11,7 +11,7 @@ final class Spo2ReTraceTests: XCTestCase {
                                           version: 24, unix: 1_700_000_000,
                                           red: 512, ir: 480, skinRaw: 330)
         XCTAssertEqual(line,
-                       "spo2re v=24 unix=1700000000 red=512 ir=480 skinRaw=330 len=4 raw=000fff10")
+                       "spo2re v=24 unix=1700000000 red=512 ir=480 skinRaw=330 sleep_state=null aux82=null len=4 raw=000fff10")
     }
 
     func testAbsentChannelsRenderNull() {
@@ -19,7 +19,7 @@ final class Spo2ReTraceTests: XCTestCase {
         // proving "nothing banked" needs the negative case on the record itself.
         let line = Spo2ReTrace.recordLine(frame: [1, 2, 3], version: 25, unix: 42,
                                           red: nil, ir: nil, skinRaw: nil)
-        XCTAssertEqual(line, "spo2re v=25 unix=42 red=null ir=null skinRaw=null len=3 raw=010203")
+        XCTAssertEqual(line, "spo2re v=25 unix=42 red=null ir=null skinRaw=null sleep_state=null aux82=null len=3 raw=010203")
     }
 
     func testHexRendersUnsignedFullFrame() {

@@ -17,9 +17,8 @@ import org.junit.Test
 /**
  * [SourceCoordinator.connectedPeripheralChanged] identity-adoption + GUARD tests — the Kotlin twin of the
  * macOS `SourceCoordinator.connectedPeripheralChanged(to:)` behaviour (Strand/BLE/SourceCoordinator.swift
- * 213-231). The critical assertion is the different-strap guard: a strap whose address differs from the
- * active WHOOP row's already-adopted `peripheralId` must NEVER overwrite it (that would mis-map another
- * physical strap's samples onto this device's row).
+ * 213-231). A different MAC with no registry row must NEVER overwrite the active row's peripheralId.
+ * When the live MAC matches another WHOOP registry row (often archived worn MG), that row is promoted.
  *
  * Harness mirrors DeviceRegistryTest: the project ships NO mocking framework and NO Robolectric (junit +
  * kotlinx-coroutines-test only — see app/build.gradle.kts), so this runs the REAL [DeviceRegistry] over an
@@ -68,6 +67,7 @@ class SourceCoordinatorAdoptionTest {
         override suspend fun deleteSkinTempFor(deviceId: String) {}
         override suspend fun deleteRespFor(deviceId: String) {}
         override suspend fun deleteGravityFor(deviceId: String) {}
+        override suspend fun deleteImuActivityFor(deviceId: String) {}
         override suspend fun deleteStepsFor(deviceId: String) {}
         override suspend fun deletePpgHrFor(deviceId: String) {}
         override suspend fun deleteEventsFor(deviceId: String) {}
@@ -151,8 +151,9 @@ class SourceCoordinatorAdoptionTest {
     }
 
     @Test
-    fun differentStrapDoesNotOverwriteAndLogs() = runBlocking {
-        // The GUARD: the active WHOOP row already adopted ...:01; a DIFFERENT strap ...:02 connects.
+    fun differentStrapWithoutRegistryRowDoesNotOverwriteAndLogs() = runBlocking {
+        // The GUARD: the active WHOOP row already adopted ...:01; a DIFFERENT strap ...:02 connects
+        // with NO registry row of its own — never clobber the stored peripheralId.
         val dao = FakeRegistryDao().apply {
             devices["my-whoop"] = whoopRow("my-whoop", peripheralId = "AA:BB:CC:DD:EE:01")
         }
@@ -169,6 +170,38 @@ class SourceCoordinatorAdoptionTest {
                 "AA:BB:CC:DD:EE:02 connected — not overwriting.",
             logged,
         )
+    }
+
+    @Test
+    fun connectedSiblingPromotesMatchingRegistryRow() = runBlocking {
+        // Gilbert Fold: 5AM active + archived MG; live MAC is the MG → promote MG.
+        val dao = FakeRegistryDao().apply {
+            devices["whoop-D4"] = whoopRow("whoop-D4", "D4:ED:30:30:CD:B0").copy(
+                nickname = "WHOOP 5AM0292640",
+            )
+            devices["whoop-E9"] = whoopRow("whoop-E9", "E9:34:B1:E9:8C:05").copy(
+                status = DeviceStatus.archived.name,
+                nickname = "WHOOP MGB0076173",
+            )
+        }
+        var pointed: String? = null
+        val coordinator = SourceCoordinator(
+            context = null,
+            registry = registryWith(dao),
+            repository = null,
+            liveSink = { _, _ -> },
+            startWhoop = {},
+            stopWhoop = {},
+            setWhoopActiveDeviceId = { pointed = it },
+            scope = CoroutineScope(Dispatchers.Unconfined),
+        )
+
+        coordinator.connectedPeripheralChanged("E9:34:B1:E9:8C:05")
+
+        assertEquals("whoop-E9", dao.activeDeviceId())
+        assertEquals(DeviceStatus.active.name, dao.devices["whoop-E9"]!!.status)
+        assertEquals(DeviceStatus.paired.name, dao.devices["whoop-D4"]!!.status)
+        assertEquals("whoop-E9", pointed)
     }
 
     @Test

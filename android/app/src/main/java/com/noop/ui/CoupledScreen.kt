@@ -86,6 +86,12 @@ fun CoupledScreen(
 ) {
     val today by vm.today.collectAsStateWithLifecycle()
     val days by vm.recentDays.collectAsStateWithLifecycle()
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val profileStore = remember { ProfileStore.from(context) }
+    val analyticsProfile = remember(
+        profileStore.age, profileStore.weightKg, profileStore.heightCm,
+        profileStore.waistCm, profileStore.sex,
+    ) { profileStore.toAnalyticsProfile() }
 
     // Last night's sleep sessions (imported + computed-only), the SAME resolution SleepScreen uses, keyed on
     // `days` so a sync/import reloads. Only needed for the bed-wake span footnote.
@@ -186,7 +192,7 @@ fun CoupledScreen(
         SleepCard(
             sleepPerformance = sleepPerformance,
             asleepMin = todayRow?.totalSleepMin,
-            needMin = sleepNeedForDay(todayRow, days, importedNeed),
+            needMin = sleepNeedForDay(todayRow, days, importedNeed, profile = analyticsProfile),
             bedWakeSpan = bedWakeSpan(sleeps),
             onOpenSleep = onOpenSleep,
         )
@@ -562,13 +568,22 @@ internal fun strainBandWord(fraction: Double): String = when {
 }
 
 /**
- * The night's need (minutes): the imported per-day figure when the export carried one, else the shared
- * personal-mean floor / RestScorer default (matches SleepScreen needMin / RestScorer.personalNeedHours).
+ * The night's need (minutes): the imported per-day figure when the export carried one, else the
+ * physiology-blended personal need (matches SleepScreen / RestScorer.personalNeedHours).
  */
-private fun sleepNeedForDay(day: DailyMetric?, days: List<DailyMetric>, importedNeed: Map<String, Double>): Double {
+private fun sleepNeedForDay(
+    day: DailyMetric?,
+    days: List<DailyMetric>,
+    importedNeed: Map<String, Double>,
+    profile: com.noop.analytics.UserProfile? = null,
+): Double {
     day?.day?.let { key -> importedNeed[key]?.takeIf { it > 0 }?.let { return it } }
     val banked = days.mapNotNull { it.totalSleepMin }.filter { it > 0 }
-    return RestScorer.personalNeedHours(banked).first * 60.0
+    return RestScorer.personalNeedHours(
+        asleepMinutes = banked,
+        profile = profile,
+        priorDayStrain = com.noop.analytics.priorDayStrainForNeed(days, day?.day),
+    ).first * 60.0
 }
 
 /** Last night's bed -> wake span, only when the freshest session touches last night, not a days-old import. */

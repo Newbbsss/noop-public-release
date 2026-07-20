@@ -1,6 +1,7 @@
 package com.noop.ui
 
 import android.content.Context
+import com.noop.R
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -94,6 +95,14 @@ enum class ScoreSection {
             CHARGE -> "Charge"
             EFFORT -> "Effort"
             REST -> "Rest"
+        }
+
+    @get:androidx.annotation.StringRes
+    val labelRes: Int
+        get() = when (this) {
+            CHARGE -> R.string.domain_charge
+            EFFORT -> R.string.domain_effort
+            REST -> R.string.domain_rest
         }
 
     /** A representative sample fraction (0–1) for the section's illustrative gauge — a
@@ -204,11 +213,16 @@ fun ScoringGuideScreen(
                         "training-impulse using heart-rate-reserve zones (Karvonen), weights time in " +
                         "harder zones more heavily (Edwards / Banister), and places it on a " +
                         "logarithmic 0-100 scale, so easy days sit low and an all-out day approaches " +
-                        "100, which stays genuinely rare. A long walk with little cardio still counts, " +
-                        "through a steps / active-energy floor.",
+                        "100, which stays genuinely rare. Walking still counts a little when cardio " +
+                        "is quiet: a steps-only floor stays near zero on desk mornings and " +
+                        "grows more as steps accumulate — never inventing a hard-workout day on " +
+                        "steps alone. Easy ambulatory HR below ~60% heart-rate reserve does not " +
+                        "mint Effort (WHOOP-like rest mornings).",
                     vsWhoop = "Same cardiovascular-load idea as WHOOP's Day Strain (0-21). We " +
                         "rescaled the top of the ladder from 21 to 100 so all three scores share one " +
-                        "scale. The rungs didn't move, so a 100 is as rare as a 21.0 was.",
+                        "scale. The rungs didn't move, so a 100 is as rare as a 21.0 was. Easy " +
+                        "walking moves Effort only modestly, closer to WHOOP's light Strain on " +
+                        "rest/walk mornings.",
                     highlighted = highlighted == ScoreSection.EFFORT,
                     onPositioned = { if (ScoreSection.EFFORT !in anchors) anchors[ScoreSection.EFFORT] = it },
                 )
@@ -217,7 +231,8 @@ fun ScoringGuideScreen(
                     headline = "Rest: how restorative was your sleep?",
                     body = "A blend of how long you slept versus your personal need (the biggest " +
                         "factor), how efficiently (asleep versus in bed), how much was restorative " +
-                        "(deep + REM sleep), and how consistent your sleep and wake timing is.",
+                        "(deep + REM together — not deep alone; thin deep still reduces credit), " +
+                        "and how consistent your sleep and wake timing is.",
                     vsWhoop = "Similar in spirit to WHOOP's Sleep Performance %; our composite is our own.",
                     highlighted = highlighted == ScoreSection.REST,
                     onPositioned = { if (ScoreSection.REST !in anchors) anchors[ScoreSection.REST] = it },

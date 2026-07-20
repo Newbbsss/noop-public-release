@@ -66,12 +66,12 @@ fun BugReportScreen(vm: AppViewModel) {
 
     ScreenScaffold(
         title = "Bug report",
-        subtitle = "Photos + diagnostics Â· GitHub Issues",
+        subtitle = "Photos + diagnostics - GitHub Issues",
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(Metrics.space12)) {
                 Text(
                     "Describe what broke. Attach screenshots if you can. One tap packs a diagnostics " +
-                        "zip and opens share ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â send to GitHub Issues (label user-bug) or email. " +
+                        "zip and opens share - send to GitHub Issues (label user-bug) or email. " +
                         "Nothing uploads silently.",
                     style = NoopType.subhead,
                     color = Palette.textSecondary,
@@ -117,7 +117,7 @@ fun BugReportScreen(vm: AppViewModel) {
                         modifier = Modifier.size(18.dp),
                     )
                     Text(
-                        if (photos.isEmpty()) "No screenshots yet Ãƒâ€šÃ‚Â· up to 4"
+                        if (photos.isEmpty()) "No screenshots yet - up to 4"
                         else "${photos.size} screenshot${if (photos.size == 1) "" else "s"} attached",
                         style = NoopType.footnote,
                         color = Palette.textSecondary,
@@ -136,7 +136,7 @@ fun BugReportScreen(vm: AppViewModel) {
                     },
                 )
                 NoopButton(
-                    text = if (busy) "PackingÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦" else "Share report (zip + photos)",
+                    text = if (busy) "Packing..." else "Share report (zip + photos)",
                     leadingIcon = Icons.Filled.Upload,
                     kind = NoopButtonKind.Primary,
                     fullWidth = true,
@@ -281,7 +281,7 @@ private suspend fun shareBugReport(
         val send = Intent(Intent.ACTION_SEND_MULTIPLE).apply {
             type = "*/*"
             putParcelableArrayListExtra(Intent.EXTRA_STREAM, ArrayList(uris))
-            putExtra(Intent.EXTRA_SUBJECT, "NOOP bug Ãƒâ€šÃ‚Â· ${BuildConfig.VERSION_NAME}")
+            putExtra(Intent.EXTRA_SUBJECT, "NOOP bug - ${BuildConfig.VERSION_NAME}")
             putExtra(
                 Intent.EXTRA_TEXT,
                 "NOOP bug report (${BuildConfig.VERSION_NAME}). Zip + photos attached. " +

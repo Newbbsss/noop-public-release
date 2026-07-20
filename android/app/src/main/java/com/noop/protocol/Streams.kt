@@ -96,6 +96,28 @@ fun skinTempCelsius(raw: Int, family: DeviceFamily): Double = when (family) {
 }
 
 /**
+ * Plausible human / ambient skin-temperature band for chart display + ingest garbage filters (°C).
+ * Wider than the analytics worn gate (28–42) so off-wrist ambient (~22 °C) still plots, but tight
+ * enough to drop impossible values (e.g. ~166 °C from a 5/MG centidegree raw run through the WHOOP4
+ * ADC map).
+ */
+const val SKIN_TEMP_PLAUSIBLE_MIN_C: Double = 15.0
+const val SKIN_TEMP_PLAUSIBLE_MAX_C: Double = 45.0
+
+/** True when [celsius] is inside the display/ingest plausible band. */
+fun isPlausibleSkinTempC(celsius: Double): Boolean =
+    celsius.isFinite() && celsius in SKIN_TEMP_PLAUSIBLE_MIN_C..SKIN_TEMP_PLAUSIBLE_MAX_C
+
+/**
+ * True when [raw] decodes to a plausible °C under WHOOP5 **or** WHOOP4 scale. Family may be unknown
+ * at insert time (multi-brand ingest), so accept a raw that is valid on either map and drop only
+ * values that are impossible on both (true garbage / wrong-offset ADC).
+ */
+fun isPlausibleSkinTempRaw(raw: Int): Boolean =
+    isPlausibleSkinTempC(skinTempCelsius(raw, DeviceFamily.WHOOP5)) ||
+        isPlausibleSkinTempC(skinTempCelsius(raw, DeviceFamily.WHOOP4))
+
+/**
  * A device event. [ts] is real RTC unix seconds (already wall-clock, never offset). [kind] is the
  * event label (e.g. "BATTERY_LEVEL(3)", "WRIST_OFF(10)"); [payload] carries any extra decoded
  * fields with `event`/`event_timestamp` removed.

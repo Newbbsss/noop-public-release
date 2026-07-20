@@ -24,6 +24,8 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -634,9 +636,10 @@ fun FullScreenChargingContent(
                 .background(
                     Brush.verticalGradient(
                         colors = listOf(
-                            Color(0xFF1A1A28).copy(alpha = 0.28f),
-                            Color(0xFF12121C).copy(alpha = 0.36f),
-                            Color(0xFF1A1A28).copy(alpha = 0.28f),
+                            // Heavier milk so frost snapshot cards cannot read through overlay copy.
+                            Color(0xFF12121C).copy(alpha = 0.78f),
+                            Color(0xFF0E0E16).copy(alpha = 0.86f),
+                            Color(0xFF12121C).copy(alpha = 0.78f),
                         ),
                     ),
                 ),
@@ -644,11 +647,11 @@ fun FullScreenChargingContent(
         Box(
             Modifier
                 .fillMaxSize()
-                .graphicsLayer { alpha = frostAlpha * 0.7f }
+                .graphicsLayer { alpha = frostAlpha * 0.55f }
                 .background(
                     Brush.radialGradient(
                         colors = listOf(
-                            Color.White.copy(alpha = 0.12f),
+                            Color.White.copy(alpha = 0.10f),
                             Color.Transparent,
                         ),
                     ),
@@ -658,10 +661,11 @@ fun FullScreenChargingContent(
         Column(
             Modifier
                 .fillMaxSize()
+                .verticalScroll(rememberScrollState())
                 .padding(horizontal = 28.dp, vertical = 48.dp)
                 .graphicsLayer { alpha = contentAlpha },
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.SpaceBetween,
+            verticalArrangement = Arrangement.spacedBy(28.dp),
         ) {
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,

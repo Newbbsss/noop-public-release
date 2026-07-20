@@ -44,6 +44,45 @@ class ChargingAndReleaseTest {
         assertNull(WhoopBleClient.chargingHintFromConsole("Fuel Gauge enabled"))
     }
 
+    @Test fun liveChargingOnEvent_meansOnCharger() {
+        assertEquals(
+            true,
+            WhoopBleClient.chargingHintFromEvent("CHARGING_ON(7)", replayedOffload = false),
+        )
+    }
+
+    @Test fun liveChargingOffEvent_meansOffCharger() {
+        assertEquals(
+            false,
+            WhoopBleClient.chargingHintFromEvent("CHARGING_OFF(8)", replayedOffload = false),
+        )
+    }
+
+    @Test fun liveBatteryPackRemovedEvent_meansOffCharger() {
+        assertEquals(
+            false,
+            WhoopBleClient.chargingHintFromEvent("BATTERY_PACK_REMOVED(22)", replayedOffload = false),
+        )
+    }
+
+    @Test fun replayedChargingOffEvent_isIgnored() {
+        assertNull(
+            WhoopBleClient.chargingHintFromEvent("CHARGING_OFF(8)", replayedOffload = true),
+        )
+    }
+
+    @Test fun socRise_infersCharging() {
+        assertEquals(true, WhoopBleClient.inferChargingFromSoc(50.0, 51.0, currentlyCharging = false))
+    }
+
+    @Test fun socOnePointDropWhileCharging_clears() {
+        assertEquals(false, WhoopBleClient.inferChargingFromSoc(80.0, 79.0, currentlyCharging = true))
+    }
+
+    @Test fun socFlatWhileCharging_staysSticky() {
+        assertNull(WhoopBleClient.inferChargingFromSoc(80.0, 80.0, currentlyCharging = true))
+    }
+
     // --- H3 / #520: released LiveState -----------------------------------------------------------------
 
     @Test fun releasedState_dropsTheLinkAndClearsLiveReadouts() {

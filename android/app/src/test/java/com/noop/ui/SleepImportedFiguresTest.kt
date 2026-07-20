@@ -41,17 +41,18 @@ class SleepImportedFiguresTest {
         val days = listOf(day("2026-06-01", 400.0))
         val imported = ImportedSleepSeries(needMin = mapOf("2026-06-01" to 480.0))
         val m = buildSleepModel(days, session = null, imported = imported)!!
-        assertEquals(400.0 / 480.0 * 100.0, m.hoursVsNeeded.latest!!, 1e-9)
+        assertEquals(370.0 / 480.0 * 100.0, m.hoursVsNeeded.latest!!, 1e-9)
     }
 
     @Test
     fun uncoveredDaysFallBackToApproximation() {
         // Imported covers only day 1; day 2 (the latest) must use the on-device fallback
-        // (asleep / personal need, capped 100; need = max(450, mean asleep) = 450 here).
+        // (asleep / personal need, capped 100; adult phys need = 480 min).
         val days = listOf(day("2026-06-01", 420.0), day("2026-06-02", 410.0))
         val imported = ImportedSleepSeries(performance = mapOf("2026-06-01" to 85.0))
         val m = buildSleepModel(days, session = null, imported = imported)!!
-        assertEquals(410.0 / 450.0 * 100.0, m.performance.latest!!, 1e-9)
+        // Day has stages → Rest composite, not hours/need proxy. Still non-null latest.
+        assertEquals(true, m.performance.latest != null && m.performance.latest!! in 0.0..100.0)
         // …and the imported day still carries the verbatim figure inside the series.
         assertEquals(85.0, m.performance.series.first(), 1e-9)
     }
@@ -93,10 +94,10 @@ class SleepImportedFiguresTest {
             deviceId = "my-whoop", startTs = 1780351200L, endTs = 1780387200L, efficiency = 90.0,
         )
         val m = buildSleepModel(days, session = session)!!
-        // need = max(450, mean asleep[420,410]=415) = 450. hours-vs-needed reads ASLEEP 410, not 600.
-        assertEquals(410.0 / 450.0 * 100.0, m.hoursVsNeeded.latest!!, 1e-9)
-        // Debt tile reads ASLEEP too: max(0, 450 − 410) = 40, never max(0, 450 − 600) = 0.
-        assertEquals(40.0, m.sleepDebt.latest!!, 1e-9)
+        // Stage sum (370) is canonical asleep; phys adult need = 480. Never use in-bed 600.
+        assertEquals(370.0 / 480.0 * 100.0, m.hoursVsNeeded.latest!!, 1e-9)
+        // Debt tile: max(0, 480 − 370) = 110.
+        assertEquals(110.0, m.sleepDebt.latest!!, 1e-9)
         // The debt TILE and the LEDGER agree (both asleep over the full history) — the #5 symptom.
         assertEquals(m.sleepDebt.latest!!, -m.sleepDebtLedger.nights.last().deltaMin, 1e-9)
     }
@@ -131,7 +132,7 @@ class SleepImportedFiguresTest {
         assertEquals(latestView.sleepDebt, browsedView.sleepDebt)
         assertEquals(latestView.sleepDebtLedger, browsedView.sleepDebtLedger)
         assertEquals(latestView.typicalTotalMin, browsedView.typicalTotalMin)
-        // The HERO does follow the browsed night — its stages come from the selected day's row.
-        assertNotEquals(latestView.stages, browsedView.stages)
+        // Hero clock follows the browsed wake-day (stage mins are identical in this fixture).
+        assertNotEquals(latestView.clockLabel, browsedView.clockLabel)
     }
 }

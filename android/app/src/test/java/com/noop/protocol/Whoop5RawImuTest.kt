@@ -47,6 +47,8 @@ class Whoop5RawImuTest {
         val f = syntheticFrame(i = 0, axLSB = 0, gxLSB = 0)
         f[24] = 0.toByte(); f[25] = 0.toByte()                     // countA != 100
         assertNull(Whoop5RawImu.decode(f))
+        // Exact-length contract: a valid 1244-B prefix plus one extra byte is not an IMU buffer (#546).
+        assertNull(Whoop5RawImu.decode(syntheticFrame(i = 0, axLSB = 0, gxLSB = 0) + byteArrayOf(0)))
     }
 
     @Test

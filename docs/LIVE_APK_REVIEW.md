@@ -6,6 +6,27 @@
 - **Do not stream the Fold**.
 - Browser mark page optional; Live off by default.
 
+## Fold wireless ADB (Tailscale)
+
+Agent/deploy path when USB is inconvenient. Fold Tailscale IP on this mesh: `100.91.234.88`.
+
+```powershell
+# One-liner: USB once enables tcpip 5555, then adb connect over Tailscale
+powershell -ExecutionPolicy Bypass -File Tools\connect_fold_tailscale_adb.ps1
+# Equivalent manual:
+#   adb -s RFCX70E8RCD tcpip 5555
+#   adb connect 100.91.234.88:5555
+```
+
+Then deploy DEBUG (`com.noop.whoop.debug`) or MAIN (`com.noop.whoop`):
+
+```powershell
+Tools\deploy_live_edit.ps1 -Serial 100.91.234.88:5555
+Tools\deploy_live_edit.ps1 -Main -Serial 100.91.234.88:5555
+```
+
+Tailscale ping can succeed while port 5555 refuses — run the USB `tcpip 5555` step after reboot. See also `Tools\pull_fold_calibration.ps1`.
+
 ## Start (UI only)
 
 ```powershell

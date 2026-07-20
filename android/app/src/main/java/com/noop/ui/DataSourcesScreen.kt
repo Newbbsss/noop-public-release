@@ -67,6 +67,8 @@ import com.noop.ingest.XiaomiBandImporter
 import com.noop.ingest.WhoopCsvImporter
 import com.noop.ingest.WearableExportImporter
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -195,12 +197,23 @@ fun DataSourcesScreen(
                     restartNeeded = true
                     Toast.makeText(
                         context,
-                        "Imported. Fully close and reopen NOOP to load it.",
+                        "Backup restored — restarting NOOP…",
                         Toast.LENGTH_LONG,
                     ).show()
+                    withContext(NonCancellable) {
+                        delay(800)
+                        DataBackup.relaunchProcessAfterRestore(context)
+                    }
                 }
-                is DataBackup.ImportResult.Failed ->
+                is DataBackup.ImportResult.Failed -> {
                     Toast.makeText(context, result.message, Toast.LENGTH_LONG).show()
+                    if (result.mustRelaunch) {
+                        withContext(NonCancellable) {
+                            delay(1200)
+                            DataBackup.relaunchProcessAfterRestore(context)
+                        }
+                    }
+                }
             }
         }
     }

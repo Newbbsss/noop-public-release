@@ -329,7 +329,7 @@ follow-up. Existing test files were inspected but not run.
   `charging=false/null -> true -> false` sequence.
 - [ ] Add a production-state host test and later real-hardware release matrix.
   Existing charging tests cover event/policy predicates only.
-- [ ] Route explicit `CHARGING_ON/OFF` events or document why battery/console
+- [x] Route explicit `CHARGING_ON/OFF` events or document why battery/console
   inference is authoritative (`Enums.kt:48-50`;
   `WhoopBleClient.kt:3982-4031`).
 

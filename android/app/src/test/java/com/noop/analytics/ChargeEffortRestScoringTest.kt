@@ -64,12 +64,15 @@ class ChargeEffortRestScoringTest {
     @Test
     fun effort_edwardsZoneGoldens_onZeroHundredScale() {
         // restingHR 60, maxHR 160 → hrReserve 100 → %HRR = bpm − 60.
-        // zone1 (50–60%): bpm 115 → trimp 10 → 27.00
+        // Below 60% HRR (bpm 115): no Edwards weight (ambulatory floor — compare 2026-07-17).
         assertEquals(
-            27.0,
+            0.0,
             StrainScorer.strain(hrConstant(115), maxHR = 160.0, restingHR = 60.0)!!,
             EPS,
         )
+        // First paying zone is ≥60% HRR (weight 2): bpm 120 → trimp 20 → ~32.19
+        val at60 = StrainScorer.strain(hrConstant(120), maxHR = 160.0, restingHR = 60.0)!!
+        assertTrue(at60 > 0.0)
         // zone3 (70–80%): bpm 135 → trimp 30 → 38.66
         assertEquals(
             38.66,
@@ -187,6 +190,57 @@ class ChargeEffortRestScoringTest {
     }
 
     @Test
+    fun effort_movementFloor_restDayStaysZero() {
+        assertEquals(0.0, StrainScorer.movementFloor(1_500, 80.0), 0.0)
+        assertEquals(0.0, StrainScorer.movementFloor(4_500, 200.0), 0.0)
+        assertNull(StrainScorer.withMovementFloor(null, 1_500, 80.0))
+        assertEquals(0.0, StrainScorer.withMovementFloor(0.0, 1_500, null)!!, 0.0)
+    }
+
+    @Test
+    fun effort_movementFloor_ignoresTotalDayKcal() {
+        // activeKcalEst is whole-day energy (~1.5–2k) — must not pin Effort at the cap.
+        assertEquals(
+            StrainScorer.movementFloor(6_000, null),
+            StrainScorer.movementFloor(6_000, 1_800.0),
+            0.0,
+        )
+        assertEquals(0.0, StrainScorer.movementFloor(null, 2_000.0), 0.0)
+    }
+
+    @Test
+    fun effort_edwardsIgnoresBelow60PctHrr() {
+        // RHR 50, HRmax 190 → 60% HRR = 134 bpm. Day max ~92 must not mint TRIMP.
+        assertEquals(0, StrainScorer.zoneWeight(92.0, 50.0, 140.0))
+        assertEquals(0, StrainScorer.zoneWeight(133.0, 50.0, 140.0))
+        assertEquals(2, StrainScorer.zoneWeight(134.0, 50.0, 140.0))
+    }
+
+    @Test
+    fun effort_movementFloor_convexWalkNotHotEarly() {
+        // Smoking gun 2026-07-17: old log floor hit ~22 at ~12k steps while WHOOP Strain was 0.1.
+        val at12k = StrainScorer.movementFloor(12_000, null)
+        assertTrue("12k walk should move Effort a little", at12k > 0.5)
+        assertTrue("12k walk must stay low single-digits (was ~22)", at12k < 8.0)
+
+        val at8k = StrainScorer.movementFloor(8_000, null)
+        val at20k = StrainScorer.movementFloor(20_000, null)
+        assertTrue("mid walk stays tiny", at8k < at12k)
+        assertTrue("high step day climbs faster (convex)", at20k > at12k * 2.0)
+        assertTrue(at20k <= StrainScorer.movementFloorCap)
+
+        // Cardio TRIMP still wins when higher.
+        assertEquals(40.0, StrainScorer.withMovementFloor(40.0, 12_000, 400.0)!!, 0.0)
+        // Steps alone never invent a hard-workout day.
+        assertTrue(StrainScorer.movementFloor(30_000, 2_000.0) <= StrainScorer.movementFloorCap)
+        assertEquals(
+            StrainScorer.movementFloor(12_000, null),
+            StrainScorer.withMovementFloor(0.0, 12_000, null)!!,
+            0.0,
+        )
+    }
+
+    @Test
     fun effort_sparseStreamScoresRealWorkout() {
         val s = StrainScorer.strain(hrEvery(175, 40), maxHR = 184.0, restingHR = 60.0)
         assertNotNull(s)
@@ -271,7 +325,7 @@ class ChargeEffortRestScoringTest {
         assertEquals(0.14, RestScorer.deepFloorFactor, 0.0)
         assertEquals(0.16, RestScorer.durationQualityShareGate, 0.0)
         assertEquals(0.42, RestScorer.durationQualityFloor, 0.0)
-        assertEquals(0.90, RestScorer.restWhoopAlignScale, 0.0)
+        assertEquals(0.78, RestScorer.restWhoopAlignScale, 0.0)
         assertEquals(0.20, RestScorer.wEfficiency, 0.0)
         assertEquals(0.25, RestScorer.wRestorative, 0.0)
         assertEquals(0.10, RestScorer.wConsistency, 0.0)
@@ -281,17 +335,17 @@ class ChargeEffortRestScoringTest {
     }
 
     @Test
-    fun personalNeedHours_emptyDefaultsToEight() {
+    fun personalNeedHours_emptyDefaultsToPhysiologyAdult() {
         val (need, n) = RestScorer.personalNeedHours(emptyList())
         assertEquals(8.0, need, 0.0)
         assertEquals(0, n)
     }
 
     @Test
-    fun personalNeedHours_floorsAtSevenPointFive() {
-        // Chronically short sleeper (6h mean) still uses 7.5h floor — Sleep UI parity.
+    fun personalNeedHours_shortSleeperStaysAtPhysiologyFloor() {
+        // Chronically short sleeper (6h mean) no longer drops need to 7.5 — phys adult = 8.0.
         val (need, n) = RestScorer.personalNeedHours(listOf(360.0, 360.0, 360.0))
-        assertEquals(7.5, need, 1e-9)
+        assertEquals(8.0, need, 1e-9)
         assertEquals(3, n)
     }
 
@@ -354,14 +408,15 @@ class ChargeEffortRestScoringTest {
 
     @Test
     fun rest_durationDominatesShortNight() {
-        // 4h asleep against the 8h default → duration 50; eff 0.95 (95); restorative share 0.5 → 100.
+        // 4h asleep against the 8h default → power-curve duration, not linear 50.
         val score = RestScorer.rest(
             asleepSeconds = 4 * 3600.0,
             efficiency = 0.95,
             deepSeconds = 1.0 * 3600.0,
             remSeconds = 1.0 * 3600.0,
         )!!
-        val expected = (50.0 * 0.45 + 95.0 * 0.20 + 100.0 * 0.25 + 50.0 * 0.10) *
+        val durationRaw = SleepNeedEstimator.durationScoreRaw(4.0, 8.0)
+        val expected = (durationRaw * 0.45 + 95.0 * 0.20 + 100.0 * 0.25 + 50.0 * 0.10) *
             RestScorer.restWhoopAlignScale
         assertEquals(expected, score, EPS)
     }
