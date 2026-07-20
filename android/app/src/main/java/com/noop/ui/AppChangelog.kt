@@ -25,7 +25,7 @@ object AppChangelog {
      * Bump this when you add a release below. The "What's New" sheet shows automatically when the
      * stored last-seen version is behind this. (Decoupled from the bundle version on purpose.)
      */
-    const val CURRENT_VERSION = "8.6.240"
+    const val CURRENT_VERSION = "8.6.241"
 
     data class Release(
         val version: String,
@@ -36,6 +36,16 @@ object AppChangelog {
 
     /** Newest first. */
     val releases: List<Release> = listOf(
+        Release(
+            version = "8.6.241",
+            title = "Skin-temp difference centered",
+            date = "2026-07-20",
+            items = listOf(
+                "Health skin-temp difference face: value + caption truly centered (no left-lean AutoSize).",
+                "AutoSizeValue supports textAlign; clip instead of ellipsis â€œâ€¦â€.",
+                "SpOâ‚‚ honesty unchanged: never invents a %.",
+            ),
+        ),
         Release(
             version = "8.6.240",
             title = "Skin-temp Today Â· proportional tile",

@@ -2316,27 +2316,34 @@ private fun SkinTempVitalTile(
                             modifier = Modifier.weight(1f),
                         )
                     }
-                    else -> Column(
+                    else -> Box(
                         modifier = Modifier.fillMaxSize(),
-                        verticalArrangement = Arrangement.Center,
-                        horizontalAlignment = Alignment.CenterHorizontally,
+                        contentAlignment = Alignment.Center,
                     ) {
-                        AutoSizeValue(
-                            text = swipe.diffValue,
-                            style = NoopType.number(22f),
-                            color = accent,
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                        Text(
-                            text = swipe.diffCaption,
-                            style = NoopType.footnote,
-                            color = Palette.textTertiary,
-                            maxLines = 1,
-                            softWrap = false,
-                            overflow = TextOverflow.Clip,
-                            textAlign = TextAlign.Center,
-                            modifier = Modifier.fillMaxWidth(),
-                        )
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.Center,
+                        ) {
+                            AutoSizeValue(
+                                text = swipe.diffValue,
+                                style = NoopType.number(22f),
+                                color = accent,
+                                textAlign = TextAlign.Center,
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                            Text(
+                                text = swipe.diffCaption,
+                                style = NoopType.footnote,
+                                color = Palette.textTertiary,
+                                maxLines = 1,
+                                softWrap = false,
+                                overflow = TextOverflow.Clip,
+                                textAlign = TextAlign.Center,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(top = 2.dp),
+                            )
+                        }
                     }
                 }
             }
@@ -2390,6 +2397,7 @@ private fun SkinTempSwipeHalf(
             text = value,
             style = NoopType.number(18f),
             color = valueColor,
+            textAlign = TextAlign.Center,
             modifier = Modifier.fillMaxWidth(),
         )
         Text(
