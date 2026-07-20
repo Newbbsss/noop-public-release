@@ -754,6 +754,11 @@ fun SleepScreen(
                     // Asleep minutes only — never fall back to time-in-bed (export / #1/#7 honesty).
                     asleepMin = display?.stages?.asleep?.takeIf { it > 0 }
                         ?: model?.stages?.asleep?.takeIf { it > 0 },
+                    inBedMin = night?.session?.let { (it.endTs - it.effectiveStartTs) / 60.0 }
+                        ?: display?.stages?.total?.takeIf { it > 0 }
+                        ?: model?.stages?.total?.takeIf { it > 0 },
+                    wasoMin = display?.stages?.awake?.takeIf { it > 0 }
+                        ?: model?.stages?.awake?.takeIf { it > 0 },
                     clockLabel = night?.clockLabel ?: model?.clockLabel,
                     nightOffset = nightOffset,
                     lastIndex = max(navDays.lastIndex, 0),
@@ -1211,6 +1216,10 @@ private fun RestHero(score: Double?, asleepMin: Double?) {
 private fun SleepNightHero(
     score: Double?,
     asleepMin: Double?,
+    /** Time in bed minutes (session window) — peer clock beside asleep (Track B). */
+    inBedMin: Double? = null,
+    /** Awake-in-bed minutes (WASO proxy from staged awake) when > 0. */
+    wasoMin: Double? = null,
     clockLabel: String?,
     nightOffset: Int,
     lastIndex: Int,
@@ -1254,15 +1263,46 @@ private fun SleepNightHero(
                 textAlign = TextAlign.Center,
             )
         }
-        // #88 — hours asleep always primary; Rest % demoted to secondary pill when scored.
+        // Track B dual-clock: Asleep primary; Time in bed (+ WASO) peer — never label TIB as slept.
         CountUpText(
             value = asleepMin ?: 0.0,
             format = { durationText(it) },
             style = NoopType.number(44f),
             color = Palette.restBright,
         )
-        // Primary ink on Rest sky — textSecondary washed out on domain wash.
-        Text("asleep", style = NoopType.subhead, color = Palette.textPrimary.copy(alpha = 0.88f))
+        Text(
+            stringResource(R.string.sleep_asleep_label_short),
+            style = NoopType.subhead,
+            color = Palette.textPrimary.copy(alpha = 0.88f),
+        )
+        if (inBedMin != null && inBedMin > 0.0) {
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(Metrics.space16),
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.padding(horizontal = 16.dp),
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(durationText(inBedMin), style = NoopType.headline, color = Palette.textPrimary)
+                    Text(
+                        stringResource(R.string.sleep_time_in_bed),
+                        style = NoopType.overline,
+                        color = Palette.textSecondary,
+                    )
+                }
+                if (wasoMin != null && wasoMin > 0.0) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text(durationText(wasoMin), style = NoopType.headline, color = Palette.sleepAwake)
+                        Text("WASO", style = NoopType.overline, color = Palette.textSecondary)
+                    }
+                }
+            }
+            Text(
+                stringResource(R.string.sleep_efficiency_formula),
+                style = NoopType.caption,
+                color = Palette.textTertiary,
+                textAlign = TextAlign.Center,
+            )
+        }
         if (score != null) {
             Row(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -3021,8 +3061,11 @@ private fun Hero(
             // EFFECTIVE onset so a hand-edited bedtime is reflected. (#160 / PR #395)
             val inBedMin = session?.let { (it.endTs - it.effectiveStartTs) / 60.0 } ?: s.total
             val showOnDevice = stagesTimedFromDevice || display.stagesTimedFromDevice
-            val subtitle = "${durationText(inBedMin)} in bed · ${display.efficiencyText} efficiency" +
-                (if (showOnDevice) " · on-device stages (approx.)" else "")
+            val subtitle = "${durationText(inBedMin)} ${stringResource(R.string.sleep_time_in_bed).lowercase()} · " +
+                "${durationText(s.asleep)} ${stringResource(R.string.sleep_asleep_label_short)} · " +
+                "${display.efficiencyText} · ${stringResource(R.string.sleep_efficiency_formula)}" +
+                (if (showOnDevice) " · on-device stages (approx.)" else "") +
+                (if (s.awake > 0.0) " · ${stringResource(R.string.sleep_waso_caption, durationText(s.awake))}" else "")
             // Prefer DEBUG's 4-row stage chart + tap-to-select when a session window exists.
             // If browse sessions are still loading (or missing) but DailyMetric stages exist,
             // keep MAIN's hypnogram + PipBar shell — never a dead "No stage breakdown" page.
@@ -3057,6 +3100,7 @@ private fun Hero(
                             intervals = timeline.intervals,
                             onsetTs = axisOnset,
                             wakeTs = axisWake,
+                            inBedMin = inBedMin,
                             typicalAsleepMin = typicalAsleepMin,
                             typicalRestorativeMin = typicalRestorativeMin,
                             viewModel = viewModel,
@@ -3069,8 +3113,7 @@ private fun Hero(
                         }
                         if (timeline.stages.deep + timeline.stages.rem <= 0.0 && timeline.stages.light > 0.0) {
                             Text(
-                                "Light here is generic asleep — Deep/REM not available from this night’s source. " +
-                                    "Not WHOOP’s SWS/REM split. Totals kept as-is.",
+                                stringResource(R.string.sleep_mono_light_honesty),
                                 style = NoopType.footnote,
                                 color = Palette.textTertiary,
                             )
@@ -3689,6 +3732,8 @@ private fun IphoneStageTimeline(
     intervals: List<PersistedSegment>,
     onsetTs: Long,
     wakeTs: Long,
+    /** Session time-in-bed minutes (peer clock vs asleep — Track B). */
+    inBedMin: Double,
     typicalAsleepMin: Double?,
     typicalRestorativeMin: Double?,
     viewModel: AppViewModel?,
@@ -3709,13 +3754,24 @@ private fun IphoneStageTimeline(
         }.getOrDefault(emptyList())
     }
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        // Headline pair — hours asleep + restorative (deep+REM).
+        // Track B dual-clock — Time in bed vs Asleep (+ WASO); restorative stays peer.
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Column(modifier = Modifier.weight(1f)) {
-                Text(durationText(stages.asleep), style = NoopType.title2, color = Palette.textPrimary)
-                Text(stringResource(R.string.sleep_hours_of_sleep), style = NoopType.overline, color = Palette.textSecondary)
+                Text(durationText(inBedMin), style = NoopType.title2, color = Palette.textPrimary)
+                Text(stringResource(R.string.sleep_time_in_bed), style = NoopType.overline, color = Palette.textSecondary)
+            }
+            Column(modifier = Modifier.weight(1f)) {
+                Text(durationText(stages.asleep), style = NoopType.title2, color = Palette.restBright)
+                Text(stringResource(R.string.sleep_asleep_overline), style = NoopType.overline, color = Palette.textSecondary)
                 typicalAsleepMin?.let {
                     Text(sleepTypicallyCaption(durationText(it)), style = NoopType.footnote, color = Palette.textSecondary)
+                }
+                if (stages.awake > 0.0) {
+                    Text(
+                        stringResource(R.string.sleep_waso_caption, durationText(stages.awake)),
+                        style = NoopType.footnote,
+                        color = Palette.sleepAwake,
+                    )
                 }
             }
             Column(modifier = Modifier.weight(1f)) {
@@ -3732,6 +3788,12 @@ private fun IphoneStageTimeline(
                 )
             }
         }
+        Text(
+            stringResource(R.string.sleep_efficiency_formula),
+            style = NoopType.caption,
+            color = Palette.textTertiary,
+            modifier = Modifier.padding(horizontal = 2.dp),
+        )
         SleepHrChart(
             buckets = nightHr,
             intervals = intervals,
@@ -4631,7 +4693,16 @@ private fun MetricGrid(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Text(label, style = NoopType.subhead, color = Palette.textSecondary)
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(label, style = NoopType.subhead, color = Palette.textSecondary)
+                        if (key == "efficiency") {
+                            Text(
+                                stringResource(R.string.sleep_efficiency_formula),
+                                style = NoopType.caption,
+                                color = Palette.textTertiary,
+                            )
+                        }
+                    }
                     Text(value, style = NoopType.headline, color = Palette.textPrimary)
                 }
                 if (i < rows.lastIndex) {

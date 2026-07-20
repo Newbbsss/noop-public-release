@@ -25,7 +25,7 @@ object AppChangelog {
      * Bump this when you add a release below. The "What's New" sheet shows automatically when the
      * stored last-seen version is behind this. (Decoupled from the bundle version on purpose.)
      */
-    const val CURRENT_VERSION = "8.6.236"
+    const val CURRENT_VERSION = "8.6.237"
 
     data class Release(
         val version: String,
@@ -36,6 +36,17 @@ object AppChangelog {
 
     /** Newest first. */
     val releases: List<Release> = listOf(
+        Release(
+            version = "8.6.237",
+            title = "TIB vs Asleep Â· Light funnel Â· SpOâ‚‚ arm",
+            date = "2026-07-20",
+            items = listOf(
+                "Sleep: dual-clock Time in bed vs Asleep (+ WASO) â€” mid-bout arousals promote to Wake so Light no longer swallows sustained WASO. Never labels TIB as slept.",
+                "Sleep diagnostics: Light-funnel + wake-concordance (measure-only) so mornings can score why Light flooded â€” knobs held unless strong evidence; never invents SpOâ‚‚ %.",
+                "WHOOP 5/MG: R22 deep-data auto-rearms on encrypted connect (and when you put the strap on if it was deferred) â€” same path as the DEBUG Signal Hunt; still never invents a blood-oxygen percentage.",
+                "SpOâ‚‚ gather: scheduled Tailscale offload hardened (grab-and-wipe hist; append-only banks; 15-min morning denser window) â€” raw aux/ADC only.",
+            ),
+        ),
         Release(
             version = "8.6.236",
             title = "Light sleep bias Â· faster + Â· day span",

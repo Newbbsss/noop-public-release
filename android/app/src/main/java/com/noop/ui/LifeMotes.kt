@@ -649,6 +649,9 @@ fun sleepEfficiencyDisclaimer(fromTib: Boolean): String = if (fromTib) {
     "Efficiency = asleep ÷ time in bed from on-device stages — not WHOOP sleep efficiency."
 }
 
+/** Dual-clock efficiency caption (Track B) — short formula line for hero/tiles. */
+fun sleepEfficiencyFormulaCaption(): String = "Asleep ÷ time in bed"
+
 /** Ledger efficiency note (shared honesty). */
 fun sleepEfficiencyLedgerNote(): String =
     "Efficiency uses asleep ÷ time in bed — on-device stages when shown above."

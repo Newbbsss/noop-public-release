@@ -87,6 +87,12 @@
     <string name="sleep_stage_deep">Profond</string>
     <string name="sleep_stage_rem">REM</string>
     <string name="sleep_hours_of_sleep">HEURES DE SOMMEIL</string>
+    <string name="sleep_time_in_bed">TEMPS AU LIT</string>
+    <string name="sleep_asleep_overline">ENDORMI</string>
+    <string name="sleep_asleep_label_short">endormi</string>
+    <string name="sleep_waso_caption">%1$s WASO</string>
+    <string name="sleep_efficiency_formula">Endormi ÷ temps au lit</string>
+    <string name="sleep_mono_light_honesty">Ici Light = sommeil générique — Deep/REM indisponibles cette nuit. Pas le split SWS/REM WHOOP. Totaux inchangés.</string>
     <string name="sleep_restorative_sleep">SOMMEIL RÉPARATEUR</string>
     <string name="sleep_restorative_caption">Profond + REM (pas le profond seul)</string>
     <string name="live_subtitle">Flux du bracelet · maintient le BLE éveillé · la FC de séance sur la carte d’entraînement fait foi en plein set</string>

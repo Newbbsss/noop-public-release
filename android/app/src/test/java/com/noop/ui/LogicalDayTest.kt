@@ -242,7 +242,7 @@ class LogicalDayTest {
         val expected = LocalDate.of(2026, 6, 11).atStartOfDay(zone).toEpochSecond()
         assertEquals(
             expected,
-            awakeSpanStartEpochSecond(at(2, 30), hasTonightOvernightBout = false, zone),
+            awakeSpanStartEpochSecond(at(2, 30), hasTonightOvernightBout = false, zone = zone),
         )
     }
 

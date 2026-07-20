@@ -96,6 +96,12 @@
     <string name="sleep_stage_deep">Deep</string>
     <string name="sleep_stage_rem">REM</string>
     <string name="sleep_hours_of_sleep">HOURS OF SLEEP</string>
+    <string name="sleep_time_in_bed">TIME IN BED</string>
+    <string name="sleep_asleep_overline">ASLEEP</string>
+    <string name="sleep_asleep_label_short">asleep</string>
+    <string name="sleep_waso_caption">%1$s WASO</string>
+    <string name="sleep_efficiency_formula">Asleep ÷ time in bed</string>
+    <string name="sleep_mono_light_honesty">Light here is generic asleep — Deep/REM not available from this night’s source. Not WHOOP’s SWS/REM split. Totals kept as-is.</string>
     <string name="sleep_restorative_sleep">RESTORATIVE SLEEP</string>
     <string name="sleep_restorative_caption">Deep + REM (not deep alone)</string>
     <string name="live_subtitle">Strap stream · keeps BLE awake · session HR on the workout card is authoritative mid-set</string>

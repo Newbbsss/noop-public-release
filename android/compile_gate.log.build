@@ -1,0 +1,135 @@
+To honour the JVM settings for this build a single-use Daemon process will be forked. For more on this, please refer to https://docs.gradle.org/8.7/userguide/gradle_daemon.html#sec:disabling_the_daemon in the Gradle documentation.
+Daemon will be stopped at the end of the build 
+Configuration on demand is an incubating feature.
+> Task :app:buildKotlinToolingMetadata
+> Task :app:checkKotlinGradlePluginConfigurationErrors
+> Task :app:preBuild UP-TO-DATE
+> Task :app:preFullReleaseBuild UP-TO-DATE
+> Task :app:generateFullReleaseBuildConfig
+> Task :app:checkFullReleaseAarMetadata
+> Task :app:generateFullReleaseResValues FROM-CACHE
+> Task :app:mapFullReleaseSourceSetPaths
+> Task :app:generateFullReleaseResources
+> Task :app:mergeFullReleaseResources
+> Task :app:packageFullReleaseResources
+> Task :app:parseFullReleaseLocalResources
+> Task :app:createFullReleaseCompatibleScreenManifests
+> Task :app:extractDeepLinksFullRelease FROM-CACHE
+> Task :app:processFullReleaseMainManifest
+> Task :app:processFullReleaseManifest
+> Task :app:processFullReleaseManifestForPackage
+> Task :app:processFullReleaseResources
+> Task :app:kspFullReleaseKotlin
+> Task :app:compileFullReleaseKotlin
+w: file:///N:/noop-v8.4.0-src/android/app/src/main/java/com/noop/alarm/NextAlarmDisplay.kt:100:9 Parameter 'windowMinutes' is never used
+w: file:///N:/noop-v8.4.0-src/android/app/src/main/java/com/noop/analytics/AnalyticsEngine.kt:195:9 Parameter 'sleepNeedNights' is never used
+w: file:///N:/noop-v8.4.0-src/android/app/src/main/java/com/noop/analytics/AnalyticsEngine.kt:930:29 Parameter 'inBedSeconds' is never used
+w: file:///N:/noop-v8.4.0-src/android/app/src/main/java/com/noop/analytics/DayOwnerResolver.kt:16:17 Parameter 'day' is never used
+w: file:///N:/noop-v8.4.0-src/android/app/src/main/java/com/noop/analytics/GuidedCaptureProgress.kt:12:56 Parameter 'nightsElapsed' is never used
+w: file:///N:/noop-v8.4.0-src/android/app/src/main/java/com/noop/analytics/IntelligenceEngine.kt:44:41 Parameter 'enabled' is never used
+w: file:///N:/noop-v8.4.0-src/android/app/src/main/java/com/noop/analytics/IntelligenceEngine.kt:44:59 Parameter 'family' is never used
+w: file:///N:/noop-v8.4.0-src/android/app/src/main/java/com/noop/analytics/IntelligenceEngine.kt:364:54 Unnecessary non-null assertion (!!) on a non-null receiver of type Double
+w: file:///N:/noop-v8.4.0-src/android/app/src/main/java/com/noop/analytics/IntelligenceEngine.kt:502:41 Elvis operator (?:) always returns the left operand of non-nullable type Double?
+w: file:///N:/noop-v8.4.0-src/android/app/src/main/java/com/noop/analytics/IntelligenceEngine.kt:503:47 Elvis operator (?:) always returns the left operand of non-nullable type Int?
+w: file:///N:/noop-v8.4.0-src/android/app/src/main/java/com/noop/analytics/IntelligenceEngine.kt:601:64 Unnecessary non-null assertion (!!) on a non-null receiver of type Double
+w: file:///N:/noop-v8.4.0-src/android/app/src/main/java/com/noop/analytics/SleepStager.kt:1764:21 Name shadowed: hr
+w: file:///N:/noop-v8.4.0-src/android/app/src/main/java/com/noop/analytics/SleepStagerV2.kt:128:51 Parameter 'resp' is never used
+w: file:///N:/noop-v8.4.0-src/android/app/src/main/java/com/noop/analytics/V5HealthSignals.kt:59:9 Parameter 'habitualWakeHour' is never used
+w: file:///N:/noop-v8.4.0-src/android/app/src/main/java/com/noop/ble/SourceCoordinator.kt:385:54 Elvis operator (?:) always returns the left operand of non-nullable type String
+w: file:///N:/noop-v8.4.0-src/android/app/src/main/java/com/noop/ble/WhoopBleClient.kt:1755:42 Parameter 'batch' is never used
+w: file:///N:/noop-v8.4.0-src/android/app/src/main/java/com/noop/ble/WhoopBleClient.kt:3925:38 Parameter 'g' is never used
+w: file:///N:/noop-v8.4.0-src/android/app/src/main/java/com/noop/ble/WhoopBleClient.kt:5869:32 Parameter 'g' is never used
+w: file:///N:/noop-v8.4.0-src/android/app/src/main/java/com/noop/data/DataBackup.kt:213:23 Variable 'staged' is never used
+w: file:///N:/noop-v8.4.0-src/android/app/src/main/java/com/noop/data/WhoopAppAccessibilityService.kt:49:14 'recycle(): Unit' is deprecated. Deprecated in Java
+w: file:///N:/noop-v8.4.0-src/android/app/src/main/java/com/noop/data/WhoopAppAccessibilityService.kt:67:15 'recycle(): Unit' is deprecated. Deprecated in Java
+w: file:///N:/noop-v8.4.0-src/android/app/src/main/java/com/noop/data/WhoopAppScoreParser.kt:25:33 Variable 'recovery' initializer is redundant
+w: file:///N:/noop-v8.4.0-src/android/app/src/main/java/com/noop/data/WhoopAppScoreParser.kt:26:31 Variable 'strain' initializer is redundant
+w: file:///N:/noop-v8.4.0-src/android/app/src/main/java/com/noop/data/WhoopAppScoreParser.kt:27:30 Variable 'sleep' initializer is redundant
+w: file:///N:/noop-v8.4.0-src/android/app/src/main/java/com/noop/ingest/WearableExportImporter.kt:746:47 Parameter 'data' is never used
+w: file:///N:/noop-v8.4.0-src/android/app/src/main/java/com/noop/notif/ChargingOverlayPolicy.kt:45:9 Parameter 'dismissed' is never used
+w: file:///N:/noop-v8.4.0-src/android/app/src/main/java/com/noop/protocol/HapticClock.kt:104:9 Parameter 'is24h' is never used
+w: file:///N:/noop-v8.4.0-src/android/app/src/main/java/com/noop/ui/AppRoot.kt:1085:5 Parameter 'showCycle' is never used
+w: file:///N:/noop-v8.4.0-src/android/app/src/main/java/com/noop/ui/AppRoot.kt:1464:5 Parameter 'onStrengthTrainer' is never used
+w: file:///N:/noop-v8.4.0-src/android/app/src/main/java/com/noop/ui/AppRoot.kt:1469:9 Variable 'barShape' is never used
+w: file:///N:/noop-v8.4.0-src/android/app/src/main/java/com/noop/ui/ChargingFullScreen.kt:329:5 Parameter 'viewModel' is never used
+w: file:///N:/noop-v8.4.0-src/android/app/src/main/java/com/noop/ui/CoachMarkdown.kt:117:28 Parameter 'color' is never used
+w: file:///N:/noop-v8.4.0-src/android/app/src/main/java/com/noop/ui/LiveScreen.kt:1487:52 Elvis operator (?:) always returns the left operand of non-nullable type Int?
+w: file:///N:/noop-v8.4.0-src/android/app/src/main/java/com/noop/ui/LiveScreen.kt:1558:85 Unnecessary non-null assertion (!!) on a non-null receiver of type Int
+w: file:///N:/noop-v8.4.0-src/android/app/src/main/java/com/noop/ui/LiveScreen.kt:1711:24 Unnecessary non-null assertion (!!) on a non-null receiver of type Int
+w: file:///N:/noop-v8.4.0-src/android/app/src/main/java/com/noop/ui/NotificationsSettingsScreen.kt:1102:9 Variable '_rm' is never used
+w: file:///N:/noop-v8.4.0-src/android/app/src/main/java/com/noop/ui/PeriodCalendarScreen.kt:725:85 Unnecessary non-null assertion (!!) on a non-null receiver of type String
+w: file:///N:/noop-v8.4.0-src/android/app/src/main/java/com/noop/ui/PeriodCalendarScreen.kt:726:81 Unnecessary non-null assertion (!!) on a non-null receiver of type String
+w: file:///N:/noop-v8.4.0-src/android/app/src/main/java/com/noop/ui/PeriodCalendarScreen.kt:845:60 Unnecessary non-null assertion (!!) on a non-null receiver of type String
+w: file:///N:/noop-v8.4.0-src/android/app/src/main/java/com/noop/ui/PeriodCalendarScreen.kt:1045:5 Parameter 'onLog' is never used
+w: file:///N:/noop-v8.4.0-src/android/app/src/main/java/com/noop/ui/SceneHeroBackground.kt:303:21 Condition 'scrimBrush != null' is always 'true'
+w: file:///N:/noop-v8.4.0-src/android/app/src/main/java/com/noop/ui/SettingsScreen.kt:386:5 Parameter 'onOpenQuickStart' is never used
+w: file:///N:/noop-v8.4.0-src/android/app/src/main/java/com/noop/ui/SleepScreen.kt:168:5 Parameter 'onOpenAlarm' is never used
+w: file:///N:/noop-v8.4.0-src/android/app/src/main/java/com/noop/ui/SleepScreen.kt:175:5 Parameter 'onOpenCharge' is never used
+w: file:///N:/noop-v8.4.0-src/android/app/src/main/java/com/noop/ui/SleepScreen.kt:3343:9 Variable 'context' is never used
+w: file:///N:/noop-v8.4.0-src/android/app/src/main/java/com/noop/ui/SleepScreen.kt:3948:5 Parameter 'nightStartTs' is never used
+w: file:///N:/noop-v8.4.0-src/android/app/src/main/java/com/noop/ui/SleepScreen.kt:4049:68 Unnecessary non-null assertion (!!) on a non-null receiver of type Long
+w: file:///N:/noop-v8.4.0-src/android/app/src/main/java/com/noop/ui/SleepScreen.kt:4479:9 Variable 'blockShape' is never used
+w: file:///N:/noop-v8.4.0-src/android/app/src/main/java/com/noop/ui/TestCentreScreen.kt:462:24 Parameter 'vm' is never used
+w: file:///N:/noop-v8.4.0-src/android/app/src/main/java/com/noop/ui/TimeOfDayBackground.kt:234:31 Parameter 'w' is never used
+w: file:///N:/noop-v8.4.0-src/android/app/src/main/java/com/noop/ui/TodayScreen.kt:295:5 Parameter 'onQuickActions' is never used
+w: file:///N:/noop-v8.4.0-src/android/app/src/main/java/com/noop/ui/TodayScreen.kt:297:5 Parameter 'onOpenUpdates' is never used
+w: file:///N:/noop-v8.4.0-src/android/app/src/main/java/com/noop/ui/TodayScreen.kt:315:5 Parameter 'onOpenCoupled' is never used
+w: file:///N:/noop-v8.4.0-src/android/app/src/main/java/com/noop/ui/TodayScreen.kt:325:5 Parameter 'onOpenSources' is never used
+w: file:///N:/noop-v8.4.0-src/android/app/src/main/java/com/noop/ui/TodayScreen.kt:820:9 Variable 'scoringCardSeen' is never used
+w: file:///N:/noop-v8.4.0-src/android/app/src/main/java/com/noop/ui/TodayScreen.kt:1239:13 Name shadowed: today
+w: file:///N:/noop-v8.4.0-src/android/app/src/main/java/com/noop/ui/TodayScreen.kt:1240:37 Unnecessary safe call on a non-null receiver of type DailyMetric?
+w: file:///N:/noop-v8.4.0-src/android/app/src/main/java/com/noop/ui/TodayScreen.kt:3894:5 Parameter 'hasTodayData' is never used
+w: file:///N:/noop-v8.4.0-src/android/app/src/main/java/com/noop/ui/TodayScreen.kt:3895:5 Parameter 'latestDataDayBack' is never used
+w: file:///N:/noop-v8.4.0-src/android/app/src/main/java/com/noop/ui/TodayScreen.kt:4513:9 Variable 'appChargeFallback' is never used
+w: file:///N:/noop-v8.4.0-src/android/app/src/main/java/com/noop/ui/TodayScreen.kt:4514:9 Variable 'appEffortFallback' is never used
+w: file:///N:/noop-v8.4.0-src/android/app/src/main/java/com/noop/ui/TodayScreen.kt:4515:9 Variable 'appRestFallback' is never used
+w: file:///N:/noop-v8.4.0-src/android/app/src/main/java/com/noop/ui/TodayScreen.kt:5165:5 Parameter 'diameter' is never used
+w: file:///N:/noop-v8.4.0-src/android/app/src/main/java/com/noop/ui/TodayScreen.kt:5479:5 Parameter 'importedStepsForDay' is never used
+w: file:///N:/noop-v8.4.0-src/android/app/src/main/java/com/noop/ui/TodayScreen.kt:7016:5 Parameter 'w' is never used
+w: file:///N:/noop-v8.4.0-src/android/app/src/main/java/com/noop/ui/TodayScreen.kt:7038:5 Parameter 'stepActivityClassForDay' is never used
+w: file:///N:/noop-v8.4.0-src/android/app/src/main/java/com/noop/ui/TodayScreen.kt:7049:5 Parameter 'restSpark' is never used
+w: file:///N:/noop-v8.4.0-src/android/app/src/main/java/com/noop/ui/TodayScreen.kt:7061:5 Parameter 'onOpenHealth' is never used
+w: file:///N:/noop-v8.4.0-src/android/app/src/main/java/com/noop/ui/WhoopScoreCompare.kt:53:5 Parameter 'rows' is never used
+
+> Task :app:javaPreCompileFullRelease FROM-CACHE
+> Task :app:compileFullReleaseJavaWithJavac
+> Task :app:extractProguardFiles
+> Task :app:generateFullReleaseLintVitalReportModel
+> Task :app:lintVitalAnalyzeFullRelease
+> Task :app:lintVitalReportFullRelease
+> Task :app:lintVitalFullRelease
+> Task :app:mergeFullReleaseJniLibFolders
+> Task :app:mergeFullReleaseNativeLibs NO-SOURCE
+> Task :app:stripFullReleaseDebugSymbols NO-SOURCE
+> Task :app:extractFullReleaseNativeSymbolTables NO-SOURCE
+> Task :app:mergeFullReleaseNativeDebugMetadata NO-SOURCE
+> Task :app:checkFullReleaseDuplicateClasses
+> Task :app:dexBuilderFullRelease
+> Task :app:desugarFullReleaseFileDependencies FROM-CACHE
+> Task :app:mergeFullReleaseStartupProfile
+> Task :app:mergeExtDexFullRelease FROM-CACHE
+> Task :app:mergeDexFullRelease
+> Task :app:mergeFullReleaseArtProfile
+> Task :app:mergeFullReleaseGlobalSynthetics FROM-CACHE
+> Task :app:compileFullReleaseArtProfile
+> Task :app:mergeFullReleaseShaders
+> Task :app:compileFullReleaseShaders NO-SOURCE
+> Task :app:generateFullReleaseAssets UP-TO-DATE
+> Task :app:mergeFullReleaseAssets
+> Task :app:compressFullReleaseAssets FROM-CACHE
+> Task :app:extractFullReleaseVersionControlInfo
+> Task :app:processFullReleaseJavaRes
+> Task :app:mergeFullReleaseJavaResource
+> Task :app:optimizeFullReleaseResources
+> Task :app:collectFullReleaseDependencies
+> Task :app:sdkFullReleaseDependencyData
+> Task :app:validateSigningFullRelease
+> Task :app:writeFullReleaseAppMetadata
+> Task :app:writeFullReleaseSigningConfigVersions
+> Task :app:packageFullRelease
+> Task :app:createFullReleaseApkListingFileRedirect
+> Task :app:assembleFullRelease
+
+BUILD SUCCESSFUL in 5m 12s
+49 actionable tasks: 42 executed, 7 from cache
+EXITCODE=0 

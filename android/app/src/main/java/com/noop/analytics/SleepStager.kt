@@ -1584,6 +1584,11 @@ object SleepStager {
         labels = smoothLabels(labels)
         labels = reimposePhysiology(labels, features = feats,
             onsetIdx = onsetIdx, finalWakeIdx = finalWakeIdx)
+        // Mid-bout WASO honesty (Track B / 8.6.237): high-motion or Cole–Kripke wake epochs
+        // inside the sleep period → stage "wake" BEFORE merge so quiet arousals are not
+        // swallowed as Light. Never invents Deep/REM. Pre-/post-bout wake still forced below.
+        labels = promoteMidBoutWake(labels, features = feats,
+            onsetIdx = onsetIdx, finalWakeIdx = finalWakeIdx)
         // Conservative fragment merge (#274): absorb sub-3-min stage flecks (the WHOOP 5/MG
         // sparse-motion artefact) so the hypnogram stops reading choppier than WHOOP's,
         // without erasing genuine multi-minute transitions. Display/scoring only — the
@@ -2348,6 +2353,33 @@ object SleepStager {
         return out
     }
 
+    /**
+     * Mid-bout WASO promotion (Track B): inside [onsetIdx, finalWakeIdx], force stage `"wake"`
+     * when the epoch is high-motion (`moveFrac ≥ stageWakeMoveFrac`) or Cole–Kripke wake
+     * (`!ckSleep`). Runs after smooth/reimpose and **before** [mergeFragments] so sustained
+     * arousals survive into TST/WASO accounting instead of falling through to Light.
+     * Does not invent Deep/REM; does not touch pre-onset / post-final epochs (forced wake later).
+     */
+    internal fun promoteMidBoutWake(
+        labels: List<String>,
+        features: List<EpochFeatures>,
+        onsetIdx: Int,
+        finalWakeIdx: Int,
+    ): List<String> {
+        if (labels.isEmpty() || features.size != labels.size) return labels
+        val out = labels.toMutableList()
+        val lo = onsetIdx.coerceAtLeast(0)
+        val hi = finalWakeIdx.coerceAtMost(labels.lastIndex)
+        if (lo > hi) return labels
+        for (i in lo..hi) {
+            val f = features[i]
+            if (f.moveFrac >= stageWakeMoveFrac || !f.ckSleep) {
+                out[i] = "wake"
+            }
+        }
+        return out
+    }
+
     // ── REM-funnel diagnostic (#688) ──────────────────────────────────────────
 
     // 0% REM over a whole night is physiologically implausible (healthy adults cycle ~20–25% REM),
@@ -2539,6 +2571,316 @@ object SleepStager {
             blockedNotStill = blockedNotStill, blockedNoCardiacActivation = blockedNoCardiacActivation,
             blockedRespRegular = blockedRespRegular, blockedNoRespFallbackBar = blockedNoRespFallbackBar,
             wonOtherStage = wonOtherStage,
+        )
+    }
+
+    // ── Light-funnel diagnostic (Track C / measure-before-knobs, 2026-07-20) ─────
+
+    // Light is the classifyOne FALLTHROUGH: every sleep-period epoch that does not win wake /
+    // deep / rem. A Light-flood night is usually "Deep gates unmet" (notStill / midHR /
+    // parasympFail / respIrregular), then inflated further by reimpose (REM-onset→light,
+    // late-deep→light) and mergeFragments (tie→lighter). This READ-ONLY diagnostic re-runs
+    // the same seam as [stageSession] / [remFunnelDiagnostic] and COUNTS where Light came
+    // from — WITHOUT changing knobs, labels, or scores. Measure first; do not touch
+    // stageHRLowPct / stageStillMoveFrac / stageHRVHighPct from this surface.
+
+    /**
+     * Why Light dominated one staged session window. Counts are over SLEEP-PERIOD epochs
+     * (onset…finalWake). Classifier-mouth buckets partition those epochs; demote counters
+     * explain post-classify Light inflation. Pure + deterministic. Mirrors [REMFunnelDiagnostic].
+     */
+    data class LightFunnelDiagnostic(
+        /** Sleep-period epochs considered (onset…finalWake inclusive). */
+        val sleepEpochs: Int,
+        /** Epochs labelled "light" at the raw classifier seam (pre-smooth). */
+        val lightAtClassify: Int,
+        /** "light" after smooth + [reimposePhysiology] (before WASO promote / merge). */
+        val lightAfterReimpose: Int,
+        /** "light" after [promoteMidBoutWake] (before [mergeFragments]). */
+        val lightAfterWaso: Int,
+        /** "light" after [mergeFragments] — the final hypnogram's Light inside the sleep period. */
+        val lightAfterMerge: Int,
+        /** Classifier wins (not Light). */
+        val wonWake: Int,
+        val wonDeep: Int,
+        val wonRem: Int,
+        /** Light fallthrough — first unmet Deep gate (Deep is the primary alternative to Light). */
+        val blockedNotStill: Int,
+        val blockedParasympFail: Int,
+        val blockedMidHR: Int,
+        val blockedRespIrregular: Int,
+        /** Reimpose demotes → light (counted off smoothed labels, matching reimpose inputs). */
+        val demotedRemOnset: Int,
+        val demotedLateDeep: Int,
+        /** [promoteMidBoutWake] flipped a non-wake epoch to wake (often draining Light). */
+        val promotedWasoWake: Int,
+        /** mergeFragments flipped a non-light epoch to light inside the sleep period. */
+        val demotedByMerge: Int,
+        /** Whether ANY sleep-period epoch carried finite RMSSD (dense R-R vs sparse/PPG). */
+        val rmssdChannelPresent: Boolean,
+    ) {
+        /** True when the final sleep-period hypnogram is entirely Light (classic flood). */
+        val isMonoLight: Boolean get() = sleepEpochs > 0 && lightAfterMerge == sleepEpochs
+
+        /** One human-readable line for the caller to LOG. No I/O — engine stays pure. */
+        val summary: String
+            get() = "Light-funnel: $sleepEpochs sleep-epochs, classify=$lightAtClassify light, " +
+                "reimpose=$lightAfterReimpose, waso=$lightAfterWaso, final=$lightAfterMerge light; " +
+                "won[wake=$wonWake, deep=$wonDeep, rem=$wonRem]; " +
+                "blocked[notStill=$blockedNotStill, parasympFail=$blockedParasympFail, " +
+                "midHR=$blockedMidHR, respIrregular=$blockedRespIrregular]; " +
+                "demote[remOnset=$demotedRemOnset, lateDeep=$demotedLateDeep, merge=$demotedByMerge]; " +
+                "wasoPromote=$promotedWasoWake; " +
+                "rmssd=${if (rmssdChannelPresent) "present" else "ABSENT"}"
+    }
+
+    /**
+     * Per-epoch classify outcome for the Light funnel. `LIGHT_*` means fallthrough to light,
+     * attributed to the FIRST unmet Deep precondition (Deep-rule order). Internal.
+     */
+    internal enum class LightClassifyReason {
+        WON_WAKE, WON_DEEP, WON_REM,
+        NOT_STILL, PARASYMP_FAIL, MID_HR, RESP_IRREGULAR,
+    }
+
+    /**
+     * Classify a single epoch's Light-fallthrough reason using the exact predicates and
+     * precedence of [classifyOne] (including BMI still-bar and sparse-cardiac Deep/REM paths).
+     * Read-only — must never diverge from the real classifier.
+     */
+    internal fun lightFallthroughReason(
+        f: EpochFeatures, hrLo: Double?, hrHi: Double?,
+        rmssdHi: Double?, hrvarHi: Double?, rrvHi: Double?, rrvLo: Double?,
+        cardiacSparse: Boolean = false,
+    ): LightClassifyReason {
+        val hasHR = f.hr.isFinite()
+        val hrLow = hasHR && hrLo != null && f.hr <= hrLo
+        val hrHigh = hasHR && hrHi != null && f.hr >= hrHi
+        val parasympOK = (!f.rmssd.isFinite()) || (rmssdHi != null && f.rmssd >= rmssdHi)
+        val hrvarHigh = f.hrVar.isFinite() && hrvarHi != null && f.hrVar >= hrvarHi
+        val cardiacActivated = hrHigh || hrvarHigh
+        val cardiacActivatedForWake = if (cardiacSparse) hrHigh else cardiacActivated
+        val rrvIrregular = f.rrv.isFinite() && rrvHi != null && f.rrv >= rrvHi
+        val rrvRegular = (!f.rrv.isFinite()) || (rrvLo != null && f.rrv <= rrvLo)
+        val stillBar = if ((softPriors.bmi ?: 0.0) >= 35.0) {
+            stageStillMoveFrac * 1.15
+        } else {
+            stageStillMoveFrac
+        }
+        val still = f.moveFrac <= stillBar
+        val moving = f.moveFrac >= stageWakeMoveFrac
+
+        // Mirror classifyOne precedence exactly.
+        if (moving && (cardiacActivatedForWake || !hasHR)) return LightClassifyReason.WON_WAKE
+        if (still && parasympOK && hrLow && rrvRegular) return LightClassifyReason.WON_DEEP
+        if (cardiacSparse && still && hrLow && !f.rrv.isFinite()) return LightClassifyReason.WON_DEEP
+        if (still && cardiacActivated && rrvIrregular) return LightClassifyReason.WON_REM
+        if (still && hrHigh && hrvarHigh && !f.rrv.isFinite()) return LightClassifyReason.WON_REM
+        if (cardiacSparse && still && hrHigh && !f.rrv.isFinite() && f.clock > deepFirstFraction) {
+            return LightClassifyReason.WON_REM
+        }
+        if (still && hrHigh && !f.rrv.isFinite() && f.clock > deepFirstFraction) {
+            return LightClassifyReason.WON_REM
+        }
+        // Light fallthrough — first unmet Deep gate. Sparse no-resp Deep only needs still+hrLow
+        // (already checked above), so a sparse no-resp fallthrough here is mid-HR.
+        if (!still) return LightClassifyReason.NOT_STILL
+        if (cardiacSparse && !f.rrv.isFinite()) return LightClassifyReason.MID_HR
+        if (!parasympOK) return LightClassifyReason.PARASYMP_FAIL
+        if (!hrLow) return LightClassifyReason.MID_HR
+        return LightClassifyReason.RESP_IRREGULAR
+    }
+
+    /**
+     * Read-only Light-funnel triage for ONE in-bed window [start, end]. Re-runs the SAME
+     * Stage-0→3 seam [stageSession] uses, counting where Light was produced (classifier
+     * fallthrough + reimpose/merge demotes). Changes NOTHING. Returns null only when the
+     * window has too little gravity to grid. Caller logs `.summary`.
+     */
+    fun lightFunnelDiagnostic(
+        start: Long, end: Long, grav: List<GravitySample>,
+        hr: List<HrSample>, rr: List<RrInterval>, resp: List<RespSample>,
+    ): LightFunnelDiagnostic? {
+        val gSeg = rowsBetween(grav, start, end) { it.ts }
+        if (gSeg.size < 2) return null
+        val gDeltas = gravityDeltas(gSeg)
+        val gTimes = gSeg.map { it.ts }
+        val hrSeg = rowsBetween(hr, start, end) { it.ts }
+        val rrSeg = rowsBetween(rr, start, end) { it.ts }
+        val respSeg = rowsBetween(resp, start, end) { it.ts }
+
+        val grid = buildEpochGrid(
+            start = start.toDouble(), end = end.toDouble(),
+            gravTimes = gTimes, gravDeltas = gDeltas,
+            hr = hrSeg, rr = rrSeg, resp = respSeg,
+        )
+        if (grid.nEpochs == 0) return null
+
+        val rescaled = rescaleCounts(grid.counts)
+        val ckFlags = coleKripke(rescaled)
+        val (onsetIdx, finalWakeIdx) = onsetAndFinalWake(ckFlags)
+        val dogHR = dogHRVariability(grid.hr)
+        val feats = extractFeatures(grid = grid, ckFlags = ckFlags, dogHR = dogHR,
+            onsetIdx = onsetIdx, finalWakeIdx = finalWakeIdx)
+
+        val sleepFeats = if (feats.any { it.ckSleep }) feats.filter { it.ckSleep } else feats
+        val hrLo = percentile(sleepFeats.map { it.hr }, stageHRLowPct)
+        val hrHi = percentile(sleepFeats.map { it.hr }, stageHRHighPct)
+        val rmssdHi = percentile(sleepFeats.map { it.rmssd }, stageHRVHighPct)
+        val hrvarHi = percentile(sleepFeats.map { it.hrVar }, stageHRVarHighPct)
+        val rrvHi = percentile(sleepFeats.map { it.rrv }, stageRRVHighPct)
+        val rrvLo = percentile(sleepFeats.map { it.rrv }, stageRRVLowPct)
+        val cardiacSparse = isCardiacSparse(sleepFeats)
+
+        val labels = classifyEpochs(feats)
+        val smoothed = smoothLabels(labels)
+        val reimposed = reimposePhysiology(smoothed, features = feats,
+            onsetIdx = onsetIdx, finalWakeIdx = finalWakeIdx)
+        // Same seam as stageSession: WASO promote before merge (Track B).
+        val waso = promoteMidBoutWake(reimposed, features = feats,
+            onsetIdx = onsetIdx, finalWakeIdx = finalWakeIdx)
+        val merged = mergeFragments(waso)
+
+        val noREMEpochs = (noREMAfterOnsetMin * 60.0 / epochS).roundToInt()
+        val deepFrac = if ((softPriors.ageYears ?: 0.0) >= 65.0) {
+            (deepFirstFraction * 1.15).coerceAtMost(0.45)
+        } else {
+            deepFirstFraction
+        }
+        val sleepLen = (finalWakeIdx - onsetIdx + 1).coerceAtLeast(1)
+        val earlyDeepN = smoothed.indices.count {
+            it in onsetIdx..finalWakeIdx && smoothed[it] == "deep" && feats[it].clock <= deepFrac
+        }
+        val earlyDeepAdequate = earlyDeepN.toDouble() >= 0.15 * sleepLen.toDouble()
+
+        var sleepEpochs = 0
+        var lightAtClassify = 0; var lightAfterReimpose = 0
+        var lightAfterWaso = 0; var lightAfterMerge = 0
+        var wonWake = 0; var wonDeep = 0; var wonRem = 0
+        var blockedNotStill = 0; var blockedParasympFail = 0
+        var blockedMidHR = 0; var blockedRespIrregular = 0
+        var demotedRemOnset = 0; var demotedLateDeep = 0
+        var promotedWasoWake = 0; var demotedByMerge = 0
+        var rmssdChannelPresent = false
+
+        for (i in onsetIdx..maxOf(onsetIdx, finalWakeIdx)) {
+            if (i >= feats.size) break
+            val f = feats[i]
+            sleepEpochs += 1
+            if (f.rmssd.isFinite()) rmssdChannelPresent = true
+            when (lightFallthroughReason(f, hrLo = hrLo, hrHi = hrHi, rmssdHi = rmssdHi,
+                hrvarHi = hrvarHi, rrvHi = rrvHi, rrvLo = rrvLo,
+                cardiacSparse = cardiacSparse)) {
+                LightClassifyReason.WON_WAKE -> wonWake += 1
+                LightClassifyReason.WON_DEEP -> wonDeep += 1
+                LightClassifyReason.WON_REM -> wonRem += 1
+                LightClassifyReason.NOT_STILL -> { blockedNotStill += 1; lightAtClassify += 1 }
+                LightClassifyReason.PARASYMP_FAIL -> { blockedParasympFail += 1; lightAtClassify += 1 }
+                LightClassifyReason.MID_HR -> { blockedMidHR += 1; lightAtClassify += 1 }
+                LightClassifyReason.RESP_IRREGULAR -> { blockedRespIrregular += 1; lightAtClassify += 1 }
+            }
+            if (reimposed[i] == "light") lightAfterReimpose += 1
+            if (waso[i] == "light") lightAfterWaso += 1
+            if (merged[i] == "light") lightAfterMerge += 1
+            // Reimpose demotes (exact predicates reimposePhysiology applies to smoothed).
+            if (smoothed[i] == "rem" && (i - onsetIdx) < noREMEpochs) demotedRemOnset += 1
+            if (smoothed[i] == "deep" && f.clock > deepFrac && earlyDeepAdequate) demotedLateDeep += 1
+            if (reimposed[i] != "wake" && waso[i] == "wake") promotedWasoWake += 1
+            if (waso[i] != "light" && merged[i] == "light") demotedByMerge += 1
+        }
+
+        return LightFunnelDiagnostic(
+            sleepEpochs = sleepEpochs,
+            lightAtClassify = lightAtClassify,
+            lightAfterReimpose = lightAfterReimpose,
+            lightAfterWaso = lightAfterWaso,
+            lightAfterMerge = lightAfterMerge,
+            wonWake = wonWake, wonDeep = wonDeep, wonRem = wonRem,
+            blockedNotStill = blockedNotStill, blockedParasympFail = blockedParasympFail,
+            blockedMidHR = blockedMidHR, blockedRespIrregular = blockedRespIrregular,
+            demotedRemOnset = demotedRemOnset, demotedLateDeep = demotedLateDeep,
+            promotedWasoWake = promotedWasoWake, demotedByMerge = demotedByMerge,
+            rmssdChannelPresent = rmssdChannelPresent,
+        )
+    }
+
+    /**
+     * Cheap wake concordance: Cole–Kripke sleep flag vs final staged label inside the
+     * sleep period. Surfaces CK↔stager disagreement without a second full pipeline beyond
+     * the same seam [lightFunnelDiagnostic] already runs. Read-only.
+     */
+    data class WakeConcordance(
+        val sleepEpochs: Int,
+        /** Epochs where CK-sleep matches staged non-wake (or CK-wake matches staged wake). */
+        val agree: Int,
+        /** CK says wake but stager kept sleep (light/deep/rem). */
+        val ckWakeStagedSleep: Int,
+        /** CK says sleep but stager labelled wake. */
+        val ckSleepStagedWake: Int,
+    ) {
+        val agreementFrac: Double
+            get() = if (sleepEpochs == 0) 1.0 else agree.toDouble() / sleepEpochs.toDouble()
+
+        val summary: String
+            get() = "wake-concordance: $sleepEpochs sleep-epochs, agree=$agree " +
+                "(${(agreementFrac * 100.0).roundToInt()}%), " +
+                "ckWake∧stagedSleep=$ckWakeStagedSleep, ckSleep∧stagedWake=$ckSleepStagedWake"
+    }
+
+    /**
+     * Read-only CK vs staged-wake concordance for ONE in-bed window. Null when gravity is
+     * insufficient to grid. Uses final post-merge labels inside onset…finalWake.
+     */
+    fun wakeConcordance(
+        start: Long, end: Long, grav: List<GravitySample>,
+        hr: List<HrSample>, rr: List<RrInterval>, resp: List<RespSample>,
+    ): WakeConcordance? {
+        val gSeg = rowsBetween(grav, start, end) { it.ts }
+        if (gSeg.size < 2) return null
+        val gDeltas = gravityDeltas(gSeg)
+        val gTimes = gSeg.map { it.ts }
+        val hrSeg = rowsBetween(hr, start, end) { it.ts }
+        val rrSeg = rowsBetween(rr, start, end) { it.ts }
+        val respSeg = rowsBetween(resp, start, end) { it.ts }
+
+        val grid = buildEpochGrid(
+            start = start.toDouble(), end = end.toDouble(),
+            gravTimes = gTimes, gravDeltas = gDeltas,
+            hr = hrSeg, rr = rrSeg, resp = respSeg,
+        )
+        if (grid.nEpochs == 0) return null
+
+        val rescaled = rescaleCounts(grid.counts)
+        val ckFlags = coleKripke(rescaled)
+        val (onsetIdx, finalWakeIdx) = onsetAndFinalWake(ckFlags)
+        val dogHR = dogHRVariability(grid.hr)
+        val feats = extractFeatures(grid = grid, ckFlags = ckFlags, dogHR = dogHR,
+            onsetIdx = onsetIdx, finalWakeIdx = finalWakeIdx)
+        var labels = classifyEpochs(feats)
+        labels = smoothLabels(labels)
+        labels = reimposePhysiology(labels, features = feats,
+            onsetIdx = onsetIdx, finalWakeIdx = finalWakeIdx)
+        labels = promoteMidBoutWake(labels, features = feats,
+            onsetIdx = onsetIdx, finalWakeIdx = finalWakeIdx)
+        labels = mergeFragments(labels)
+
+        var sleepEpochs = 0; var agree = 0
+        var ckWakeStagedSleep = 0; var ckSleepStagedWake = 0
+        for (i in onsetIdx..maxOf(onsetIdx, finalWakeIdx)) {
+            if (i >= labels.size || i >= ckFlags.size) break
+            sleepEpochs += 1
+            val ckSleep = ckFlags[i]
+            val stagedWake = labels[i] == "wake"
+            when {
+                ckSleep && !stagedWake -> agree += 1
+                !ckSleep && stagedWake -> agree += 1
+                !ckSleep && !stagedWake -> ckWakeStagedSleep += 1
+                else -> ckSleepStagedWake += 1
+            }
+        }
+        return WakeConcordance(
+            sleepEpochs = sleepEpochs, agree = agree,
+            ckWakeStagedSleep = ckWakeStagedSleep, ckSleepStagedWake = ckSleepStagedWake,
         )
     }
 

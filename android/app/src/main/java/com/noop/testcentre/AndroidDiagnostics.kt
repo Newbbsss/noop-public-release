@@ -87,8 +87,9 @@ object AndroidDiagnostics {
     }
 
     /**
-     * Analytics-funnel lines: recompute the REM + skin-temp funnels for the most recent night so a "0% REM"
-     * / "skin temp absent" report arrives with the funnel breakdown. BEST-EFFORT and self-reporting — it
+     * Analytics-funnel lines: recompute the REM + Light + wake-concordance + skin-temp funnels for the
+     * most recent night so a "0% REM" / "Light flood" / "skin temp absent" report arrives with the funnel
+     * breakdown. BEST-EFFORT and self-reporting — it
      * prints the sample counts it read and says plainly when it can't compute (e.g. a freshly re-added strap
      * whose raw samples aren't yet under the canonical id), so it never fabricates a misleading verdict.
      */
@@ -116,6 +117,10 @@ object AndroidDiagnostics {
             }
             com.noop.analytics.SleepStager.remFunnelDiagnostic(session.startTs, session.endTs, grav, hr, rr, resp)
                 ?.let { add(it.summary) } ?: add("REM funnel: insufficient motion data (<2 gravity samples)")
+            com.noop.analytics.SleepStager.lightFunnelDiagnostic(session.startTs, session.endTs, grav, hr, rr, resp)
+                ?.let { add(it.summary) } ?: add("Light funnel: insufficient motion data (<2 gravity samples)")
+            com.noop.analytics.SleepStager.wakeConcordance(session.startTs, session.endTs, grav, hr, rr, resp)
+                ?.let { add(it.summary) } ?: add("Wake concordance: insufficient motion data (<2 gravity samples)")
             val det = com.noop.analytics.DetectedSleep(
                 start = session.startTs, end = session.endTs,
                 efficiency = session.efficiency ?: 0.0, stages = emptyList(),

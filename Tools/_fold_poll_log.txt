@@ -1,0 +1,82 @@
+﻿=== Fold poll start 2026-07-18T02:47:31.6870967-04:00 deadline=2026-07-18T03:29:31.6730047-04:00 ===
+[02:47:31] APK ready: 32949708 bytes
+[02:47:31] Attempt 1 - checking Tailscale + ADB...
+[02:47:31] Tailscale: 100.91.234.88   anthonys-z-fold6       kxrzppg4hn@  android  active; relay "iad"; offline, last seen 4h ago, tx 14508 rx 0  
+[02:47:31] Fold Tailscale OFFLINE - sleep 150s
+[02:50:01] Attempt 2 - checking Tailscale + ADB...
+[02:50:01] Tailscale: 100.91.234.88   anthonys-z-fold6       kxrzppg4hn@  android  active; relay "iad"; offline, last seen 4h ago, tx 19032 rx 0  
+[02:50:01] Fold Tailscale OFFLINE - sleep 150s
+[02:52:31] Attempt 3 - checking Tailscale + ADB...
+[02:52:31] Tailscale: 100.91.234.88   anthonys-z-fold6       kxrzppg4hn@  android  active; direct 192.168.1.128:35352, tx 43436 rx 59060  
+[02:52:34] adb connect: cannot connect to 100.91.234.88:5555: No connection could be made because the target machine actively refused it. (10061)
+[02:52:37] adb state: adb.exe : error: device '100.91.234.88:5555' not found
+At C:\Users\Gilbert\AppData\Local\Temp\ps-script-a39d8f45-276b-4ebe-b2ae-fd4e5b8a356b.ps1:130 char:13
++   $state = (& $adb -s $target get-state 2>&1 | Out-String).Trim()
++             ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (error: device '...5555' not found:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+[02:52:37] Not online - sleep 150s (deadline 03:29:31)
+[02:55:07] Attempt 4 - checking Tailscale + ADB...
+[02:55:07] Tailscale: 100.91.234.88   anthonys-z-fold6       kxrzppg4hn@  android  active; direct 192.168.1.128:35352, tx 89476 rx 151660  
+[02:55:09] adb connect: cannot connect to 100.91.234.88:5555: No connection could be made because the target machine actively refused it. (10061)
+[02:55:11] adb state: adb.exe : error: device '100.91.234.88:5555' not found
+At C:\Users\Gilbert\AppData\Local\Temp\ps-script-a39d8f45-276b-4ebe-b2ae-fd4e5b8a356b.ps1:130 char:13
++   $state = (& $adb -s $target get-state 2>&1 | Out-String).Trim()
++             ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (error: device '...5555' not found:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+[02:55:11] Not online - sleep 150s (deadline 03:29:31)
+[02:57:41] Attempt 5 - checking Tailscale + ADB...
+[02:57:41] Tailscale: 100.91.234.88   anthonys-z-fold6       kxrzppg4hn@  android  active; direct 192.168.1.128:35352, tx 134472 rx 242864  
+[02:57:43] adb connect: cannot connect to 100.91.234.88:5555: No connection could be made because the target machine actively refused it. (10061)
+[02:57:46] adb state: adb.exe : error: device '100.91.234.88:5555' not found
+At C:\Users\Gilbert\AppData\Local\Temp\ps-script-a39d8f45-276b-4ebe-b2ae-fd4e5b8a356b.ps1:130 char:13
++   $state = (& $adb -s $target get-state 2>&1 | Out-String).Trim()
++             ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (error: device '...5555' not found:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+[02:57:46] Not online - sleep 150s (deadline 03:29:31)
+[03:00:16] Attempt 6 - checking Tailscale + ADB...
+[03:00:16] Tailscale: 100.91.234.88   anthonys-z-fold6       kxrzppg4hn@  android  active; direct 192.168.1.128:35352, tx 181572 rx 337076  
+[03:00:19] adb connect: cannot connect to 100.91.234.88:5555: No connection could be made because the target machine actively refused it. (10061)
+[03:00:21] adb state: adb.exe : error: device '100.91.234.88:5555' not found
+At C:\Users\Gilbert\AppData\Local\Temp\ps-script-a39d8f45-276b-4ebe-b2ae-fd4e5b8a356b.ps1:130 char:13
++   $state = (& $adb -s $target get-state 2>&1 | Out-String).Trim()
++             ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (error: device '...5555' not found:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+[03:00:21] Not online - sleep 150s (deadline 03:29:31)
+[03:02:51] Attempt 7 - checking Tailscale + ADB...
+[03:02:51] Tailscale: 100.91.234.88   anthonys-z-fold6       kxrzppg4hn@  android  active; direct 192.168.1.128:35352, tx 236656 rx 436088  
+[03:02:53] adb connect: cannot connect to 100.91.234.88:5555: No connection could be made because the target machine actively refused it. (10061)
+[03:02:56] adb state: adb.exe : error: device '100.91.234.88:5555' not found
+At C:\Users\Gilbert\AppData\Local\Temp\ps-script-a39d8f45-276b-4ebe-b2ae-fd4e5b8a356b.ps1:130 char:13
++   $state = (& $adb -s $target get-state 2>&1 | Out-String).Trim()
++             ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (error: device '...5555' not found:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+[03:02:56] Not online - sleep 150s (deadline 03:29:31)
+[03:05:26] Attempt 8 - checking Tailscale + ADB...
+[03:05:26] Tailscale: 100.91.234.88   anthonys-z-fold6       kxrzppg4hn@  android  active; direct 192.168.1.128:35352, tx 284896 rx 530624  
+[03:05:28] adb connect: cannot connect to 100.91.234.88:5555: No connection could be made because the target machine actively refused it. (10061)
+[03:05:30] adb state: adb.exe : error: device '100.91.234.88:5555' not found
+At C:\Users\Gilbert\AppData\Local\Temp\ps-script-a39d8f45-276b-4ebe-b2ae-fd4e5b8a356b.ps1:130 char:13
++   $state = (& $adb -s $target get-state 2>&1 | Out-String).Trim()
++             ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (error: device '...5555' not found:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+[03:05:30] Not online - sleep 150s (deadline 03:29:31)
+[03:08:00] Attempt 9 - checking Tailscale + ADB...
+[03:08:00] Tailscale: 100.91.234.88   anthonys-z-fold6       kxrzppg4hn@  android  active; direct 192.168.1.128:35352, tx 509796 rx 5591940  
+[03:08:01] adb connect: already connected to 100.91.234.88:5555
+[03:08:03] adb state: device
+[03:08:03] DEVICE ONLINE - installing APK
+[03:08:14] install: Performing Streamed Install
+Success
+[03:08:15] pkg: versionCode=474 minSdk=26 targetSdk=34
+[03:08:15] pkg: versionName=8.6.204-fable-debug
+[03:08:15] Running auto_gather_spo2_offload.ps1
+Gather already running (lock C:\Users\Gilbert\AppData\Local\Temp\noop-auto-gather-spo2.lock) - skip this pass
+[03:08:15] auto_gather exit=0
+[03:08:16] SYNC/hist hit count in log: 0
+STATUS=OK_ONLINE_INSTALLED_GATHERED exit=0

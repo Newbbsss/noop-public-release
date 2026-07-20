@@ -598,6 +598,12 @@ class WhoopBleClient(
         private const val BACKFILL_IDLE_TIMEOUT_MS = 60_000L
         /** Deferral before the first connect-time offload, so SET_CLOCK/GET_DATA_RANGE round-trip first. */
         private const val INITIAL_BACKFILL_DELAY_MS = 1_500L
+        /**
+         * After a successful 5/MG encrypted handshake, delay before auto-rearming the R22 enable
+         * sequence (same as DEBUG `SIGNAL_HUNT --es mode r22`). Gives clock + CCCD settle time.
+         * Never invents SpO₂ %.
+         */
+        private const val R22_AUTO_REARM_DELAY_MS = 2_500L
         /** 5/MG fail-open gate: how long to wait for a GET_DATA_RANGE SUCCESS before requesting
          *  history anyway (real hardware sometimes swallows the first range query, #78 fork). */
         private const val DATA_RANGE_GATE_MS = 2_000L
@@ -1552,6 +1558,27 @@ class WhoopBleClient(
     @Volatile
     private var connectHandshakeDone = false
 
+    /**
+     * True once this GATT link has auto-fired [enableWhoop5DeepData] (after worn + encrypted gates).
+     * Reset in [reset] so every reconnect can re-arm R22 when the deep-data experiment is on.
+     */
+    @Volatile
+    private var r22AutoRearmDoneThisLink = false
+
+    /** Deferred R22 auto-rearm — same sequence as DEBUG `SIGNAL_HUNT --es mode r22`. Never invents SpO₂ %. */
+    private val r22AutoRearmRunnable = Runnable {
+        if (r22AutoRearmDoneThisLink) return@Runnable
+        if (gatt == null || connectedFamily != DeviceFamily.WHOOP5) return@Runnable
+        if (!didBond || !_state.value.encryptedBond) return@Runnable
+        if (!puffinExperiment.isDeepDataEnabled) return@Runnable
+        if (!_state.value.worn) {
+            log("Deep-data: auto-rearm waiting for on-wrist (R22 is wear-gated)")
+            return@Runnable
+        }
+        r22AutoRearmDoneThisLink = true
+        log("Deep-data: auto-rearm R22 on connect — same as SIGNAL_HUNT r22 (never invents SpO₂ %)")
+        enableWhoop5DeepData()
+    }
     /** True when the user asked to disconnect; suppresses the auto-rescan (Swift `intentionalDisconnect`).
      *  Written on the main looper (connect/disconnect/keep-alive bounce) and read on the GATT binder
      *  thread (handleDisconnect), so it must be @Volatile for cross-thread visibility. */
@@ -4943,6 +4970,8 @@ class WhoopBleClient(
                                 }
                                 ev.startsWith("WRIST_ON") -> {
                                     if (!_state.value.worn) _state.update { it.copy(worn = true) }
+                                    // If handshake auto-rearm deferred for !worn, fire now that we're on-wrist.
+                                    maybeAutoRearmR22OnConnect("WRIST_ON")
                                     // On-wrist after a charge visit: puck is off. Clear sticky charging
                                     // if CHARGING_OFF was missed (SoC can stay flat for hours).
                                     if (_state.value.charging == true) {
@@ -5572,6 +5601,21 @@ class WhoopBleClient(
     }
 
     /**
+     * Schedule R22 auto-rearm after a successful MG/5 encrypted connect (or WRIST_ON if deferred).
+     * Same payload as DEBUG `SIGNAL_HUNT --es mode r22` → [enableWhoop5DeepData]. No SpO₂ %.
+     * No-op when deep-data experiment is off, already armed this link, or not a 5/MG exclusive bond.
+     */
+    private fun maybeAutoRearmR22OnConnect(reason: String) {
+        if (r22AutoRearmDoneThisLink) return
+        if (connectedFamily != DeviceFamily.WHOOP5) return
+        if (!puffinExperiment.isDeepDataEnabled) return
+        if (!didBond || !_state.value.encryptedBond) return
+        handler.removeCallbacks(r22AutoRearmRunnable)
+        log("Deep-data: scheduling R22 auto-rearm in ${R22_AUTO_REARM_DELAY_MS}ms ($reason)")
+        handler.postDelayed(r22AutoRearmRunnable, R22_AUTO_REARM_DELAY_MS)
+    }
+
+    /**
      * DEBUG-only research writer: puffin COMMAND on WHOOP 5/MG that **bypasses the MAIN allowlist**.
      * Lane 2 / SignalHunt need cmds 105–108, GET_FF 128, AFE GETs, 153/154, etc. that
      * [send] drops with "no WHOOP 5/MG framing for this command yet".
@@ -6195,6 +6239,9 @@ class WhoopBleClient(
                 send(CommandNumber.SET_CLOCK, setClockPayload(), withResponse = true)
                 send(CommandNumber.GET_CLOCK, byteArrayOf(), withResponse = true)
                 log("WHOOP 5/MG: clock synced (set/get) — strap can persist history now")
+                // Track A/B overnight funnel: re-arm R22 on every successful encrypted MG/5 connect
+                // when the deep-data experiment is on (mirrors SIGNAL_HUNT mode=r22). No SpO₂ %.
+                maybeAutoRearmR22OnConnect("encrypted-handshake")
                 if (!backfillStarted) {
                     backfillStarted = true
                     handler.postDelayed({ requestSync(BackfillTrigger.CONNECT) }, INITIAL_BACKFILL_DELAY_MS)
@@ -7287,6 +7334,8 @@ class WhoopBleClient(
     private fun reset() {
         didBond = false
         connectHandshakeDone = false
+        r22AutoRearmDoneThisLink = false
+        handler.removeCallbacks(r22AutoRearmRunnable)
         // clockUntrusted is DERIVED from strapNewestTs; clear it so a torn-down connection can't carry
         // a stale future-clock verdict into the next one (PR #228).
         clockUntrusted = false

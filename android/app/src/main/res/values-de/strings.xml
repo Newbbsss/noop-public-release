@@ -91,6 +91,12 @@
     <string name="sleep_stage_deep">Tief</string>
     <string name="sleep_stage_rem">REM</string>
     <string name="sleep_hours_of_sleep">STUNDEN SCHLAF</string>
+    <string name="sleep_time_in_bed">ZEIT IM BETT</string>
+    <string name="sleep_asleep_overline">GESCHLAFEN</string>
+    <string name="sleep_asleep_label_short">geschlafen</string>
+    <string name="sleep_waso_caption">%1$s WASO</string>
+    <string name="sleep_efficiency_formula">Geschlafen ÷ Zeit im Bett</string>
+    <string name="sleep_mono_light_honesty">Light hier = generischer Schlaf — Deep/REM fehlen für diese Nacht. Nicht WHOOPs SWS/REM-Split. Totale unverändert.</string>
     <string name="sleep_restorative_sleep">ERHOLSAMER SCHLAF</string>
     <string name="sleep_restorative_caption">Tief + REM (nicht Tief allein)</string>
     <string name="live_subtitle">Strap-Stream · hält BLE wach · Session-HF auf der Workout-Karte gilt mitten im Satz</string>

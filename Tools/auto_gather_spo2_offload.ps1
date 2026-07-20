@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
   Always-on Fold gather for SpO2 / sleep-offload research (Tailscale ADB).
 
@@ -156,17 +156,28 @@ function Unregister-GatherTask {
     Write-Host "Removed Scheduled Task: $TaskName (if it existed)"
 }
 
+function Test-FoldAdbLive {
+    # devices line alone can race (connect OK then drop). Require get-state + trivial shell.
+    $st = (& $adb -s $serial get-state 2>$null | Out-String).Trim()
+    if ($st -ne "device") { return $false }
+    $echo = (& $adb -s $serial shell "echo noop_adb_ok" 2>$null | Out-String).Trim()
+    return ($echo -match "noop_adb_ok")
+}
+
 function Ensure-FoldAdb {
     if (Test-Path $connectScript) {
         & powershell -NoProfile -ExecutionPolicy Bypass -File $connectScript -TailscaleHost $TailscaleHost -Port $Port
         $code = $LASTEXITCODE
-        if ($code -eq 0) { return $true }
-        Write-Host "connect_fold_tailscale_adb.ps1 exit=$code - trying adb connect directly"
+        if ($code -eq 0 -and (Test-FoldAdbLive)) { return $true }
+        if ($code -eq 0) {
+            Write-Host "connect_fold reported OK but get-state/shell failed - treating as offline"
+        } else {
+            Write-Host "connect_fold_tailscale_adb.ps1 exit=$code - trying adb connect directly"
+        }
     }
     & $adb connect $serial 2>&1 | Out-Host
     Start-Sleep -Seconds 2
-    $online = & $adb devices | Select-Object -Skip 1 | Where-Object { $_ -match [regex]::Escape($serial) -and $_ -match "\tdevice$" }
-    return [bool]$online
+    return [bool](Test-FoldAdbLive)
 }
 
 function Save-Text([string]$path, [string]$content) {
@@ -270,26 +281,51 @@ function Pull-DebugBackfillFull([string]$outDir, [string]$runLog) {
             }
             continue
         }
-        Write-GatherLog "  -> run-as-debug/$f ($len bytes) FULL" $runLog
+        Write-GatherLog "  -> run-as-debug/$f ($($len) bytes) FULL" $runLog
         $ok += ("run-as-debug/{0}" -f $f)
     }
     return $ok
 }
 
+function Invoke-AdbTimed([string[]]$AdbArgs, [int]$TimeoutSec = 8) {
+    # adb can hang indefinitely when the wireless device drops mid-command.
+    $outFile = Join-Path $env:TEMP ("noop-adb-out-{0}.txt" -f [guid]::NewGuid().ToString("N"))
+    $errFile = Join-Path $env:TEMP ("noop-adb-err-{0}.txt" -f [guid]::NewGuid().ToString("N"))
+    try {
+        $p = Start-Process -FilePath $adb -ArgumentList $AdbArgs -NoNewWindow -PassThru `
+            -RedirectStandardOutput $outFile -RedirectStandardError $errFile
+        if (-not $p.WaitForExit([math]::Max(1000, $TimeoutSec * 1000))) {
+            try { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue } catch {}
+            return $null
+        }
+        return (Get-Content -LiteralPath $outFile -ErrorAction SilentlyContinue | Out-String)
+    } finally {
+        Remove-Item -LiteralPath $outFile, $errFile -Force -ErrorAction SilentlyContinue
+    }
+}
 function Wait-HistOffload([int]$seconds, [string]$runLog) {
     Write-GatherLog "Waiting ${seconds}s for hist offload (watch HISTORICAL_DATA_RESULT / NoopSyncNow)..." $runLog
     $deadline = (Get-Date).AddSeconds([math]::Max(5, $seconds))
     $sawHist = $false
     $sawSync = $false
     while ((Get-Date) -lt $deadline) {
-        $chunk = & $adb -s $serial logcat -d -t 120 2>$null | Select-String -Pattern "HISTORICAL_DATA_RESULT|SEND_HISTORICAL|GET_DATA_RANGE|NoopSyncNow|history.*banked|Backfill: session|SYNC_NOW"
+        if (-not (Test-FoldAdbLive)) {
+            Write-GatherLog "ADB dropped during hist wait - aborting wait early" $runLog
+            break
+        }
+        $raw = Invoke-AdbTimed @("-s", $serial, "logcat", "-d", "-t", "120") -TimeoutSec 8
+        if ($null -eq $raw) {
+            Write-GatherLog "adb logcat timed out (device likely offline) - aborting wait early" $runLog
+            break
+        }
+        $chunk = $raw | Select-String -Pattern "HISTORICAL_DATA_RESULT|SEND_HISTORICAL|GET_DATA_RANGE|NoopSyncNow|history.*banked|Backfill: session|SYNC_NOW"
         if ($chunk) {
-            $lines = @($chunk | ForEach-Object { $_.Line })
-            if (-not $sawSync -and ($lines | Where-Object { $_ -match "NoopSyncNow|SYNC_NOW" })) {
+            $hitLines = @($chunk | ForEach-Object { $_.Line })
+            if (-not $sawSync -and ($hitLines | Where-Object { $_ -match "NoopSyncNow|SYNC_NOW" })) {
                 $sawSync = $true
                 Write-GatherLog "SYNC_NOW activity in logcat (defer or syncNow)" $runLog
             }
-            if ($lines | Where-Object { $_ -match "HISTORICAL_DATA_RESULT|SEND_HISTORICAL|GET_DATA_RANGE|Backfill: session|history.*banked" }) {
+            if ($hitLines | Where-Object { $_ -match "HISTORICAL_DATA_RESULT|SEND_HISTORICAL|GET_DATA_RANGE|Backfill: session|history.*banked" }) {
                 $sawHist = $true
                 Write-GatherLog "Hist activity seen in logcat; continuing wait for settle..." $runLog
                 break
@@ -298,7 +334,9 @@ function Wait-HistOffload([int]$seconds, [string]$runLog) {
         Start-Sleep -Seconds 5
     }
     $remain = [int][math]::Max(0, ($deadline - (Get-Date)).TotalSeconds)
-    if ($remain -gt 0) { Start-Sleep -Seconds $remain }
+    if ($remain -gt 0 -and (Test-FoldAdbLive)) {
+        Start-Sleep -Seconds ([math]::Min($remain, 30))
+    }
     if (-not $sawHist) {
         Write-GatherLog "No HISTORICAL_DATA_RESULT in wait window (strap offline, bond-defer race, or already synced) - still pulling full RAW" $runLog
     }
@@ -380,7 +418,7 @@ function Invoke-GatherOnceUnlocked {
         # 8.6.205+ defers ~30s when connected&&!bonded (CLIENT_HELLO race). IPA hist path:
         # Hello -> StrapBacklog -> DataRange -> EnterHighFreqHistoricalMode -> SendHistorical...
         # Older DEBUG builds ignore SYNC_NOW; monkey/resume may still kick hist via ensureStrapSleepBanked.
-        Write-GatherLog "Trigger: launch DEBUG, SYNC_NOW (+bond settle), wait hist ~${HistWaitSeconds}s, SIGNAL_HUNT r22/all" $runLog
+        Write-GatherLog "Trigger: launch DEBUG, SYNC_NOW (plus bond settle), wait hist ~${HistWaitSeconds}s, SIGNAL_HUNT r22/all" $runLog
         & $adb -s $serial shell "monkey -p $DebugPkg -c android.intent.category.LAUNCHER 1" 2>&1 | Out-Null
         Start-Sleep -Seconds 5
         $syncNow = & $adb -s $serial shell "am broadcast -a com.noop.debug.SYNC_NOW -p $DebugPkg" 2>&1 | Out-String
@@ -418,13 +456,17 @@ function Invoke-GatherOnceUnlocked {
         Write-GatherLog "SkipTrigger: still doing FULL backfill pull (hunt path)" $runLog
     }
 
-    Write-GatherLog "Pulling logcat (spo2re / Whoop / SignalHunt / hist)" $runLog
-    $logcat = & $adb -s $serial logcat -d -v threadtime 2>$null |
-        Select-String -Pattern "spo2re |Spo2ReTrace|aux82|aux_byte_82|NoopSignalHunt|NoopSyncNow|WhoopBleClient|GET_DATA_RANGE|SEND_HISTORICAL|HISTORICAL_DATA|Backfill|ensureStrapSleepBanked|optical_aux" |
-        Select-Object -Last 4000
-    $logText = if ($logcat) { ($logcat | ForEach-Object { $_.Line }) -join "`n" } else { "(no matching lines in buffer)" }
-    Save-Text (Join-Path $outDir "logcat-spo2-hist.txt") $logText
-    $manifest.pulled += "logcat-spo2-hist.txt"
+        Write-GatherLog "Pulling logcat (spo2re / Whoop / SignalHunt / hist)" $runLog
+        $logRaw = Invoke-AdbTimed @("-s", $serial, "logcat", "-d", "-v", "threadtime") -TimeoutSec 20
+        if ($null -eq $logRaw) {
+            Write-GatherLog "adb logcat pull timed out - writing empty logcat note" $runLog
+            $logText = "(adb logcat timed out / device offline)"
+        } else {
+            $logcat = $logRaw | Select-String -Pattern "spo2|SpO2|SPO2|aux82|WhoopBle|SignalHunt|HISTORICAL|Backfill|SYNC_NOW|NoopSyncNow|R22|enable_r22|Deep-data"
+            $logText = if ($logcat) { ($logcat | ForEach-Object { $_.Line }) -join [Environment]::NewLine } else { "(no matching lines in buffer)" }
+        }
+        Save-Text (Join-Path $outDir "logcat-spo2-hist.txt") $logText
+        $manifest.pulled += "logcat-spo2-hist.txt"
 
     # Hunt exact next command: FULL whoop5-backfill-capture.jsonl (+.1, events) via exec-out cat
     $bf = @(Pull-DebugBackfillFull -outDir $outDir -runLog $runLog)

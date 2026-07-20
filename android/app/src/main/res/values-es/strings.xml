@@ -87,6 +87,12 @@
     <string name="sleep_stage_deep">Profundo</string>
     <string name="sleep_stage_rem">REM</string>
     <string name="sleep_hours_of_sleep">HORAS DE SUEÑO</string>
+    <string name="sleep_time_in_bed">TIEMPO EN CAMA</string>
+    <string name="sleep_asleep_overline">DORMIDO</string>
+    <string name="sleep_asleep_label_short">dormido</string>
+    <string name="sleep_waso_caption">%1$s WASO</string>
+    <string name="sleep_efficiency_formula">Dormido ÷ tiempo en cama</string>
+    <string name="sleep_mono_light_honesty">Aquí Light es sueño genérico — Deep/REM no disponibles en esta noche. No es el reparto SWS/REM de WHOOP. Totales sin inventar.</string>
     <string name="sleep_restorative_sleep">SUEÑO REPARADOR</string>
     <string name="sleep_restorative_caption">Profundo + REM (no solo profundo)</string>
     <string name="live_subtitle">Stream de la banda · mantiene BLE activo · la FC de sesión en la tarjeta de entrenamiento manda a mitad de serie</string>
