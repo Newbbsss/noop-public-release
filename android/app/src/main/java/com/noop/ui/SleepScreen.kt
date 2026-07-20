@@ -751,12 +751,25 @@ fun SleepScreen(
                 }
                 SleepNightHero(
                     score = heroRest,
-                    // Asleep minutes only — never fall back to time-in-bed (export / #1/#7 honesty).
-                    asleepMin = display?.stages?.asleep?.takeIf { it > 0 }
-                        ?: model?.stages?.asleep?.takeIf { it > 0 },
-                    inBedMin = night?.session?.let { (it.endTs - it.effectiveStartTs) / 60.0 }
-                        ?: display?.stages?.total?.takeIf { it > 0 }
-                        ?: model?.stages?.total?.takeIf { it > 0 },
+                    // Dual-clock: coherent TIB ≥ asleep (session window vs stage sums can disagree).
+                    asleepMin = run {
+                        val rawAsleep = display?.stages?.asleep?.takeIf { it > 0 }
+                            ?: model?.stages?.asleep?.takeIf { it > 0 }
+                        val rawAwake = display?.stages?.awake?.takeIf { it > 0 }
+                            ?: model?.stages?.awake?.takeIf { it > 0 }
+                        val sessionTib = night?.session?.let { (it.endTs - it.effectiveStartTs) / 60.0 }
+                        coherentTibAsleepMinutes(sessionTib, rawAsleep, rawAwake).second
+                    },
+                    inBedMin = run {
+                        val rawAsleep = display?.stages?.asleep?.takeIf { it > 0 }
+                            ?: model?.stages?.asleep?.takeIf { it > 0 }
+                        val rawAwake = display?.stages?.awake?.takeIf { it > 0 }
+                            ?: model?.stages?.awake?.takeIf { it > 0 }
+                        val sessionTib = night?.session?.let { (it.endTs - it.effectiveStartTs) / 60.0 }
+                            ?: display?.stages?.total?.takeIf { it > 0 }
+                            ?: model?.stages?.total?.takeIf { it > 0 }
+                        coherentTibAsleepMinutes(sessionTib, rawAsleep, rawAwake).first
+                    },
                     wasoMin = display?.stages?.awake?.takeIf { it > 0 }
                         ?: model?.stages?.awake?.takeIf { it > 0 },
                     clockLabel = night?.clockLabel ?: model?.clockLabel,
@@ -3056,13 +3069,14 @@ private fun Hero(
             }
         } else {
             val s = display.stages
-            // After a bed/wake edit the session window is the source of truth for time-in-bed,
-            // so the subtitle tracks the edit even before the stage minutes are recomputed. Uses the
-            // EFFECTIVE onset so a hand-edited bedtime is reflected. (#160 / PR #395)
-            val inBedMin = session?.let { (it.endTs - it.effectiveStartTs) / 60.0 } ?: s.total
+            // Session window + stage sums must stay coherent (never TIB < asleep).
+            val sessionTib = session?.let { (it.endTs - it.effectiveStartTs) / 60.0 }
+            val (inBedMinRaw, asleepShown) = coherentTibAsleepMinutes(sessionTib, s.asleep, s.awake)
+            val inBedMin = inBedMinRaw ?: s.total
+            val asleepForSub = asleepShown ?: s.asleep
             val showOnDevice = stagesTimedFromDevice || display.stagesTimedFromDevice
             val subtitle = "${durationText(inBedMin)} ${stringResource(R.string.sleep_time_in_bed).lowercase()} · " +
-                "${durationText(s.asleep)} ${stringResource(R.string.sleep_asleep_label_short)} · " +
+                "${durationText(asleepForSub)} ${stringResource(R.string.sleep_asleep_label_short)} · " +
                 "${display.efficiencyText} · ${stringResource(R.string.sleep_efficiency_formula)}" +
                 (if (showOnDevice) " · on-device stages (approx.)" else "") +
                 (if (s.awake > 0.0) " · ${stringResource(R.string.sleep_waso_caption, durationText(s.awake))}" else "")
@@ -5711,6 +5725,33 @@ internal fun heroDisplay(model: SleepModel?, night: HeroNight?): HeroDisplay? {
         efficiencyFromTib = tibEff != null,
         stagesTimedFromDevice = false,
     )
+}
+
+/**
+ * Dual-clock coherence: session window (bed→wake) and stage-minute sums can disagree
+ * (primary-bout clip, HC vs on-device, edit lag). Never show Time in bed < Asleep —
+ * prefer max(sessionTib, asleep+awake, asleep).
+ */
+internal fun coherentTibAsleepMinutes(
+    sessionTibMin: Double?,
+    asleepMin: Double?,
+    awakeMin: Double? = null,
+): Pair<Double?, Double?> {
+    val asleep = asleepMin?.takeIf { it > 0.0 }
+    val awake = awakeMin?.takeIf { it > 0.0 } ?: 0.0
+    val stageTib = asleep?.let { it + awake }
+    val session = sessionTibMin?.takeIf { it > 0.0 }
+    val tib = when {
+        stageTib != null && session != null -> maxOf(session, stageTib)
+        stageTib != null -> stageTib
+        session != null -> session
+        else -> null
+    }
+    val tibFinal = when {
+        tib != null && asleep != null -> maxOf(tib, asleep)
+        else -> tib
+    }
+    return tibFinal to asleep
 }
 
 /** Fable Sleep #37 — asleep ÷ time-in-bed when stored efficiency / stages SE are missing. */

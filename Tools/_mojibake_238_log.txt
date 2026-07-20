@@ -1,0 +1,38 @@
+﻿fixed_files=1
+  java\com\noop\ui\HealthScreen.kt
+counts:
+  'ΓÇö': 97
+  'Γéé': 21
+  'ΓåÆ': 15
+  '┬╖': 15
+  '┬░': 14
+  '┬▒': 8
+  'ΓÇô': 3
+  'ΓÇª': 2
+  'Γ£ô': 2
+  'ΓÜ\xa0': 2
+  'Γùï': 2
+  'Γåö': 2
+  '├ù': 2
+  'ΓÇÖ': 1
+  'Γëê': 1
+  '╬ö': 1
+emdash bad sample: 'ΓÇö' -> ù
+python : Traceback (most recent call last):
+At C:\Users\Gilbert\AppData\Local\Temp\ps-script-8bf78063-9d01-4f51-9dfa-45cd024a9908.ps1:85 char:1
++ python Tools\_fix_mojibake_238.py 2>&1 | Out-File -Encoding utf8 Tool ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (Traceback (most recent call last)::String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+  File "C:\Users\Gilbert\Documents\Ai app store\noop-v8.4.0-src\Tools\_fix_mojibake_238.py", line 117, in <module>
+    raise SystemExit(main())
+                     ~~~~^^
+  File "C:\Users\Gilbert\Documents\Ai app store\noop-v8.4.0-src\Tools\_fix_mojibake_238.py", line 112, in main
+    print("subscript2 bad:", repr(utf8_as_cp1252("\u2082")), "-> \u2082")
+    ~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Python314\Lib\encodings\cp1252.py", line 19, in encode
+    return codecs.charmap_encode(input,self.errors,encoding_table)[0]
+           ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+UnicodeEncodeError: 'charmap' codec can't encode character '\u2082' in position 3: character maps to <undefined>
+subscript2 bad: 'Γéé' 

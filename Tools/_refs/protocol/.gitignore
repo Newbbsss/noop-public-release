@@ -1,9 +1,0 @@
-node_modules/
-dist/
-*.tsbuildinfo
-
-# Dart
-.dart_tool/
-.packages
-pubspec.lock
-build/

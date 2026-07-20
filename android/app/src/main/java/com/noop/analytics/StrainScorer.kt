@@ -265,8 +265,8 @@ object StrainScorer {
     const val movementStepsNoiseFloor: Int = 5_000
     /** @deprecated Kept for API compat; kcal no longer raises the floor (total-day kcal was wrong). */
     const val movementKcalNoiseFloor: Double = 250.0
-    /** Hard cap — steps alone never invent high cardio Effort. */
-    const val movementFloorCap: Double = 22.0
+    /** Hard cap — steps alone never invent high cardio Effort. Moderate days land nearer ~11. */
+    const val movementFloorCap: Double = 12.0
     /**
      * Excess-steps scale for the convex curve: floor ≈ cap × (excess / scale)^exponent,
      * clipped to [0, cap]. ~22k excess (~27k total steps) approaches the cap.
@@ -281,7 +281,7 @@ object StrainScorer {
      * Movement-derived Effort floor (0…[movementFloorCap]) from band steps.
      * Band / day steps only — never phone steps as primary (caller must pass strap or estimate).
      * Rest / desk morning (under noise floors) → 0. Mid walk (~10–12k) → low single digits.
-     * Very high step days climb faster toward the cap; cardio TRIMP still wins when higher.
+     * High step days climb toward ~11–12 (was ~22); cardio TRIMP still wins when higher.
      *
      * [activeKcal] is accepted for call-site compat but **ignored** — `DailyMetric.activeKcalEst`
      * is whole-day energy, not active-only, and was pinning Effort near the cap on rest mornings.

@@ -19,6 +19,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CloudUpload
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.Restore
+import androidx.compose.material.icons.outlined.Cloud
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -44,10 +45,10 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
- * Backup & Sync (Phase 1 - folder). Apple mirror of `BackupSyncView`: pick a folder, turn on the
- * opt-in daily auto-backup, back up now, or restore. Snapshots are the existing `.noopbak` whole-DB
- * format ([DataBackup]). Point the folder at a Google Drive / Dropbox sync app for off-device backup
- * with no in-app cloud account.
+ * Backup & Sync — folder via SAF. Apple mirror of `BackupSyncView`: pick a folder (including a
+ * Google Drive folder from the system picker), turn on the opt-in daily auto-backup, back up now,
+ * or restore. Snapshots are the existing `.noopbak` whole-DB format ([DataBackup]). No Drive SDK /
+ * OAuth — Drive only shows when the Google Drive app (and usually Play services) is on the phone.
  *
  * Must-fixes baked in here:
  *  1. Restore lists the snapshots in the CHOSEN folder (newest-first) and lets the user pick one,
@@ -77,6 +78,10 @@ fun BackupSyncScreen() {
     var snapshots by remember { mutableStateOf<List<BackupSync.SnapshotDoc>>(emptyList()) }
     var showSnapshotPicker by remember { mutableStateOf(false) }
     var pendingRestore by remember { mutableStateOf<Pair<String, Uri>?>(null) }
+    // Honest Drive help when the Drive app isn't installed (or the user wants the explanation).
+    var showDriveHelp by remember { mutableStateOf(false) }
+
+    val driveLinked = treeUri?.let { BackupCloudHints.isDriveUri(it) } == true
 
     // Runs the actual destructive restore for a chosen backup Uri, off the main thread.
     fun runRestore(uri: Uri) {
@@ -119,15 +124,39 @@ fun BackupSyncScreen() {
         ActivityResultContracts.OpenDocumentTree(),
     ) { uri ->
         if (uri == null) return@rememberLauncherForActivityResult
-        runCatching {
+        val persistOk = runCatching {
             context.contentResolver.takePersistableUriPermission(
                 uri,
                 Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION,
             )
-        }
+            true
+        }.getOrDefault(false)
         BackupSyncPrefs.setTreeUri(context, uri)
         treeUri = uri
         runCatching { BackupSync.reschedule(context) }
+        when {
+            !persistOk -> Toast.makeText(
+                context,
+                "Folder linked, but Android didn't grant lasting access. Daily auto-backup may " +
+                    "fail after a restart — re-pick the folder if that happens. Some Drive builds do this.",
+                Toast.LENGTH_LONG,
+            ).show()
+            BackupCloudHints.isDriveUri(uri) -> Toast.makeText(
+                context,
+                "Google Drive folder linked. NOOP writes backups here; Drive syncs them with your account.",
+                Toast.LENGTH_LONG,
+            ).show()
+            else -> Unit
+        }
+    }
+
+    fun launchFolderPicker(preferDrive: Boolean) {
+        if (preferDrive && !BackupCloudHints.isDriveAppInstalled(context)) {
+            showDriveHelp = true
+            return
+        }
+        // Prefer Drive's DocumentsProvider root when asked; otherwise the system default.
+        pickFolder.launch(if (preferDrive) BackupCloudHints.drivePickerHintUri() else null)
     }
 
     // Must-fix #1 + #3: the FILE fallback is tightened to the backup MIME types (was `*/*`). Used only
@@ -143,29 +172,45 @@ fun BackupSyncScreen() {
 
     LazyScreenScaffold(
         title = "Backup & Sync",
-        subtitle = "Save a full backup to a folder you choose - point it at Google Drive / Dropbox for off-device sync.",
+        subtitle = "Save full .noopbak snapshots to a folder you choose — including Google Drive via Android's file picker (no in-app Drive login).",
     ) {
         // 1 · Destination folder
         item {
-            NoopCard(padding = 20.dp) {
+            NoopCard(padding = 20.dp, tint = if (driveLinked) Palette.accent else null) {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text("Backup folder", style = NoopType.headline, color = Palette.textPrimary)
                     Text(
-                        treeUri?.let { "Saving to: ${folderLabel(it)}" }
-                            ?: "No folder chosen yet. Pick one your cloud app already syncs, or any local folder.",
+                        treeUri?.let {
+                            if (driveLinked) {
+                                "Linked: ${BackupCloudHints.folderDisplayLabel(it)}"
+                            } else {
+                                "Saving to: ${BackupCloudHints.folderDisplayLabel(it)}"
+                            }
+                        } ?: "No folder chosen yet. Use Google Drive for off-device copies, or any local folder.",
                         style = NoopType.footnote, color = Palette.textTertiary,
                     )
                     Text(
-                        "Tip: a desktop Drive / Dropbox app auto-syncs a chosen folder. On the phone, save to a " +
-                            "folder a sync app (e.g. FolderSync / Autosync) keeps in your cloud.",
+                        "NOOP never signs into Drive. In the system picker, open Google Drive and " +
+                            "choose (or create) a folder. Needs the Google Drive app — and Google Play " +
+                            "services on most phones. Without them, Drive won't appear; pick Downloads " +
+                            "or another folder instead.",
                         style = NoopType.caption, color = Palette.accent,
                     )
                     NoopButton(
-                        text = if (treeUri == null) "Choose folder" else "Change folder",
+                        text = if (driveLinked) "Change Google Drive folder" else "Use Google Drive…",
+                        leadingIcon = Icons.Outlined.Cloud,
+                        kind = NoopButtonKind.Primary,
+                        enabled = !busy,
+                        fullWidth = true,
+                        onClick = { launchFolderPicker(preferDrive = true) },
+                    )
+                    NoopButton(
+                        text = if (treeUri == null) "Choose any folder" else "Change to another folder",
                         leadingIcon = Icons.Filled.FolderOpen,
                         kind = NoopButtonKind.Secondary,
                         enabled = !busy,
-                        onClick = { pickFolder.launch(null) },
+                        fullWidth = true,
+                        onClick = { launchFolderPicker(preferDrive = false) },
                     )
                 }
             }
@@ -325,9 +370,13 @@ fun BackupSyncScreen() {
                                 Toast.makeText(
                                     context,
                                     if (ok) {
-                                        "Backed up to your folder."
+                                        if (driveLinked) {
+                                            "Backed up to Google Drive."
+                                        } else {
+                                            "Backed up to your folder."
+                                        }
                                     } else {
-                                        "Backup failed - re-pick the folder and try again."
+                                        "Backup failed — re-pick the folder (or Google Drive) and try again."
                                     },
                                     Toast.LENGTH_LONG,
                                 ).show()
@@ -460,6 +509,48 @@ fun BackupSyncScreen() {
             },
         )
     }
+
+    if (showDriveHelp) {
+        AlertDialog(
+            onDismissRequest = { showDriveHelp = false },
+            containerColor = Palette.surfaceOverlay,
+            title = {
+                Text("Google Drive", style = NoopType.title2, color = Palette.textPrimary)
+            },
+            text = {
+                Text(
+                    "The Google Drive app isn't on this phone (or isn't visible to the file picker). " +
+                        "NOOP doesn't sign into Drive itself — it uses Android's folder picker, so Drive " +
+                        "only appears when the Drive app is installed. On most phones that also means " +
+                        "Google Play services. Without them, pick any local folder instead, or install Drive.",
+                    style = NoopType.subhead,
+                    color = Palette.textSecondary,
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    showDriveHelp = false
+                    BackupCloudHints.openDrivePlayStore(context)
+                }) {
+                    Text("Get Drive", style = NoopType.body, color = Palette.accent)
+                }
+            },
+            dismissButton = {
+                Row {
+                    TextButton(onClick = {
+                        showDriveHelp = false
+                        // Let them try the system picker anyway — some ROMs list Drive without the package check.
+                        pickFolder.launch(BackupCloudHints.drivePickerHintUri())
+                    }) {
+                        Text("Try picker", style = NoopType.body, color = Palette.textSecondary)
+                    }
+                    TextButton(onClick = { showDriveHelp = false }) {
+                        Text("Cancel", style = NoopType.body, color = Palette.textSecondary)
+                    }
+                }
+            },
+        )
+    }
 }
 
 /**
@@ -477,9 +568,3 @@ private val RESTORE_MIME_TYPES = arrayOf(
     "application/zip",
     "application/x-sqlite3",
 )
-
-/** A short, human label for a SAF tree Uri (the part after the volume colon). */
-private fun folderLabel(treeUri: Uri): String {
-    val seg = treeUri.lastPathSegment ?: return "selected folder"
-    return seg.substringAfterLast(':').ifBlank { seg }
-}

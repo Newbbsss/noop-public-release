@@ -166,4 +166,28 @@ class BackupSyncTest {
         val out = BackupSync.restorableDocsNewestFirst(listOf(z, a), { it.docName }, { it.modified })
         assertEquals(listOf("a", "z"), out.map { it.id })
     }
+
+    @Test fun driveAuthorityDetectionAndLabels() {
+        assertTrue(BackupCloudHints.isDriveAuthority("com.google.android.apps.docs.storage"))
+        assertTrue(BackupCloudHints.isDriveAuthority("com.google.android.apps.docs.storage.legacy"))
+        assertFalse(BackupCloudHints.isDriveAuthority("com.android.externalstorage.documents"))
+        assertFalse(BackupCloudHints.isDriveAuthority(null))
+        assertEquals(
+            BackupSync.Destination.GOOGLE_DRIVE,
+            BackupSync.destinationOfAuthority("com.google.android.apps.docs.storage"),
+        )
+        assertEquals(
+            BackupSync.Destination.FOLDER,
+            BackupSync.destinationOfAuthority("com.android.externalstorage.documents"),
+        )
+        assertEquals("Google Drive", BackupCloudHints.folderDisplayLabel("com.google.android.apps.docs.storage", "root"))
+        assertEquals(
+            "Google Drive · My Drive",
+            BackupCloudHints.folderDisplayLabel("com.google.android.apps.docs.storage", "home"),
+        )
+        assertEquals(
+            "NOOP",
+            BackupCloudHints.folderDisplayLabel("com.android.externalstorage.documents", "primary:NOOP"),
+        )
+    }
 }

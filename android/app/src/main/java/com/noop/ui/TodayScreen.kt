@@ -1197,11 +1197,14 @@ fun TodayScreen(
     // Derived from lastScoredRecoveryDay so Charge and every other recovery tile carry the SAME prior day.
     val lastScoredCharge: LastCharge? = remember(lastScoredRecoveryDay, heroSnap, carryOverTodayKey, daysPrimed) {
         lastScoredRecoveryDay?.let { prior ->
-            prior.recovery?.let { LastCharge(it, carriedCaption(prior.day, carryOverTodayKey)) }
-        } ?: heroSnap?.charge?.takeIf { !daysPrimed || lastScoredRecoveryDay == null }?.let { v ->
-            // Cold-open / empty Room: paint last Charge from prefs until days load (never invent).
-            LastCharge(v, carriedCaption(heroSnap.day, carryOverTodayKey))
-        }
+            prior.recovery?.takeIf(::isUsableChargeScore)?.let {
+                LastCharge(it, carriedCaption(prior.day, carryOverTodayKey))
+            }
+        } ?: heroSnap?.charge
+            // Cold-open: only paint a real 0–100 Charge. Blank until primed / junk snap rejected
+            // (fraction or trivial ~1.x used to roundToInt as Charge=1).
+            ?.takeIf { isUsableChargeScore(it) && (!daysPrimed || lastScoredRecoveryDay == null) }
+            ?.let { v -> LastCharge(v, carriedCaption(heroSnap.day, carryOverTodayKey)) }
     }
     // Persist last painted hero scores across process death / APK updates (SharedPreferences).
     LaunchedEffect(
@@ -1209,7 +1212,7 @@ fun TodayScreen(
         displayMetric?.strain, restScoreForDay, stressToday, displayMetric?.skinTempDevC, lastVitalsDay,
     ) {
         if (selectedDayOffset != 0) return@LaunchedEffect
-        val charge = displayMetric?.recovery ?: lastScoredCharge?.value
+        val charge = (displayMetric?.recovery ?: lastScoredCharge?.value)?.takeIf(::isUsableChargeScore)
         val effort = effectiveEffortStrain(
             live = liveTodayStrain,
             stored = displayMetric?.strain,
@@ -6539,13 +6542,24 @@ internal fun lastScoredRecoveryDay(
     today: String = "9999-12-31",
 ): DailyMetric? {
     if (!isToday || todayScored || isCalibrating) return null
-    // Prefer real NOOP Charge (> trivial). Skip whoop-app manual labels if they leak into the list.
+    // Prefer real NOOP Charge on the 0–100 axis. Reject fractions / near-zero (cold-open painted
+    // roundToInt(1.x) or 0–1 logistic leftovers as Charge=1). Skip whoop-app manual labels.
     return days.lastOrNull {
         val r = it.recovery
-        r != null && r >= 1.0 && it.day != selectedDayKey && it.day <= today &&
+        r != null && isUsableChargeScore(r) && it.day != selectedDayKey && it.day <= today &&
             !it.deviceId.equals("whoop-app", ignoreCase = true)
     }
 }
+
+/**
+ * True when [v] looks like a real Charge score on the 0–100 product axis.
+ * Rejects logistic fractions (~0–1), trivial <5 leftovers, and out-of-range junk so cold-open
+ * HeroScoreSnapshot / carry never paints Charge as 1.
+ */
+internal fun isUsableChargeScore(v: Double): Boolean = v in MIN_USABLE_CHARGE..100.0
+
+/** Floor for paint/carry — below this is not a believable overnight Charge (see [isUsableChargeScore]). */
+internal const val MIN_USABLE_CHARGE: Double = 5.0
 
 /** A prior day's Charge carried over on TODAY (value + "Last night · <date>" caption) while tonight's
  *  recovery hasn't been scored yet (#543). Mirrors the iOS lastScoredCharge tuple. */

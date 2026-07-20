@@ -3604,6 +3604,7 @@ fun SettingsScreen(
                     icon = Icons.Filled.Info,
                     iconTint = Palette.textTertiary,
                     text = "Importing overwrites everything currently on this phone. Your old data is kept in a side file just in case. NOOP restarts automatically after a successful import. " +
+                        "Export / Import use Android's file picker â€” choose Google Drive there to save or open a .noopbak off-device (needs the Drive app; NOOP does not sign into Drive). " +
                         "Export CSV writes a WHOOP-format zip of your days, sleeps, workouts and journal that re-imports into NOOP on Android or Mac. On-device computed rows are marked APPROXIMATE in its Source column; the .noopbak backup stays the lossless restore path.",
                 )
                 // SHIP #386 â€” FullRelease / new-phone merge checklist (user-facing, not docs-only).
@@ -3623,7 +3624,7 @@ fun SettingsScreen(
         SettingsSection(
             icon = Icons.Filled.CloudSync,
             title = "Automatic backups",
-            blurb = "Have NOOP save a dated backup to a folder every day (around 1am) and keep the last several - so if data ever corrupts, restore the newest. Point the folder at Drive/Dropbox for off-device copies. Off until you switch it on.",
+            blurb = "Have NOOP save a dated backup to a folder every day (around 1am) and keep the last several â€” so if data ever corrupts, restore the newest. Use Google Drive from the system folder picker (needs the Drive app / Play services; NOOP never signs in), or any local folder. Off until you switch it on.",
         ) {
             NoopButton(
                 text = "Set up automatic backups",

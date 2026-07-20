@@ -220,8 +220,8 @@ class ChargeEffortRestScoringTest {
     fun effort_movementFloor_convexWalkNotHotEarly() {
         // Smoking gun 2026-07-17: old log floor hit ~22 at ~12k steps while WHOOP Strain was 0.1.
         val at12k = StrainScorer.movementFloor(12_000, null)
-        assertTrue("12k walk should move Effort a little", at12k > 0.5)
-        assertTrue("12k walk must stay low single-digits (was ~22)", at12k < 8.0)
+        assertTrue("12k walk should move Effort a little", at12k > 0.3)
+        assertTrue("12k walk must stay low single-digits (was ~22)", at12k < 5.0)
 
         val at8k = StrainScorer.movementFloor(8_000, null)
         val at20k = StrainScorer.movementFloor(20_000, null)
@@ -231,8 +231,9 @@ class ChargeEffortRestScoringTest {
 
         // Cardio TRIMP still wins when higher.
         assertEquals(40.0, StrainScorer.withMovementFloor(40.0, 12_000, 400.0)!!, 0.0)
-        // Steps alone never invent a hard-workout day.
+        // Steps alone never invent a hard-workout day — cap ~12 so moderate lands nearer ~11.
         assertTrue(StrainScorer.movementFloor(30_000, 2_000.0) <= StrainScorer.movementFloorCap)
+        assertTrue(StrainScorer.movementFloorCap <= 12.0 + 1e-9)
         assertEquals(
             StrainScorer.movementFloor(12_000, null),
             StrainScorer.withMovementFloor(0.0, 12_000, null)!!,

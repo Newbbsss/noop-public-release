@@ -1144,7 +1144,7 @@ object NoopPrefs {
             if (p.contains(key)) p.getFloat(key, Float.NaN).toDouble().takeIf { !it.isNaN() } else null
         return HeroScoreSnapshot(
             day = day,
-            charge = d(KEY_HERO_SNAP_CHARGE),
+            charge = d(KEY_HERO_SNAP_CHARGE)?.takeIf { it in 5.0..100.0 },
             effort = d(KEY_HERO_SNAP_EFFORT),
             rest = d(KEY_HERO_SNAP_REST),
             stress = d(KEY_HERO_SNAP_STRESS),
@@ -1157,7 +1157,9 @@ object NoopPrefs {
         fun put(key: String, v: Double?) {
             if (v == null) e.remove(key) else e.putFloat(key, v.toFloat())
         }
-        put(KEY_HERO_SNAP_CHARGE, snap.charge)
+        // Never persist a junk Charge (fraction / trivial ~1) — cold-open would paint it as 1.
+        val charge = snap.charge?.takeIf { it in 5.0..100.0 }
+        put(KEY_HERO_SNAP_CHARGE, charge)
         put(KEY_HERO_SNAP_EFFORT, snap.effort)
         put(KEY_HERO_SNAP_REST, snap.rest)
         put(KEY_HERO_SNAP_STRESS, snap.stress)

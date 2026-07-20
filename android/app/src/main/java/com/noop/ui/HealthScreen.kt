@@ -1,9 +1,11 @@
-package com.noop.ui
+﻿package com.noop.ui
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -16,6 +18,9 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.CompareArrows
@@ -34,6 +39,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -51,6 +57,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.clearAndSetSemantics
@@ -71,6 +78,7 @@ import com.noop.analytics.IllnessSignalEngine
 import com.noop.analytics.V5HealthSignals
 import com.noop.analytics.FitnessAgeEngine
 import com.noop.analytics.VitalityEngine
+import com.noop.analytics.FitnessAgeConfidence
 import com.noop.analytics.FitnessAgeReadiness
 import com.noop.analytics.FitnessReadinessItem
 import com.noop.analytics.FitnessReadinessRole
@@ -85,6 +93,7 @@ import java.time.format.DateTimeFormatter
 import java.util.Locale
 import kotlin.math.roundToInt
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 // MARK: - Health Monitor (ported from Strand/Screens/HealthView.swift)
 //
@@ -183,7 +192,7 @@ fun HealthScreen(
             item { VitalitySection(vm = vm, days = days, profile = profile) }
             // SKIN TEMPERATURE (v5 pillar) — Cycle awareness (opt-in), Body clock + an illness heads-up,
             // each from a pure engine RESULT the ViewModel publishes. A section of Health, never its own
-            // destination (umbrella §2.4). Non-clinical observations about your own numbers.
+            // destination (umbrella Â§2.4). Non-clinical observations about your own numbers.
             item { Spacer(Modifier.height(Metrics.selectorTopUp)) }
             item {
                 SkinTempSuiteSection(
@@ -428,10 +437,10 @@ private fun RecordRow(
 // MARK: - Skin-temperature suite (v5 pillar) — a Health section
 //
 // Composes the locked SkinTempCardsScreen cards from the engine RESULTS the ViewModel publishes:
-//   • Cycle awareness — OPT-IN (default OFF). Shows the opt-in card until enabled, then the result card.
-//   • Body clock — rendered only when the engine returned a phase estimate (the activity-bin input pipe
+//   â€¢ Cycle awareness — OPT-IN (default OFF). Shows the opt-in card until enabled, then the result card.
+//   â€¢ Body clock — rendered only when the engine returned a phase estimate (the activity-bin input pipe
 //     is a future source; until then it's silently absent rather than a faked card).
-//   • Illness heads-up — rendered only when the engine returned a non-quiet level, mirroring the existing
+//   â€¢ Illness heads-up — rendered only when the engine returned a non-quiet level, mirroring the existing
 //     amber-alert treatment; never a diagnosis.
 // Every card carries its own privacy + non-clinical copy; the section header keeps the umbrella framing.
 
@@ -734,14 +743,17 @@ private fun FitnessAgeSection(vm: AppViewModel, days: List<DailyMetric>, profile
     }
 
     var showChecklist by remember { mutableStateOf(false) }
-    // SHIP #230 — ignore provisional until calibrated (weekly banked value), unless user asks.
+    // Early live estimate: auto-show when readiness is READY/ESTIMATE (or banked weekly value).
     var showEarlyEstimate by remember { mutableStateOf(false) }
 
     Column(verticalArrangement = Arrangement.spacedBy(Metrics.gap)) {
         SectionHeader("Fitness Age", overline = "Weekly", trailing = "± 5 yr")
         val value = fitnessAge
         val bankedOnly = provisionalCaption == null && value != null
-        if (value != null && (bankedOnly || showEarlyEstimate)) {
+        val readinessAllows = readiness.confidence == FitnessAgeConfidence.READY ||
+            readiness.confidence == FitnessAgeConfidence.ESTIMATE
+        // Show when banked, readiness says READY/ESTIMATE, or user tapped early estimate.
+        if (value != null && (bankedOnly || readinessAllows || showEarlyEstimate)) {
             FitnessAgeHero(
                 fitnessAge = value,
                 chronoAge = profile.age,
@@ -759,7 +771,7 @@ private fun FitnessAgeSection(vm: AppViewModel, days: List<DailyMetric>, profile
             // No weekly value yet — lead with a concrete countdown, then the checklist.
             FitnessReadinessCard(readiness = readiness, headed = true,
                 lead = fitnessReadyLead(rhrDays, profile.age > 0, profile.sex.isNotBlank()))
-            if (value != null && provisionalCaption != null && !showEarlyEstimate) {
+            if (value != null && provisionalCaption != null && !showEarlyEstimate && !readinessAllows) {
                 TextButton(onClick = { showEarlyEstimate = true }) {
                     Text(
                         "Show early estimate (still calibrating)",
@@ -1100,7 +1112,7 @@ private fun FitnessAgeHero(
                     color = Palette.accent,
                 )
                 Text(
-                    if (checklistOpen) "▾" else "›",
+                    if (checklistOpen) "â–¾" else "â€º",
                     style = NoopType.captionNumber,
                     color = Palette.accent,
                 )
@@ -1871,26 +1883,42 @@ private fun VitalsSection(
                     // Keyed on the vital key so each tile keeps a stable source across recomposition.
                     // The detail route (onVitalClick) is unchanged.
                     val tileInteraction = remember(v.key) { MutableInteractionSource() }
-                    VitalTile(
-                        modifier = Modifier
-                            .weight(1f)
-                            .liquidPress(tileInteraction)
-                            .clickable(
-                                interactionSource = tileInteraction,
-                                indication = null,
-                            ) { onVitalClick(v.key) }
-                            .semantics { contentDescription = v.accessibilityText },
-                        vital = v,
-                        value = v.formattedValue ?: "—",
-                        caption = when (captionMode) {
-                            VitalCaptionMode.AS_OF -> v.asOfLabel ?: v.stateCaption
-                            VitalCaptionMode.RANGE -> v.rangeCaption ?: v.stateCaption
-                        },
-                        accent = v.accent,
-                    )
+                    if (v.key == "skin" && v.skinSwipe != null) {
+                        SkinTempVitalTile(
+                            modifier = Modifier
+                                .weight(1f)
+                                .liquidPress(tileInteraction),
+                            vital = v,
+                            swipe = v.skinSwipe,
+                            caption = when (captionMode) {
+                                VitalCaptionMode.AS_OF -> v.asOfLabel ?: v.stateCaption
+                                VitalCaptionMode.RANGE -> v.rangeCaption ?: v.stateCaption
+                            },
+                            accent = v.accent,
+                            onOpenDetail = { onVitalClick(v.key) },
+                        )
+                    } else {
+                        VitalTile(
+                            modifier = Modifier
+                                .weight(1f)
+                                .liquidPress(tileInteraction)
+                                .clickable(
+                                    interactionSource = tileInteraction,
+                                    indication = null,
+                                ) { onVitalClick(v.key) }
+                                .semantics { contentDescription = v.accessibilityText },
+                            vital = v,
+                            value = v.formattedValue ?: "—",
+                            caption = when (captionMode) {
+                                VitalCaptionMode.AS_OF -> v.asOfLabel ?: v.stateCaption
+                                VitalCaptionMode.RANGE -> v.rangeCaption ?: v.stateCaption
+                            },
+                            accent = v.accent,
+                        )
+                    }
                 }
                 // Pad an odd final row so the tile keeps half-width, matching the grid.
-                if (rowVitals.size == 1) Spacer(Modifier.weight(1f))
+                if (rowVitals.size == 1) Spacer(modifier = Modifier.weight(1f))
             }
         }
 
@@ -1915,6 +1943,16 @@ private fun VitalsSection(
 
 // MARK: - Vital model
 
+/** Two-page skin-temp mini-card: baselines (tonight + personal) ↔ signed difference. */
+private data class SkinTempSwipe(
+    val tonightLabel: String,
+    val tonightValue: String,
+    val baselineLabel: String,
+    val baselineValue: String,
+    val diffValue: String,
+    val diffCaption: String,
+)
+
 private data class Vital(
     val key: String,
     val label: String,
@@ -1934,6 +1972,8 @@ private data class Vital(
     /** Trailing values (oldest → newest) for the tile's metric-tinted sparkline trail, matching
      *  Today's Key-Metrics tiles. Presentation-only; defaulted so existing call sites compile. */
     val sparkline: List<Double> = emptyList(),
+    /** When set (skin tile), swipe between baseline temps and difference. */
+    val skinSwipe: SkinTempSwipe? = null,
 ) {
     /** Value with its unit appended, or null when no data. */
     val formattedValue: String? = value?.let { "${format(it)} $unit" }
@@ -2039,6 +2079,54 @@ private fun vitalsFor(
     val previousSkin = history.asReversed().asSequence()
         .mapNotNull { row -> row.skinTempDevC?.takeIf { VitalBands.isAbsoluteSkinTemp(it) == skinIsAbsolute } }
         .firstOrNull()
+    // Personal absolute baseline from absolute-°C nights only (MG deviation nights don't seed °C mean).
+    val absHistoryForBaseline = history.map { row ->
+        row.skinTempDevC?.takeIf { VitalBands.isAbsoluteSkinTemp(it) }
+    }
+    val skinBaselineState = Baselines.foldHistory(
+        absHistoryForBaseline,
+        Baselines.metricCfg.getValue("skin_temp"),
+    )
+    val personalBaselineC = skinBaselineState.takeIf { it.usable }?.baseline
+    val tonightAbsC: Double? = when {
+        skin == null -> null
+        skinIsAbsolute -> skin
+        personalBaselineC != null -> personalBaselineC + skin
+        else -> null
+    }
+    val diffVsBaselineC: Double? = when {
+        skin == null -> null
+        !skinIsAbsolute -> skin
+        personalBaselineC != null -> skin - personalBaselineC
+        previousSkin != null && skinIsAbsolute -> skin - previousSkin
+        else -> null
+    }
+    val absFormat: (Double) -> String = { c ->
+        UnitFormatter.temperatureFromCelsius(c, tempUnit, decimals = 1)
+            .removeSuffix(" $skinUnitLabel")
+    }
+    val deltaFormat: (Double) -> String = { c ->
+        UnitFormatter.temperatureDeltaFromCelsius(c, tempUnit, decimals = 1)
+            .removeSuffix(" $skinUnitLabel")
+    }
+    val skinSwipe: SkinTempSwipe? = if (skin == null) null else SkinTempSwipe(
+        tonightLabel = "Tonight",
+        tonightValue = tonightAbsC?.let { "${absFormat(it)} $skinUnitLabel" }
+            ?: skinFormat(skin).let { "$it $skinUnitLabel" },
+        baselineLabel = if (personalBaselineC != null) "Baseline" else "Last night",
+        baselineValue = when {
+            personalBaselineC != null -> "${absFormat(personalBaselineC)} $skinUnitLabel"
+            previousSkin != null && skinIsAbsolute -> "${absFormat(previousSkin)} $skinUnitLabel"
+            previousSkin != null -> "${skinFormat(previousSkin)} $skinUnitLabel"
+            else -> "—"
+        },
+        diffValue = diffVsBaselineC?.let { "${deltaFormat(it)} $skinUnitLabel" } ?: "—",
+        diffCaption = when {
+            personalBaselineC != null -> "vs your baseline"
+            previousSkin != null -> "vs last night"
+            else -> "Need more nights for baseline"
+        },
+    )
     val respRangeCaption = rangeCaption(days.mapNotNull { it.respRateBpm }, "rpm") { String.format(Locale.US, "%.1f", it) }
     val spo2RangeCaption = rangeCaption(days.mapNotNull { it.spo2Pct }, "%") { String.format(Locale.US, "%.0f", it) }
     val rhrRangeCaption = rangeCaption(days.mapNotNull { it.restingHr?.toDouble() }, "bpm") { it.roundToInt().toString() }
@@ -2134,7 +2222,7 @@ private fun vitalsFor(
         Vital(
             key = "skin",
             // SHIP #206 — family label: MG/5 deviation vs absolute import, never mixed.
-            label = if (skinIsAbsolute) "Skin Temp · absolute" else "Skin Temp · vs baseline",
+            label = if (skinIsAbsolute) "Skin Temp" else "Skin Temp · Δ",
             unit = skinUnitLabel,
             missingCaption = "No nightly skin-temp value",
             value = skin, format = skinFormat,
@@ -2151,8 +2239,140 @@ private fun vitalsFor(
             sparkline = trail(skin) { row ->
                 row.skinTempDevC?.takeIf { VitalBands.isAbsoluteSkinTemp(it) == skinIsAbsolute }
             },
+            skinSwipe = skinSwipe,
         ),
     )
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun SkinTempVitalTile(
+    vital: Vital,
+    swipe: SkinTempSwipe,
+    modifier: Modifier = Modifier,
+    caption: String = vital.stateCaption,
+    accent: Color = vital.accent,
+    onOpenDetail: () -> Unit,
+) {
+    val pagerState = rememberPagerState(pageCount = { 2 })
+    val scope = rememberCoroutineScope()
+    NoopCard(modifier = modifier.height(Metrics.tileHeight), padding = Metrics.space14, tint = accent) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .pointerInput(pagerState.currentPage) {
+                    detectTapGestures(
+                        onTap = {
+                            val next = (pagerState.currentPage + 1) % 2
+                            scope.launch { pagerState.animateScrollToPage(next) }
+                        },
+                        onLongPress = { onOpenDetail() },
+                    )
+                }
+                .semantics {
+                    contentDescription = "${vital.accessibilityText}. Swipe or tap to flip baselines and difference. Long press for detail."
+                },
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Text(
+                text = vital.label,
+                style = NoopType.overline,
+                color = Palette.textSecondary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            HorizontalPager(
+                state = pagerState,
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth(),
+                userScrollEnabled = true,
+            ) { page ->
+                when (page) {
+                    0 -> Column(
+                        modifier = Modifier.fillMaxSize(),
+                        verticalArrangement = Arrangement.Center,
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                    ) {
+                        Text(
+                            swipe.tonightValue,
+                            style = NoopType.tileValueLarge,
+                            color = accent,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        Text(
+                            swipe.tonightLabel,
+                            style = NoopType.caption,
+                            color = Palette.textTertiary,
+                        )
+                        Spacer(modifier = Modifier.height(Metrics.space4))
+                        Text(
+                            swipe.baselineValue,
+                            style = NoopType.headline,
+                            color = Palette.textPrimary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        Text(
+                            swipe.baselineLabel,
+                            style = NoopType.caption,
+                            color = Palette.textTertiary,
+                        )
+                    }
+                    else -> Column(
+                        modifier = Modifier.fillMaxSize(),
+                        verticalArrangement = Arrangement.Center,
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                    ) {
+                        Text(
+                            swipe.diffValue,
+                            style = NoopType.tileValueLarge,
+                            color = accent,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        Text(
+                            swipe.diffCaption,
+                            style = NoopType.caption,
+                            color = Palette.textTertiary,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                }
+            }
+            // Centered 2-dot page indicator — selected = accent, other = grey.
+            Row(
+                modifier = Modifier.padding(vertical = Metrics.space4),
+                horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                repeat(2) { i ->
+                    val selected = pagerState.currentPage == i
+                    Box(
+                        modifier = Modifier
+                            .padding(horizontal = 3.dp)
+                            .size(6.dp)
+                            .clip(CircleShape)
+                            .background(
+                                if (selected) accent else Palette.textTertiary.copy(alpha = 0.40f),
+                            )
+                            .clickable {
+                                scope.launch { pagerState.animateScrollToPage(i) }
+                            },
+                    )
+                }
+            }
+            Text(
+                text = caption,
+                style = NoopType.footnote,
+                color = Palette.textTertiary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
 }
 
 @Composable
@@ -2600,7 +2820,7 @@ private fun buildVitalDetail(
 
 /** Build a metric-detail trend for a [SERIES_BACKED_VITAL_KEYS] key by reading its persisted series from
  *  the repo (async): Fitness Age + Vitality off the computed strap the IntelligenceEngine writes, Steps
- *  off the resolved step series (imported ∪ estimated), Active Energy off the Apple-Health import. Colours
+ *  off the resolved step series (imported âˆª estimated), Active Energy off the Apple-Health import. Colours
  *  match each card's dashboard tint. Returns null for an unknown key. */
 private suspend fun buildSeriesVitalDetail(vm: AppViewModel, key: String): VitalDetailModel? = when (key) {
     "fitness_age" -> VitalDetailModel(
@@ -2630,7 +2850,7 @@ private suspend fun buildSeriesVitalDetail(vm: AppViewModel, key: String): Vital
         format = { it.roundToInt().toString() },
     )
     "active_kcal" -> {
-        // Read active energy from the SAME apple-health ∪ health-connect union the Today Calories card uses.
+        // Read active energy from the SAME apple-health âˆª health-connect union the Today Calories card uses.
         // Health Connect (the common Android source) writes activeKcal only into the AppleDaily table under
         // "health-connect", not as an active_kcal metricSeries row, so reading metricSeries("apple-health") alone
         // opened an empty detail for a Health-Connect-only user whose card DID show a number. One point per day,

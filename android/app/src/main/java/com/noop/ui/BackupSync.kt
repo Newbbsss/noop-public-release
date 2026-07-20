@@ -17,11 +17,11 @@ import java.util.Calendar
 import java.util.concurrent.TimeUnit
 
 /**
- * Backup & Sync (Phase 1 - folder destination). Writes the full `.noopbak` snapshot (the existing
+ * Backup & Sync (folder destination via SAF). Writes the full `.noopbak` snapshot (the existing
  * [DataBackup] whole-DB format) into a user-chosen folder (a SAF tree), on demand and on an opt-in
- * daily schedule. Point that folder at a desktop Google Drive / Dropbox sync client (or a phone sync
- * app) and you get off-device backup with NO in-app cloud account, no OAuth, no secrets - NOOP only
- * ever writes a local file; the user's own sync client does any upload.
+ * daily schedule. The same tree picker can open **Google Drive** (DocumentsProvider — no Drive SDK /
+ * OAuth in NOOP; needs the Drive app / Play services on the phone) or a local / Dropbox folder.
+ * NOOP only ever writes bytes to the picked URI; Drive's own sync uploads them.
  *
  * DESIGN
  * - Snapshots are timestamped and immutable. "Restore" REPLACES the live DB (whole-DB snapshot,
@@ -35,8 +35,18 @@ import java.util.concurrent.TimeUnit
  */
 object BackupSync {
 
-    /** The two backup destinations Phase 1 is built to support (Drive lands in a later phase). */
-    enum class Destination { FOLDER /* , GOOGLE_DRIVE */ }
+    /**
+     * Where the persisted SAF tree points. [GOOGLE_DRIVE] is still SAF (no Drive SDK) — detected
+     * from the tree URI authority via [BackupCloudHints.isDriveUri] / [BackupCloudHints.isDriveAuthority].
+     */
+    enum class Destination { FOLDER, GOOGLE_DRIVE }
+
+    fun destinationOf(treeUri: Uri): Destination =
+        if (BackupCloudHints.isDriveUri(treeUri)) Destination.GOOGLE_DRIVE else Destination.FOLDER
+
+    /** Pure twin of [destinationOf] for unit tests (no Android [Uri] needed). */
+    fun destinationOfAuthority(authority: String?): Destination =
+        if (BackupCloudHints.isDriveAuthority(authority)) Destination.GOOGLE_DRIVE else Destination.FOLDER
 
     private const val PREFIX = "noop-backup-"
     private const val SUFFIX = ".noopbak"

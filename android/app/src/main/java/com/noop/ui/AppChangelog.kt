@@ -25,7 +25,7 @@ object AppChangelog {
      * Bump this when you add a release below. The "What's New" sheet shows automatically when the
      * stored last-seen version is behind this. (Decoupled from the bundle version on purpose.)
      */
-    const val CURRENT_VERSION = "8.6.237"
+    const val CURRENT_VERSION = "8.6.238"
 
     data class Release(
         val version: String,
@@ -36,6 +36,19 @@ object AppChangelog {
 
     /** Newest first. */
     val releases: List<Release> = listOf(
+        Release(
+            version = "8.6.238",
+            title = "Charge cold-open Â· Effort floor Â· Fitness Age Â· Drive",
+            date = "2026-07-20",
+            items = listOf(
+                "Today Charge: cold-open no longer paints Charge as 1 from a junk HeroScoreSnapshot or trivial carry â€” only real 5â€“100 scores; blank until primed.",
+                "Effort: steps movement floor cap retuned (~12) so a moderate day lands nearer ~11 instead of hugging ~21; cardio TRIMP still wins when higher.",
+                "Health Fitness Age: readiness READY/ESTIMATE unlocks the number; purged mojibake (Â± Â· VOâ‚‚ â€”) that looked like odd letters.",
+                "Health skin-temp mini-card: cleaner swipe/tap flip (baselines â†” difference), centered dots, no Detail chrome clutter.",
+                "Backup: SAF Google Drive folder CTA kept (no Drive SDK) â€” pick a Drive folder; auto-backup still opt-in.",
+                "SpOâ‚‚ honesty unchanged: never invents a % (aux82/v21 census empty; optical presence only).",
+            ),
+        ),
         Release(
             version = "8.6.237",
             title = "TIB vs Asleep Â· Light funnel Â· SpOâ‚‚ arm",

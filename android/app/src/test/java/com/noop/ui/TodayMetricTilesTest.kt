@@ -476,6 +476,26 @@ class TodayMetricTilesTest {
         assertEquals(72.0, carried?.recovery)
     }
 
+    @Test
+    fun lastScoredRecoveryDay_skipsTrivialOrFractionCharge_soColdOpenNeverPaintsOne() {
+        // recovery=1.0 / 0.67 used to pass r>=1.0 and roundToInt as Charge=1 at launch.
+        val days = listOf(
+            recDay("2026-06-17", 1.0),
+            recDay("2026-06-18", 0.67),
+            recDay("2026-06-19", null),
+        )
+        assertNull(
+            lastScoredRecoveryDay(
+                days, selectedDayKey = "2026-06-19",
+                isToday = true, todayScored = false, isCalibrating = false,
+            ),
+        )
+        assertFalse(isUsableChargeScore(1.0))
+        assertFalse(isUsableChargeScore(0.85))
+        assertTrue(isUsableChargeScore(5.0))
+        assertTrue(isUsableChargeScore(72.0))
+    }
+
     // MARK: lastVitalsRow — the recovery-INDEPENDENT vitals carry (#543 follow-up). HRV / resting-HR /
     // respiratory exist without a recovery score, so this selector must carry the freshest STRICTLY-PRIOR
     // night that has ANY of them, NOT the freshest recovery-SCORED night. This is what keeps the overnight

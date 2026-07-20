@@ -597,9 +597,10 @@ object AnalyticsEngine {
     /** Round to 2 decimal places (matches the imported/demo skin-temp deviation precision). (PR #85) */
     private fun round2(v: Double): Double = kotlin.math.round(v * 100.0) / 100.0
 
-    /** Min worn, in-bed skin-temp samples (1 Hz ⇒ seconds) before a nightly mean is trusted. ~5 min
-     *  guards against a few stray samples fabricating a baseline value. (PR #85) */
-    private const val MIN_SKIN_TEMP_SAMPLES_INLINE = 300
+    /** Min worn, in-bed skin-temp samples (1 Hz ⇒ seconds) before a nightly mean is trusted. ~3 min
+     *  (was 5) so sparse absolute nights still bank a mean when raw skin exists; still guards against
+     *  a few stray samples fabricating a baseline. (PR #85; ship 238 funnel). */
+    private const val MIN_SKIN_TEMP_SAMPLES_INLINE = 180
 
     /**
      * Wear-gated mean in-bed skin temperature (°C) for the night, or null when too few worn samples.

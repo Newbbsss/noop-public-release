@@ -1392,7 +1392,7 @@ private fun moreRowSecondary(dest: Destination, cycleTrackingOn: Boolean = true)
     Destination.DataSources -> "WHOOP · HC · imports"
     Destination.AppleHealth -> "Imported Apple Health export"
     Destination.FusedRecord -> "Merged day record"
-    Destination.BackupSync -> "On-device backup"
+    Destination.BackupSync -> "Backup & Google Drive"
     Destination.Automations -> "Buzz · shortcuts · routines"
     Destination.Settings -> "Strap, themes, Cycle · Use worn MG"
     Destination.BugReport -> "Photos + diagnostics · GitHub"
