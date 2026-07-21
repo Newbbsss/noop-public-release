@@ -86,11 +86,10 @@ final class StrainScorerTests: XCTestCase {
     }
 
     func testLightDayHonestlyScoresZeroNotFabricated() {
-        // #482: HR that never crosses ~50% HRR earns ZERO Effort, by design. With max 184 / rest 60,
-        // zone 1 starts at 122 bpm; a day spent at 82–110 stays below it. The fix must NOT invent
-        // load to make the gauge "look alive" — both a dense (4.0) and a sparse (5/MG) light day = 0.
-        let denseLight = hr(105, 1200, start: 0)                     // 4.0-style, 20 min at 1 Hz
-        let sparseLight = hrEvery(105, 40)                           // 5/MG-style, 40 × 30 s
+        // HR below soft-band floor (~33% HRR) earns ZERO — sparse path must not invent load.
+        // max 184 / rest 60 → 33% HRR ≈ 101 bpm; 90 bpm stays below on both cadences.
+        let denseLight = hr(90, 1200, start: 0)
+        let sparseLight = hrEvery(90, 40)
         XCTAssertEqual(StrainScorer.strain(denseLight, maxHR: 184, restingHR: 60), 0.0)
         XCTAssertEqual(StrainScorer.strain(sparseLight, maxHR: 184, restingHR: 60), 0.0)
     }
@@ -165,5 +164,58 @@ final class StrainScorerTests: XCTestCase {
 
     func testFitStrainDenominatorThrowsTooFew() {
         XCTAssertThrowsError(try StrainScorer.fitStrainDenominator([(100, 10)]))
+    }
+
+    // MARK: - Soft band + movement floor (Android StrainScorer twin)
+
+    func testEdwardsIgnoresBelow60PctHrr() {
+        // RHR 50, HRmax 190 → 60% HRR = 134 bpm.
+        XCTAssertEqual(StrainScorer.zoneWeight(92, restingHR: 50, hrReserve: 140), 0)
+        XCTAssertEqual(StrainScorer.zoneWeight(133, restingHR: 50, hrReserve: 140), 0)
+        XCTAssertEqual(StrainScorer.zoneWeight(134, restingHR: 50, hrReserve: 140), 2)
+    }
+
+    func testMovementFloorRestDayStaysZero() {
+        XCTAssertEqual(StrainScorer.movementFloor(steps: 1_500, activeKcal: 80), 0.0, accuracy: 0.0)
+        XCTAssertEqual(StrainScorer.movementFloor(steps: 2_400, activeKcal: 200), 0.0, accuracy: 0.0)
+        XCTAssertNil(StrainScorer.withMovementFloor(trimpEffort: nil, steps: 1_500, activeKcal: 80))
+        XCTAssertEqual(StrainScorer.withMovementFloor(trimpEffort: 0.0, steps: 1_500, activeKcal: nil)!, 0.0, accuracy: 0.0)
+    }
+
+    func testMovementFloorConvexWalkNotHotEarly() {
+        let at12k = StrainScorer.movementFloor(steps: 12_000, activeKcal: nil)
+        XCTAssertGreaterThan(at12k, 1.0)
+        XCTAssertLessThan(at12k, 9.0)
+        let at8k = StrainScorer.movementFloor(steps: 8_000, activeKcal: nil)
+        let at20k = StrainScorer.movementFloor(steps: 20_000, activeKcal: nil)
+        XCTAssertLessThan(at8k, at12k)
+        XCTAssertGreaterThan(at20k, at12k)
+        XCTAssertLessThanOrEqual(at20k, StrainScorer.movementFloorCap)
+        XCTAssertEqual(StrainScorer.withMovementFloor(trimpEffort: 40.0, steps: 12_000, activeKcal: 400)!, 40.0, accuracy: 0.0)
+        XCTAssertEqual(
+            StrainScorer.movementFloor(steps: 12_000, activeKcal: nil),
+            StrainScorer.withMovementFloor(trimpEffort: 0.0, steps: 12_000, activeKcal: nil)!,
+            accuracy: 0.0)
+    }
+
+    func testSoftBandWarehouseShiftRegistersDeskSpikeDoesNot() {
+        // RHR 55 / HRmax 184 → 33% HRR ≈ 97.6, 60% ≈ 132.4.
+        let max = 184.0
+        let rest = 55.0
+        let brief = hrEvery(108, 14, stepS: 30)
+        XCTAssertNil(StrainScorer.strain(brief, maxHR: max, restingHR: rest))
+        let desk = hrEvery(85, 40, stepS: 30)
+        XCTAssertEqual(StrainScorer.strain(desk, maxHR: max, restingHR: rest)!, 0.0, accuracy: 0.01)
+        let broken = (0..<40).map { i in
+            HRSample(ts: i * 30, bpm: i % 4 < 2 ? 108 : 85)
+        }
+        XCTAssertEqual(StrainScorer.strain(broken, maxHR: max, restingHR: rest)!, 0.0, accuracy: 0.01)
+        let shift = hrEvery(108, 960, stepS: 30) // 8 h
+        let effort = StrainScorer.strain(shift, maxHR: max, restingHR: rest)!
+        XCTAssertGreaterThanOrEqual(effort, 55.0, "warehouse soft-band shift should land ≥55, got \(effort)")
+        XCTAssertLessThan(effort, 90.0)
+        let zone2 = hrEvery(140, 480, stepS: 30)
+        let zoneEffort = StrainScorer.strain(zone2, maxHR: max, restingHR: rest)!
+        XCTAssertGreaterThan(zoneEffort, effort)
     }
 }

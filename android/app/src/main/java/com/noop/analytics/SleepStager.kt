@@ -111,9 +111,11 @@ object SleepStager {
 
     /**
      * A daytime window must run at least this long (minutes) to count — short still daytime
-     * stretches are the dominant false-positive and are rejected outright.
+     * stretches are the dominant false-positive and are rejected outright. Aligned with
+     * [NapDetector.DEFAULT_MIN_NAP_MIN] (20) plus a small honesty pad; was 90 and silently
+     * dropped real 30–70 min naps from Sleep UI + Rest duration.
      */
-    const val daytimeMinSleepMin: Int = 90
+    const val daytimeMinSleepMin: Int = 25
 
     /**
      * A daytime window's resting HR (lowest 5-min rolling mean) must be at or below
@@ -1152,9 +1154,19 @@ object SleepStager {
             if (p.stage != "sleep") continue
             runIndex += 1
             val spanMin = ((p.end - p.start) / 60).toInt()
-            if ((p.end - p.start) <= minSleepS) {
+            // Daytime nap floor is lower than overnight minSleepMin so real 25–60 min naps survive
+            // the first gate (they still must clear daytime HR-dip / morning-stillness guards).
+            val isDaytimeCandidate = isDaytimeCenter(p, tzOffsetSeconds)
+            val spanFloorS = if (isDaytimeCandidate) {
+                (daytimeMinSleepMin * 60).toLong()
+            } else {
+                minSleepS
+            }
+            if ((p.end - p.start) <= spanFloorS) {
+                val floorLabel = if (isDaytimeCandidate) daytimeMinSleepMin else minSleepMin
                 traceSink?.invoke(SleepStagerTrace.runLine(runIndex, p.start, p.end,
-                    SleepStagerTrace.Verdict.DROPPED, "minSleepMin", "spanMin=$spanMin minSleepMin=$minSleepMin"))
+                    SleepStagerTrace.Verdict.DROPPED, "minSleepMin",
+                    "spanMin=$spanMin minSleepMin=$floorLabel daytime=$isDaytimeCandidate"))
                 continue
             }
             // H4 physiological in-bed span cap (#547/#531/#509 tail): a single assembled main-sleep run

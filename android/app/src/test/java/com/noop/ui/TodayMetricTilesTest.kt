@@ -4,6 +4,7 @@ import com.noop.data.AppleDaily
 import com.noop.data.DailyMetric
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -605,6 +606,31 @@ class TodayMetricTilesTest {
         assertEquals(13.0, smoothEffortClimb(prev = 7.0, next = 28.0, maxUpPerTick = 6.0))
         assertEquals(5.0, smoothEffortClimb(prev = 12.0, next = 5.0)) // free fall
         assertEquals(10.0, smoothEffortClimb(prev = 8.0, next = 10.0, maxUpPerTick = 6.0))
+    }
+
+    @Test
+    fun resolveLiveEffortTick_holdsThroughEmptyHrFloorFlap() {
+        // debug 0f1194: hrCount=0 → floor-only 3.44 must not undercut banked 49.54 / prior live.
+        assertEquals(
+            9.44,
+            resolveLiveEffortTick(trimp = null, bandSteps = 7_194, prevLive = 9.44, sameDayStored = 49.54),
+        )
+        assertNull(
+            resolveLiveEffortTick(trimp = null, bandSteps = 7_194, prevLive = null, sameDayStored = 49.54),
+        )
+        // Walk cold-start: no prior live, no banked TRIMP → floor-only OK.
+        val floor = resolveLiveEffortTick(trimp = null, bandSteps = 7_194, prevLive = null, sameDayStored = null)
+        assertNotNull(floor)
+        assertTrue(floor!! > 0.0)
+        // Honest TRIMP present → climb toward raw (not stuck at floor).
+        assertEquals(
+            9.44,
+            resolveLiveEffortTick(trimp = 49.54, bandSteps = 1_253, prevLive = 3.44, sameDayStored = 49.54),
+        )
+        assertEquals(
+            49.54,
+            resolveLiveEffortTick(trimp = 49.54, bandSteps = 1_253, prevLive = null, sameDayStored = 49.54),
+        )
     }
 
     @Test

@@ -428,10 +428,10 @@ private fun StressHeroCard(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Overline(
-                    when {
+                    text = when {
                         nowLevel != null && inSleepBand -> "This hour · asleep band"
                         nowLevel != null && workContextActive -> {
-                            val label = workLabel.takeIf { it.isNotBlank() }
+                            val label = workLabel?.takeIf { it.isNotBlank() }
                             if (label != null) "This hour · at $label" else "This hour · at work"
                         }
                         nowLevel != null -> "This hour"
@@ -676,12 +676,23 @@ private fun StressDaytimeSection(
                     Overline("Stress through the day", modifier = Modifier.weight(1f))
                     val peak = day.peak
                     val peakLevel = peak?.level
-                    if (peak != null && peakLevel != null) {
-                        Text(
-                            "peak ${String.format(Locale.US, "%.1f", peakLevel)} · ${hourLabel(peak.hour)}",
-                            style = NoopType.captionNumber,
-                            color = StressRamp.color(peakLevel),
-                        )
+                    val avg = day.dayMean
+                    val is24 = NoopPrefs.use24HourClock(LocalContext.current)
+                    Column(horizontalAlignment = Alignment.End) {
+                        if (peak != null && peakLevel != null) {
+                            Text(
+                                "peak ${String.format(Locale.US, "%.1f", peakLevel)} · ${bucketClockLabel(peak.startTs, is24)}",
+                                style = NoopType.captionNumber,
+                                color = StressRamp.color(peakLevel),
+                            )
+                        }
+                        if (avg != null) {
+                            Text(
+                                "avg ${String.format(Locale.US, "%.1f", avg)}",
+                                style = NoopType.footnote,
+                                color = Palette.textTertiary,
+                            )
+                        }
                     }
                 }
 
@@ -964,6 +975,28 @@ private fun DaytimeStressLine(hours: List<DaytimeStress.HourPoint>) {
                             }
                             drawPath(path, color = textTertiary.copy(alpha = 0.75f))
                         }
+                        // Sleep-region crescent marks: one glyph centered on each contiguous asleep
+                        // wash run so the moon band reads as sleep, not just a tint.
+                        var si = 0
+                        while (si < hours.size) {
+                            if (!hours[si].asleep) { si += 1; continue }
+                            var ej = si
+                            while (ej + 1 < hours.size && hours[ej + 1].asleep) ej += 1
+                            val mid = (si + ej) / 2
+                            val cx = chartLeft + mid * stepX
+                            val r = 3.5.dp.toPx()
+                            drawCircle(
+                                color = Palette.restColor.copy(alpha = 0.85f),
+                                radius = r,
+                                center = Offset(cx, topPad + r + 1.dp.toPx()),
+                            )
+                            drawCircle(
+                                color = sleepWash.copy(alpha = 1f),
+                                radius = r * 0.72f,
+                                center = Offset(cx + r * 0.35f, topPad + r + 1.dp.toPx()),
+                            )
+                            si = ej + 1
+                        }
                     }
                 },
         )
@@ -1210,6 +1243,20 @@ private fun hourLabel(hour: Int): String {
     val ampm = if (h < 12) "am" else "pm"
     val h12 = if (h % 12 == 0) 12 else h % 12
     return "$h12 $ampm"
+}
+
+/** Clock label for a 5-min stress bucket start (unix seconds, device local). */
+private fun bucketClockLabel(startTs: Long, use24: Boolean): String {
+    val cal = java.util.Calendar.getInstance().apply { timeInMillis = startTs * 1000L }
+    val h = cal.get(java.util.Calendar.HOUR_OF_DAY)
+    val m = cal.get(java.util.Calendar.MINUTE)
+    return if (use24) {
+        String.format(Locale.US, "%02d:%02d", h, m)
+    } else {
+        val ampm = if (h < 12) "am" else "pm"
+        val h12 = when (h % 12) { 0 -> 12; else -> h % 12 }
+        if (m == 0) "$h12 $ampm" else String.format(Locale.US, "%d:%02d %s", h12, m, ampm)
+    }
 }
 
 

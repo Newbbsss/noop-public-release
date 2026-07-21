@@ -1123,10 +1123,15 @@ fun TodayScreen(
                     estimateFallback = stepsEstForDay,
                 )
                 // Live floor is steps-driven; banked activeKcalEst is analyze-stale — omit on the tick path.
-                val raw = StrainScorer.withMovementFloor(trimp, bandSteps, null)
-                // Log Effort is steep near 0 (TRIMP 0.1→11 ≈ Effort 1→28). Climb in steps so the
-                // vessel does not cliff when the floor alone flips to first modest TRIMP.
-                smoothEffortClimb(liveTodayStrain, raw)
+                // Empty-HR flaps must not publish floor-only live over banked TRIMP (debug 0f1194).
+                resolveLiveEffortTick(
+                    trimp = trimp,
+                    bandSteps = bandSteps,
+                    prevLive = liveTodayStrain,
+                    sameDayStored = displayMetric?.strain?.takeIf {
+                        displayMetric?.day == selectedDayKey
+                    },
+                )
             } else {
                 null
             }
@@ -6628,6 +6633,32 @@ internal fun smoothEffortClimb(
     if (next <= prev) return next
     val capped = prev + maxUpPerTick.coerceAtLeast(0.0)
     return if (next <= capped) next else (kotlin.math.round(capped * 100.0) / 100.0)
+}
+
+/**
+ * Live Today Effort tick resolution.
+ *
+ * Runtime (debug 0f1194): empty-HR / null-TRIMP ticks still applied the steps movement floor
+ * (~3–9) as `live`, and [effectiveEffortStrain] preferred that over same-day banked TRIMP
+ * (~49). Then [smoothEffortClimb] free-fell to the floor and crawled back +6/tick → "stuck at 9"
+ * while syncing. Hold prior live (or defer to stored) until TRIMP is computable; allow floor-only
+ * only for a true walk cold-start with no prior live and no higher banked strain.
+ */
+internal fun resolveLiveEffortTick(
+    trimp: Double?,
+    bandSteps: Int?,
+    prevLive: Double?,
+    sameDayStored: Double?,
+): Double? {
+    if (trimp == null) {
+        val floorOnly = StrainScorer.withMovementFloor(null, bandSteps, null)
+        if (prevLive != null) return prevLive
+        val stored = sameDayStored?.takeIf { it > 0.0 }
+        if (stored != null && (floorOnly == null || floorOnly < stored)) return null
+        return floorOnly
+    }
+    val raw = StrainScorer.withMovementFloor(trimp, bandSteps, null)
+    return smoothEffortClimb(prevLive, raw)
 }
 
 /**

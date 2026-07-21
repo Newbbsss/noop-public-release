@@ -109,10 +109,16 @@ struct StressView: View {
             freqHRV = nil
             return
         }
-        let rr = (try? await repo.storeHandle()?.rrIntervals(
+        let store = await repo.storeHandle()
+        let rr = (try? await store?.rrIntervals(
+            deviceId: repo.deviceId, from: from, to: to, limit: 200_000)) ?? []
+        // Step activity-class feeds motionBusy / soft-acute / fear damp (Android DaytimeStressLoader twin).
+        // workContextActive stays false until iOS workplace prefs exist.
+        let steps = (try? await store?.stepSamples(
             deviceId: repo.deviceId, from: from, to: to, limit: 200_000)) ?? []
 
-        daytime = DaytimeStress.analyze(hr: hr, rr: rr, tzOffsetSeconds: tz)
+        daytime = DaytimeStress.analyze(
+            hr: hr, rr: rr, tzOffsetSeconds: tz, steps: steps, workContextActive: false)
 
         // ADDITIVE advanced readouts, computed on-demand from the SAME `rr` (no extra fetch, no
         // DB / schema change, and no effect on the 0..3 score above). Each engine returns nil when
@@ -199,13 +205,20 @@ struct StressView: View {
 
             NoopCard(tint: StressRamp.calm) {
                 VStack(alignment: .leading, spacing: NoopMetrics.cardInnerSpacing) {
-                    HStack {
+                    HStack(alignment: .top) {
                         Text("Autonomic load through the day").strandOverline()
                         Spacer()
-                        if let peak = day.peak, let lvl = peak.level {
-                            Text("peak \(String(format: "%.1f", lvl)) · \(hourLabel(peak.hour))")
-                                .font(StrandFont.captionNumber)
-                                .foregroundStyle(StressRamp.color(lvl))
+                        VStack(alignment: .trailing, spacing: 2) {
+                            if let peak = day.peak, let lvl = peak.level {
+                                Text("peak \(String(format: "%.1f", lvl)) · \(hourLabel(peak.hour))")
+                                    .font(StrandFont.captionNumber)
+                                    .foregroundStyle(StressRamp.color(lvl))
+                            }
+                            if let avg = day.dayMean {
+                                Text("avg \(String(format: "%.1f", avg))")
+                                    .font(StrandFont.footnote)
+                                    .foregroundStyle(StrandPalette.textTertiary)
+                            }
                         }
                     }
 
@@ -245,11 +258,11 @@ struct StressView: View {
         }
     }
 
-    /// "avg 1.4 · 9h" summary for the timeline header, from the scored hours.
+    /// "avg 1.4 · 9h" summary for the timeline header — scored coverage in clock-hours.
     private func timelineTrailing(_ day: DaytimeStress.Result) -> String {
-        let n = day.scored.count
-        guard let mean = day.dayMean else { return String(localized: "\(n)h") }
-        return String(localized: "avg \(String(format: "%.1f", mean)) · \(n)h")
+        let hrs = Int(day.scoredHoursApprox.rounded())
+        guard let mean = day.dayMean else { return String(localized: "\(hrs)h") }
+        return String(localized: "avg \(String(format: "%.1f", mean)) · \(hrs)h")
     }
 
     /// A passive, in-app nudge to run a Breathe session after a sustained high-stress run.
@@ -981,13 +994,12 @@ struct DaytimeLoadLine: View {
 
 // MARK: - Stress totals (Calm / Moderate / High) split for the day
 
-/// Splits the day's SCORED waking hours into the three stress bands and exposes each
-/// band's share + duration. Each intraday bucket is one hour (`DaytimeStress.bucketSeconds`),
-/// so the band's hour-count is its duration. Calm = 0–1, Moderate = 1–2, High = 2–3.
+/// Splits the day's scored buckets into the three stress bands. Durations are clock minutes
+/// (5-min buckets × count via `DaytimeStress.Result.minutesForBuckets`). Calm = 0–1, Moderate = 1–2, High = 2–3.
 struct StressTotals {
-    let calmHours: Int
-    let moderateHours: Int
-    let highHours: Int
+    let calmMinutes: Int
+    let moderateMinutes: Int
+    let highMinutes: Int
 
     init(hours: [DaytimeStress.HourPoint]) {
         var c = 0, m = 0, hi = 0
@@ -999,26 +1011,28 @@ struct StressTotals {
             case .high:   hi += 1
             }
         }
-        calmHours = c; moderateHours = m; highHours = hi
+        calmMinutes = DaytimeStress.Result.minutesForBuckets(c)
+        moderateMinutes = DaytimeStress.Result.minutesForBuckets(m)
+        highMinutes = DaytimeStress.Result.minutesForBuckets(hi)
     }
 
-    var total: Int { calmHours + moderateHours + highHours }
+    var totalMinutes: Int { calmMinutes + moderateMinutes + highMinutes }
 
-    /// 0...1 share of the scored day spent in each band (0 when no scored hours).
+    /// 0...1 share of the scored day spent in each band (0 when no scored buckets).
     func fraction(_ band: StressBand) -> Double {
-        guard total > 0 else { return 0 }
+        guard totalMinutes > 0 else { return 0 }
         switch band {
-        case .low:    return Double(calmHours) / Double(total)
-        case .medium: return Double(moderateHours) / Double(total)
-        case .high:   return Double(highHours) / Double(total)
+        case .low:    return Double(calmMinutes) / Double(totalMinutes)
+        case .medium: return Double(moderateMinutes) / Double(totalMinutes)
+        case .high:   return Double(highMinutes) / Double(totalMinutes)
         }
     }
 
-    func hours(_ band: StressBand) -> Int {
+    func minutes(_ band: StressBand) -> Int {
         switch band {
-        case .low:    return calmHours
-        case .medium: return moderateHours
-        case .high:   return highHours
+        case .low:    return calmMinutes
+        case .medium: return moderateMinutes
+        case .high:   return highMinutes
         }
     }
 }
@@ -1058,7 +1072,7 @@ struct StressTotalsBar: View {
                             .font(StrandFont.captionNumber)
                             .foregroundStyle(StrandPalette.textPrimary)
                         Spacer()
-                        Text(durationLabel(totals.hours(b.band)))
+                        Text(durationLabel(totals.minutes(b.band)))
                             .font(StrandFont.footnote)
                             .foregroundStyle(StrandPalette.textTertiary)
                     }
@@ -1070,13 +1084,13 @@ struct StressTotalsBar: View {
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(
-            String(localized: "Today's stress split: calm \(durationLabel(totals.calmHours)), moderate \(durationLabel(totals.moderateHours)), high \(durationLabel(totals.highHours)).")
+            String(localized: "Today's stress split: calm \(durationLabel(totals.calmMinutes)), moderate \(durationLabel(totals.moderateMinutes)), high \(durationLabel(totals.highMinutes)).")
         )
     }
 
-    /// "—" when a band had no scored hours, else "Nh" (each scored bucket is one hour).
-    private func durationLabel(_ hours: Int) -> String {
-        hours <= 0 ? "—" : String(localized: "\(hours)h")
+    /// Compact duration (Android formatZoneCompact twin); "—" when empty.
+    private func durationLabel(_ minutes: Int) -> String {
+        DaytimeStress.Result.formatZoneCompact(minutes)
     }
 }
 

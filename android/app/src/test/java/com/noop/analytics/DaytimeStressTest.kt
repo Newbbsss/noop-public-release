@@ -451,4 +451,67 @@ class DaytimeStressTest {
             seatedWorkLvl > walkWorkLvl,
         )
     }
+
+    @Test
+    fun fearSignature_overridesOccupationalDamp_nearAccident() {
+        // Calm morning + mid-afternoon fear spike (high HR + crashed RMSSD) while walking at work.
+        // Without fear override, occupational damp + blocked acute would under-read vs break-time peak.
+        val calmHr = (6..14).flatMap { h -> hourHr(h, 62) }
+        val calmRr = (6..14).flatMap { h -> hourRr(h, rmssdMs = 55.0) }
+        val fearHr = hourHr(15, 118) // ~3 pm block (user ~3:30)
+        val fearRr = hourRr(15, rmssdMs = 12.0)
+        val walkSteps = fearHr.map {
+            StepSample(deviceId = "t", ts = it.ts, counter = 1, activityClass = DaytimeStress.stepClassWalk)
+        }
+        val breakHr = hourHr(18, 95)
+        val breakRr = hourRr(18, rmssdMs = 28.0)
+        val r = DaytimeStress.analyze(
+            calmHr + fearHr + breakHr,
+            calmRr + fearRr + breakRr,
+            steps = walkSteps,
+            workContextActive = true,
+        )
+        val peak = r.peak
+        assertNotNull(peak)
+        assertEquals("fear spike at hour 15 should win peak over break", 15, peak!!.hour)
+        assertTrue("fear peak should be HIGH-ish (>=2.4), got ${peak.level}", (peak.level ?: 0.0) >= 2.4)
+    }
+
+    @Test
+    fun softAcute_motionBusyHighHr_reachesHighBand_likeFoldPeakDump() {
+        // Mirrors debug 0f1194 peak: elevated HR + RMSSD crash under walk — previously wiped by motion damp.
+        val calmHr = (6..14).flatMap { h -> hourHr(h, 62) }
+        val calmRr = (6..14).flatMap { h -> hourRr(h, rmssdMs = 55.0) }
+        val spikeHr = hourHr(18, 105)
+        val spikeRr = hourRr(18, rmssdMs = 22.0)
+        val walkSteps = spikeHr.map {
+            StepSample(deviceId = "t", ts = it.ts, counter = 1, activityClass = DaytimeStress.stepClassWalk)
+        }
+        val r = DaytimeStress.analyze(
+            calmHr + spikeHr,
+            calmRr + spikeRr,
+            steps = walkSteps,
+            workContextActive = false,
+        )
+        val peak = r.peak
+        assertNotNull(peak)
+        assertEquals(18, peak!!.hour)
+        assertTrue(
+            "motion+elevated HR/RMSSD crash should clear HIGH (>=2.0), got ${peak.level}",
+            (peak.level ?: 0.0) >= 2.0,
+        )
+    }
+
+    /** Synthetic R-R across a clock hour (spread into 5-min buckets) so RMSSD is computable. */
+    private fun hourRr(hour: Int, rmssdMs: Double): List<RrInterval> {
+        val meanIbi = 1000.0
+        val delta = rmssdMs * kotlin.math.sqrt(2.0)
+        return (0 until DaytimeStress.bucketsPerHour).flatMap { q ->
+            val base = hour.toLong() * 3_600L + q.toLong() * DaytimeStress.bucketSeconds
+            (0 until 30).map { i ->
+                val ibi = if (i % 2 == 0) meanIbi + delta / 2 else meanIbi - delta / 2
+                RrInterval(deviceId = "t", ts = base + i, rrMs = ibi.toInt().coerceIn(300, 2000))
+            }
+        }
+    }
 }

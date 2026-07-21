@@ -376,6 +376,11 @@ object AnalyticsEngine {
         // Replaces the bare efficiency proxy: duration-vs-personal-need 0.50 + efficiency 0.20 +
         // restorative (deep+REM)/asleep 0.20 + consistency 0.10. Stored under the sleep_performance
         // key. null when no in-bed session. (Charge/Effort/Rest)
+        // Naps: duration term includes matched non-main TST so a real nap moves Rest honestly;
+        // efficiency / deep / REM stay main-night so overnight staging is not diluted.
+        val napTstS = matched.indices
+            .filter { it !in mainGroupIdx }
+            .sumOf { i -> SleepStager.hypnogramMetrics(matched[i]).tstS }
         val rest: Double? = if (matched.isEmpty()) null else RestScorer.rest(
             asleepSeconds = tstS,
             efficiency = efficiency,
@@ -383,6 +388,7 @@ object AnalyticsEngine {
             remSeconds = remS,
             sleepNeedHours = sleepNeedHours,
             consistency = sleepConsistency,
+            durationAsleepSeconds = tstS + napTstS,
         )
         // Sleep & Rest test mode (E11): emit the Rest sub-score breakdown for this night, reusing the
         // IDENTICAL inputs `rest` consumed above so the trace can never disagree with the score. Emitted
@@ -879,12 +885,15 @@ object RestScorer {
     /**
      * Rest composite [0,100], or null when there is no asleep time.
      *
-     * @param asleepSeconds total sleep time (TST) for the night, seconds.
+     * @param asleepSeconds total sleep time (TST) for the main night, seconds (restorative share).
      * @param efficiency asleep / in-bed in [0,1].
      * @param deepSeconds deep-stage seconds.
      * @param remSeconds REM-stage seconds.
      * @param sleepNeedHours personal need (hours); null → [defaultSleepNeedHours].
      * @param consistency sleep/wake regularity in [0,1]; null drops the term + renormalizes.
+     * @param durationAsleepSeconds optional TST for the duration-vs-need term only (main + naps).
+     *        When null, uses [asleepSeconds]. Lets naps contribute honestly to hours-met without
+     *        diluting deep/REM share computed on the main night.
      */
     fun rest(
         asleepSeconds: Double,
@@ -893,10 +902,12 @@ object RestScorer {
         remSeconds: Double,
         sleepNeedHours: Double? = null,
         consistency: Double? = null,
+        durationAsleepSeconds: Double? = null,
     ): Double? {
         if (asleepSeconds <= 0.0) return null
 
-        val asleepHours = asleepSeconds / 3600.0
+        val durationSeconds = (durationAsleepSeconds ?: asleepSeconds).coerceAtLeast(asleepSeconds)
+        val asleepHours = durationSeconds / 3600.0
         val needHours = (sleepNeedHours ?: defaultSleepNeedHours).coerceAtLeast(1e-9)
 
         val restorativeShare = (deepSeconds + remSeconds) / asleepSeconds

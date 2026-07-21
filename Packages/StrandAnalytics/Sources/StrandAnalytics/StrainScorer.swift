@@ -76,9 +76,21 @@ public enum StrainScorer {
     public static let banisterBWomen: Double = 1.67
 
     /// Edwards zone cut-offs as (%HRR threshold, weight), highest-first.
+    /// Classic Edwards zone-1 at 50% is **not** applied unconditionally — desk/rest mornings used to
+    /// mint Effort ~40 while WHOOP Strain stayed ~0.1. Hard zones stay ≥**60% HRR**. Sustained
+    /// ~33–60% HRR can contribute soft weight 1 after a sustain gate — see `softBandMinPctHrr`.
     static let edwardsZones: [(threshold: Double, weight: Int)] = [
-        (90.0, 5), (80.0, 4), (70.0, 3), (60.0, 2), (50.0, 1),
+        (90.0, 5), (80.0, 4), (70.0, 3), (60.0, 2),
     ]
+    /// Minimum %HRR that contributes classic Edwards weight (≥60).
+    public static let edwardsMinPctHrr: Double = 60.0
+    /// Soft occupational band floor (~33% HRR) — standing/warehouse shifts after sustain.
+    public static let softBandMinPctHrr: Double = 33.0
+    public static let softBandWeight: Int = 1
+    /// Continuous elevated minutes before soft-band samples contribute TRIMP.
+    public static let softBandSustainMinutes: Double = 12.0
+    /// Allow this many consecutive below-floor samples before resetting the soft-band bout.
+    public static let softBandDipGraceSamples: Int = 2
 
     /// TRIMP accumulation method.
     public enum Method: Sendable, Hashable { case edwards, banister }
@@ -148,9 +160,39 @@ public enum StrainScorer {
 
     static func edwardsTRIMP(_ hr: [HRSample], restingHR: Double, hrReserve: Double,
                              sampleDurationMin: Double) -> Double {
-        var weighted = 0
-        for s in hr { weighted += zoneWeight(Double(s.bpm), restingHR: restingHR, hrReserve: hrReserve) }
-        return Double(weighted) * sampleDurationMin
+        // Soft-band sustain in sample counts (uniform cadence from sampleDurationMinutes).
+        let sustainSamples: Int
+        if sampleDurationMin > 0 {
+            sustainSamples = max(1, Int(ceil(softBandSustainMinutes / sampleDurationMin)))
+        } else {
+            sustainSamples = Int.max
+        }
+        var weighted = 0.0
+        var elevatedStreak = 0
+        var belowStreak = 0
+        for s in hr {
+            let bpm = Double(s.bpm)
+            let classic = zoneWeight(bpm, restingHR: restingHR, hrReserve: hrReserve)
+            if classic > 0 {
+                elevatedStreak += 1
+                belowStreak = 0
+                weighted += Double(classic)
+            } else {
+                let pct = pctHRR(bpm, restingHR: restingHR, hrReserve: hrReserve)
+                if pct >= softBandMinPctHrr {
+                    elevatedStreak += 1
+                    belowStreak = 0
+                    if elevatedStreak >= sustainSamples { weighted += Double(softBandWeight) }
+                } else {
+                    belowStreak += 1
+                    if belowStreak > softBandDipGraceSamples {
+                        elevatedStreak = 0
+                        belowStreak = 0
+                    }
+                }
+            }
+        }
+        return weighted * sampleDurationMin
     }
 
     static func banisterTRIMP(_ hr: [HRSample], restingHR: Double, hrReserve: Double,
@@ -197,6 +239,48 @@ public enum StrainScorer {
         case degenerate
     }
 
+    // MARK: - Steps floor (Gilbert P0; Android StrainScorer twin)
+
+    /// Steps below this contribute 0 to the movement floor (desk / noise).
+    public static let movementStepsNoiseFloor: Int = 2_500
+    /// Kept for API compat; kcal no longer raises the floor (total-day kcal was wrong).
+    public static let movementKcalNoiseFloor: Double = 250.0
+    /// Hard cap — steps alone never invent hard cardio Effort.
+    public static let movementFloorCap: Double = 18.0
+    public static let movementStepsScale: Double = 16_000.0
+    public static let movementStepsExponent: Double = 1.35
+    public static let movementKcalScale: Double = 1_000.0
+    public static let movementKcalExponent: Double = 1.85
+
+    /// Movement-derived Effort floor (0…movementFloorCap) from band steps.
+    /// `activeKcal` is accepted for call-site compat but **ignored**.
+    public static func movementFloor(steps: Int?, activeKcal: Double?) -> Double {
+        func convex(excess: Double, scale: Double, exponent: Double) -> Double {
+            guard excess > 0, scale > 0 else { return 0 }
+            let u = max(0, excess / scale)
+            let shaped = min(1.0, pow(u, exponent))
+            return movementFloorCap * shaped
+        }
+        let fromSteps: Double
+        if let steps, steps >= movementStepsNoiseFloor {
+            fromSteps = convex(excess: Double(steps - movementStepsNoiseFloor),
+                               scale: movementStepsScale, exponent: movementStepsExponent)
+        } else {
+            fromSteps = 0
+        }
+        let raw = min(max(fromSteps, 0), movementFloorCap)
+        return (raw * 100).rounded() / 100
+    }
+
+    /// Combine cardio TRIMP Effort with the steps floor: `max(trimp, floor)`.
+    public static func withMovementFloor(trimpEffort: Double?, steps: Int?, activeKcal: Double?) -> Double? {
+        let floor = movementFloor(steps: steps, activeKcal: activeKcal)
+        if let trimpEffort {
+            return max(trimpEffort, floor)
+        }
+        return floor > 0 ? floor : nil
+    }
+
     // MARK: - Public API
 
     /// Cardiovascular strain / "Effort" (0–100) from an HR series. APPROXIMATE.
@@ -204,6 +288,9 @@ public enum StrainScorer {
     /// Returns nil when there isn't yet enough data to trust the number — fewer than
     /// `minReadings` samples AND less than `minSpanSeconds` of HR coverage (the sparse-strap
     /// path, #482) — or when maxHR ≤ restingHR (invalid HRR).
+    ///
+    /// Does **not** apply the steps floor — callers that have day steps should wrap with
+    /// `withMovementFloor` (see AnalyticsEngine.analyzeDay and live Today).
     ///
     /// - Parameters:
     ///   - hr: time-ordered `[HRSample]`.

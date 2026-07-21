@@ -108,15 +108,21 @@ object StrainScorer {
     /** Minimum %HRR that contributes classic Edwards weight (≥60). */
     const val edwardsMinPctHrr: Double = 60.0
     /**
-     * Soft occupational band: 50% ≤ %HRR &lt; 60% may count weight [softBandWeight] only after
-     * [softBandSustainMinutes] of continuous time at/above 50% HRR (hard zones also keep the bout
-     * alive). Brief desk spikes never mint; a multi-hour standing/walking warehouse shift can
-     * (Amazon-style on-feet labor). Does **not** invent Effort from a place pin — HR must sit elevated.
+     * Soft occupational band: [softBandMinPctHrr]% ≤ %HRR &lt; 60% may count weight [softBandWeight]
+     * only after [softBandSustainMinutes] of continuous time at/above the soft floor (hard zones
+     * also keep the bout alive). Floor is **~33% HRR** (occupational RAW literature often flags
+     * ≥30% HRR as elevated ambulatory/standing load — DPhacto / blue-collar %HRR studies), not the
+     * classic Edwards 50% desk cliff. Brief desk spikes never mint; a multi-hour standing/walking
+     * warehouse shift can (Amazon-style on-feet labor at ~100–115 bpm). Does **not** invent Effort
+     * from a place pin — HR must sit elevated. [softBandDipGraceSamples] tolerates brief sub-floor
+     * dips without killing the bout (BLE gaps / momentary calm).
      */
-    const val softBandMinPctHrr: Double = 50.0
+    const val softBandMinPctHrr: Double = 33.0
     const val softBandWeight: Int = 1
     /** Continuous elevated minutes before soft-band samples contribute TRIMP (standing shifts). */
-    const val softBandSustainMinutes: Double = 8.0
+    const val softBandSustainMinutes: Double = 12.0
+    /** Allow this many consecutive below-floor samples before resetting the soft-band bout. */
+    const val softBandDipGraceSamples: Int = 2
 
     /** TRIMP accumulation method. */
     enum class Method { EDWARDS, BANISTER }
@@ -212,19 +218,26 @@ object StrainScorer {
         }
         var weighted = 0.0
         var elevatedStreak = 0
+        var belowStreak = 0
         for (s in hr) {
             val bpm = s.bpm.toDouble()
             val classic = zoneWeight(bpm, restingHR, hrReserve)
             if (classic > 0) {
                 elevatedStreak += 1
+                belowStreak = 0
                 weighted += classic
             } else {
                 val pct = pctHRR(bpm, restingHR, hrReserve)
                 if (pct >= softBandMinPctHrr) {
                     elevatedStreak += 1
+                    belowStreak = 0
                     if (elevatedStreak >= sustainSamples) weighted += softBandWeight
                 } else {
-                    elevatedStreak = 0
+                    belowStreak += 1
+                    if (belowStreak > softBandDipGraceSamples) {
+                        elevatedStreak = 0
+                        belowStreak = 0
+                    }
                 }
             }
         }

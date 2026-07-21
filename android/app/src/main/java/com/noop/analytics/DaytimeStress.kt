@@ -80,10 +80,29 @@ object DaytimeStress {
     const val acuteRmssdCrashZ: Double = 1.15
     const val acuteRmssdBump: Double = 0.38
     /**
-     * Work-hours context for standing / warehouse jobs (e.g. Amazon fulfillment): when the user
-     * opted into work hours and the bucket is ambulatory (motion-busy, not seated), damp Stress
-     * so occupational HR is a baseline — not panic. Never invents Effort from a place pin.
-     * Seated + work hours still allow acute RMSSD / near-accident paths (commute, break-room).
+     * Fear / near-accident override: literature (panic/threat HRV) shows concurrent HR spike +
+     * RMSSD collapse. When RMSSD crash z and quiet-HR z both clear these bars, treat as acute
+     * autonomic event even on-feet at work — do not wipe with occupational damp.
+     *
+     * Runtime (debug 0f1194): today's peak had hrZ=2.15 + rmssdZ=1.44 but fear=false because
+     * the RMSSD bar was 1.75 — full [motionBusyDamp] left peakRaw≈2.47 → squash≈1.84 (no HIGH).
+     * Gate 1.30 catches that physiology; bump lands fear peaks in the HIGH band (~2.5+).
+     */
+    const val acuteFearRmssdCrashZ: Double = 1.30
+    const val acuteFearHrZ: Double = 0.85
+    const val acuteFearBump: Double = 0.85
+    /**
+     * Soft acute while motion-busy: strong quiet-HR elevation + meaningful RMSSD drop that
+     * misses the full fear gate. Uses the light (seated-scale) motion damp + ordinary acute
+     * bump so commute/scare spikes are not wiped as "exercise" (same 0f1194 peak dump).
+     */
+    const val softAcuteHrZ: Double = 1.20
+    const val softAcuteBump: Double = 0.28
+    /**
+     * Work-hours context for standing / warehouse jobs: when the user opted into work hours and
+     * the bucket is ambulatory (motion-busy, not seated), damp Stress so occupational HR is a
+     * baseline — not panic. Never invents Effort from a place pin. Fear-signature buckets skip
+     * this damp (see [acuteFearRmssdCrashZ]).
      */
     const val workContextOccupationalDamp: Double = 0.48
     /** Extra raw damp when bucket is inside a sedentary bout or dominated by still class. */
@@ -430,18 +449,42 @@ object DaytimeStress {
                 if (!waking(a.bucket) || asleepFlag) {
                     raw -= if (inSleepWindow(wallMidScore)) sleepWindowCalmBias else nightCalmBias
                 }
-                // Vehicle / seated vibration: gravity "busy" + still/sedentary must not fully damp
-                // acute autonomic spikes (rain drive → near-accident). True walk/run keeps full damp.
-                if (a.motionBusy) {
-                    raw -= if (a.sedentaryCalm) motionBusyDamp * seatedMotionDampScale else motionBusyDamp
+                // Fear / near-accident signature (HR↑ + RMSSD↓) — detect before occupational damp.
+                var fearSignature = false
+                var softAcute = false
+                var rmssdCrashZ = 0.0
+                var hrZ = 0.0
+                if (waking(a.bucket) && !asleepFlag && a.rmssd != null && refRmssd != null &&
+                    sdRmssd > 0.0001 && a.meanHr != null && refHr != null && sdHr > 0.0001
+                ) {
+                    rmssdCrashZ = (refRmssd - a.rmssd) / sdRmssd
+                    hrZ = (a.meanHr - refHr) / sdHr
+                    fearSignature = rmssdCrashZ >= acuteFearRmssdCrashZ && hrZ >= acuteFearHrZ
+                    softAcute = !fearSignature &&
+                        hrZ >= softAcuteHrZ &&
+                        rmssdCrashZ >= acuteRmssdCrashZ
                 }
-                if (a.sedentaryCalm) raw -= sedentaryCalmBias
+                // Vehicle / seated vibration: gravity "busy" + still/sedentary must not fully damp
+                // acute autonomic spikes (rain drive → near-accident). True walk/run keeps full damp
+                // unless a fear / soft-acute signature is present.
+                val lightMotionDamp = fearSignature || softAcute
+                if (a.motionBusy && !lightMotionDamp) {
+                    raw -= if (a.sedentaryCalm) motionBusyDamp * seatedMotionDampScale else motionBusyDamp
+                } else if (a.motionBusy && lightMotionDamp) {
+                    raw -= motionBusyDamp * seatedMotionDampScale
+                }
+                if (a.sedentaryCalm && !fearSignature && !softAcute) raw -= sedentaryCalmBias
                 // Acute RMSSD crash — rain-drive / near-accident (often seated + gravity noise).
-                // Skip while on-feet at work: lower RMSSD from standing labor is occupational, not panic.
+                // Skip ordinary acute while on-feet at work unless fear / soft-acute clears.
                 if (waking(a.bucket) && !asleepFlag && a.rmssd != null && refRmssd != null && sdRmssd > 0.0001) {
-                    val z = (refRmssd - a.rmssd) / sdRmssd
-                    val allowAcute = !workContextActive || a.sedentaryCalm || !a.motionBusy
-                    if (z >= acuteRmssdCrashZ && allowAcute) raw += acuteRmssdBump
+                    val z = if (rmssdCrashZ > 0.0) rmssdCrashZ else (refRmssd - a.rmssd) / sdRmssd
+                    val allowAcute = fearSignature || softAcute ||
+                        !workContextActive || a.sedentaryCalm || !a.motionBusy
+                    when {
+                        fearSignature -> raw += acuteFearBump
+                        softAcute && allowAcute -> raw += softAcuteBump
+                        z >= acuteRmssdCrashZ && allowAcute -> raw += acuteRmssdBump
+                    }
                 }
                 if (waking(a.bucket) && !a.motionBusy && overnightQuiet != null &&
                     a.meanHr <= overnightQuiet + overnightAnchorSlackBpm
@@ -459,8 +502,9 @@ object DaytimeStress {
                 if (waking(a.bucket) && skinElevated) raw += skinElevatedBias
                 if (waking(a.bucket) && respElevated) raw += respElevatedBias
                 // Standing warehouse shift: ambulatory HR during work hours = baseline, not panic.
+                // Fear / near-accident signatures keep full acute path (do not occupational-damp).
                 if (workContextActive && waking(a.bucket) && !asleepFlag &&
-                    a.motionBusy && !a.sedentaryCalm
+                    a.motionBusy && !a.sedentaryCalm && !fearSignature && !softAcute
                 ) {
                     raw -= workContextOccupationalDamp
                 }

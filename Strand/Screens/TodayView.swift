@@ -2734,7 +2734,7 @@ struct TodayView: View {
     /// own overlay, a past day isn't annotated).
     private var effortZeroNote: String? {
         guard selectedDayOffset == 0, let s = effortStrain(displayDay), s < 1.0 else { return nil }
-        return String(localized: "No cardio load yet. Effort builds once your heart rate climbs into your effort zone (around 50% of your heart-rate reserve). A calm day honestly reads near zero.")
+        return String(localized: "No cardio load yet. Effort builds once your heart rate climbs into your effort zone (around 33–60% of your heart-rate reserve for sustained work, or harder cardio). A calm day honestly reads near zero.")
     }
 
     /// Strain value to feed the Effort gauge, on the SELECTED display scale (#313). The effective
@@ -3885,14 +3885,22 @@ struct TodayView: View {
         // above shows (logical-day midnight → now) so the gauge tracks the day live instead of lagging
         // on the last persisted daily row. Uses the identical params the daily pass uses, Tanaka HRmax
         // from age, today's resting HR (else the default), sex, so the live number matches what the
-        // engine will eventually persist. Below StrainScorer.minReadings the scorer returns nil and the
-        // gauge falls back to the stored row (never a fabricated value); a navigated past day clears it.
+        // engine will eventually persist. Below StrainScorer.minReadings the scorer returns nil;
+        // resolveLiveEffortTick holds prior live (or defers to stored) rather than publishing a
+        // steps-floor-only under-read that free-falls the gauge (Android 0f1194 twin).
         let liveStrainLocal: Double?
         if selectedDayOffset == 0 {
             let todayHr = await repo.hrSamples(from: windowStart, to: windowEnd)
             let maxHR = profile.age > 0 ? StrainScorer.tanakaHRmax(age: Double(profile.age)) : nil
             let restHR = displayDay?.restingHr.map(Double.init) ?? StrainScorer.defaultRestingHR
-            liveStrainLocal = StrainScorer.strain(todayHr, maxHR: maxHR, restingHR: restHR, sex: profile.sex)
+            let trimp = StrainScorer.strain(todayHr, maxHR: maxHR, restingHR: restHR, sex: profile.sex)
+            let bandSteps = displayDay?.steps ?? stepsEstByDay[selectedDayKey]
+            let sameDayStored = displayDay?.strain
+            liveStrainLocal = resolveLiveEffortTick(
+                trimp: trimp,
+                bandSteps: bandSteps,
+                prevLive: liveTodayStrain,
+                sameDayStored: sameDayStored)
         } else {
             liveStrainLocal = nil
         }
@@ -4630,6 +4638,38 @@ enum RecordingState: Equatable {
         }
         return .notRecording
     }
+}
+
+// MARK: - Live Effort tick (Android TodayScreen.resolveLiveEffortTick twin)
+
+/// Cap upward Effort jumps per refresh so the gauge doesn't leap on a sparse→dense HR flap.
+private func smoothEffortClimb(prev: Double?, next: Double?, maxUpPerTick: Double = 6.0) -> Double? {
+    guard let next else { return nil }
+    guard let prev else { return next }
+    if next <= prev { return next }
+    let capped = prev + max(0, maxUpPerTick)
+    if next <= capped { return next }
+    return (capped * 100).rounded() / 100
+}
+
+/// Live Today Effort tick resolution (Android 0f1194 twin).
+/// Empty-HR / null-TRIMP ticks must not publish steps-floor-only over banked TRIMP — hold prior live
+/// (or defer to stored) until TRIMP is computable; allow floor-only only for a true walk cold-start.
+private func resolveLiveEffortTick(
+    trimp: Double?,
+    bandSteps: Int?,
+    prevLive: Double?,
+    sameDayStored: Double?
+) -> Double? {
+    if trimp == nil {
+        let floorOnly = StrainScorer.withMovementFloor(trimpEffort: nil, steps: bandSteps, activeKcal: nil)
+        if let prevLive { return prevLive }
+        let stored = sameDayStored.flatMap { $0 > 0 ? $0 : nil }
+        if let stored, floorOnly == nil || floorOnly! < stored { return nil }
+        return floorOnly
+    }
+    let raw = StrainScorer.withMovementFloor(trimpEffort: trimp, steps: bandSteps, activeKcal: nil)
+    return smoothEffortClimb(prev: prevLive, next: raw)
 }
 
 // MARK: - Preview

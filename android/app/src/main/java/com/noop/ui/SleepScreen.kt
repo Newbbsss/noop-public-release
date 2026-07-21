@@ -3570,6 +3570,19 @@ private fun HypnogramWithAxis(
 ) {
     val showsAxis = onsetTs != null && wakeTs != null
     Column(verticalArrangement = Arrangement.spacedBy(Metrics.space6)) {
+        // Sleep icon perched above the stage strip (venial polish).
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.Center,
+        ) {
+            Icon(
+                Icons.Filled.Bedtime,
+                contentDescription = stringResource(R.string.sleep_stages),
+                tint = Palette.restColor.copy(alpha = 0.85f),
+                modifier = Modifier.size(14.dp),
+            )
+        }
         Canvas(modifier = Modifier.fillMaxWidth().height(Metrics.stageStripHeight)) {
             val w = size.width
             val h = size.height

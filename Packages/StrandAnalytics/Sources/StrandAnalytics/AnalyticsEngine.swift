@@ -526,11 +526,11 @@ public enum AnalyticsEngine {
         // caller supplies it, so Effort covers the WHOLE day — an afternoon/evening workout lands in
         // today's Effort same-day instead of being cut off at the night window's ≈ noon bound, and
         // the prior evening's HR (the night window's −30h tail) no longer bleeds in. Falls back to the
-        // night `hr` for pure-function callers/tests.
+        // night `hr` for pure-function callers/tests. Movement floor applied after steps/kcal below.
         let effMaxHR: Double? = maxHROverride ?? (profile.age > 0 ? StrainScorer.tanakaHRmax(age: profile.age) : nil)
         let restForStrain = restingHRDaily.map(Double.init) ?? StrainScorer.defaultRestingHR
-        let strain = StrainScorer.strain(dayHr ?? hr, maxHR: effMaxHR, restingHR: restForStrain,
-                                         sex: profile.sex)
+        let trimpStrain = StrainScorer.strain(dayHr ?? hr, maxHR: effMaxHR, restingHR: restForStrain,
+                                              sex: profile.sex)
 
         // ── Workouts ──────────────────────────────────────────────────────────
         // Detect over the full CALENDAR day (dayHr/dayGravity) when the caller supplies it, so a
@@ -594,6 +594,13 @@ public enum AnalyticsEngine {
         let activeKcalEst: Double? = dayHrFiltered.isEmpty ? nil : Calories.estimateDayCalories(
             dayHrFiltered, profile: profile, hrmax: effMaxHR,
             restingHR: restingHRDaily.map(Double.init))
+
+        // Effort = max(cardio TRIMP, steps movement floor). Floor raises calm walks without
+        // inventing hard cardio; TRIMP still wins when higher. Never bank ≤0: a morning calm 0.0
+        // locks the row and blocks later backfill / live walks from healing the day.
+        let strain = StrainScorer.withMovementFloor(trimpEffort: trimpStrain, steps: stepsTotal,
+                                                    activeKcal: activeKcalEst)
+            .flatMap { $0 > 0 ? $0 : nil }
 
         // ── Assemble DailyMetric ──────────────────────────────────────────────
         let daily = DailyMetric(

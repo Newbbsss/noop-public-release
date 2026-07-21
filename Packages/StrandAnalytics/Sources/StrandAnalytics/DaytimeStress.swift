@@ -5,11 +5,11 @@ import WhoopProtocol
 // motion + step activity-class + sedentary-bout calm gates.
 //
 // CONTINUED 2026-07-12 WHOOP Stress Monitor match (byte-twin of Android DaytimeStress.kt):
-//   • 15-minute buckets (was 1h) — closer to WHOOP’s continuous curve without inventing beats.
+//   • 5-minute buckets (was 15m ← 1h) — denser WHOOP-like curve without inventing beats.
 //   • Quiet HR p10/p25; calm logistic raw=0 → ~0.5 LOW.
 //   • Gravity L2 + step walk/run → stiller BPM subset; sedentary / still → calm bias.
 //   • Night scored near floor; waking-only calm reference (#357).
-//   • SD floors so flat calm days cannot explode z-scores.
+//   • Fear / soft-acute / work-context occupational damp (Android 0f1194 twin).
 //
 // APPROXIMATE / non-clinical — not WHOOP’s proprietary Stress Monitor.
 
@@ -17,23 +17,27 @@ public enum DaytimeStress {
 
     // MARK: - Tunables
 
-    /// 15-minute buckets — WHOOP chart is continuous; 1h was too coarse for tip/peak shape.
-    public static let bucketSeconds: Int = 900
-    /// ~4 buckets per clock hour (for UI hour counts).
-    public static let bucketsPerHour: Int = 4
+    /// 5-minute buckets — WHOOP chart is near-continuous; 15m still looked stair-stepped.
+    public static let bucketSeconds: Int = 300
+    /// ~12 buckets per clock hour (for UI hour counts / zone minutes).
+    public static let bucketsPerHour: Int = 12
 
-    /// Min HR samples per 15-min bucket (~75s at 1 Hz). Sparse MG offload may use [minHourHRSamplesSparse].
-    public static let minHourHRSamples: Int = 75
+    /// Min HR samples per 5-min bucket (~25s at 1 Hz; scales from prior 75/15-min).
+    public static let minHourHRSamples: Int = 25
     /// Adaptive floor when the day has few scored windows (Fable Stress #32).
-    public static let minHourHRSamplesSparse: Int = 50
-    public static let minHourHRSpanSeconds: Int = 60
-    public static let sparseDayBucketCap: Int = 8
+    public static let minHourHRSamplesSparse: Int = 18
+    public static let minHourHRSpanSeconds: Int = 20
+    /// If fewer than this many buckets meet the dense gate, retry sparse gate once.
+    public static let sparseDayBucketCap: Int = 16
     public static let minPlausibleBpm: Int = 30
     public static let maxPlausibleBpm: Int = 220
     public static let highBandFloor: Double = 2.0
-    /// ~3 waking hours of consecutive HIGH 15-min buckets.
+    /// ~3 waking hours of consecutive HIGH 5-min buckets.
     public static let sustainedHours: Int = 3
     public static var sustainedBuckets: Int { sustainedHours * bucketsPerHour }
+
+    /// Wall minutes covered by one scored bucket (UI captions).
+    public static var bucketMinutes: Int { bucketSeconds / 60 }
 
     public static let wakingStartHour: Int = 6
     public static let wakingEndHour: Int = 22
@@ -46,6 +50,20 @@ public enum DaytimeStress {
     public static let motionBusyFloor: Double = 0.030
     /// Soft damp when gravity/step marks the bucket busy — cuts motion false highs.
     public static let motionBusyDamp: Double = 0.58
+    /// When gravity looks busy but step class is still/sedentary, apply only this fraction of motionBusyDamp.
+    public static let seatedMotionDampScale: Double = 0.22
+    /// Extra raw when RMSSD is crashed vs calm (z ≥ this) — acute stress while seated.
+    public static let acuteRmssdCrashZ: Double = 1.15
+    public static let acuteRmssdBump: Double = 0.38
+    /// Fear / near-accident: concurrent HR spike + RMSSD collapse (Android 0f1194 twin).
+    public static let acuteFearRmssdCrashZ: Double = 1.30
+    public static let acuteFearHrZ: Double = 0.85
+    public static let acuteFearBump: Double = 0.85
+    /// Soft acute while motion-busy: elevated HR + meaningful RMSSD drop missing full fear gate.
+    public static let softAcuteHrZ: Double = 1.20
+    public static let softAcuteBump: Double = 0.28
+    /// Work-hours ambulatory damp — occupational HR baseline, not panic (fear/soft-acute skip).
+    public static let workContextOccupationalDamp: Double = 0.48
     public static let sedentaryCalmBias: Double = 0.65
     public static let nightCalmBias: Double = 1.35
     /// When waking quiet HR is within this many bpm of overnight quiet, pull toward LOW (#12).
@@ -128,7 +146,7 @@ public enum DaytimeStress {
             max(0, calibrationNightsTarget - priorCalmDayCount)
         }
 
-        /// Scored coverage in clock-hours (15-min buckets ÷ 4).
+        /// Scored coverage in clock-hours (5-min buckets ÷ 12).
         public var scoredHoursApprox: Double {
             Double(scored.count) / Double(bucketsPerHour)
         }
@@ -222,7 +240,10 @@ public enum DaytimeStress {
                                sleepState: [(Int, Int)] = [],
                                skinElevated: Bool = false,
                                respElevated: Bool = false,
-                               priorCalmDayCount: Int = 0) -> Result {
+                               priorCalmDayCount: Int = 0,
+                               /// Optional work-hours / manual "at work" context. Damps ambulatory
+                               /// occupational HR — never invents Effort or stress from a place pin.
+                               workContextActive: Bool = false) -> Result {
         let key = StressKey(
             hr: StreamFingerprint.of(hr, ts: { $0.ts }, quant: { Int($0.bpm) }),
             rr: StreamFingerprint.of(rr, ts: { $0.ts }, quant: { Int($0.rrMs) }),
@@ -237,7 +258,8 @@ public enum DaytimeStress {
             workouts: workoutWindows.count,
             sleep: sleepState.count + sleepState.reduce(0) { $0 &+ $1.0 &+ $1.1 },
             vitals: (skinElevated ? 1 : 0) * 2 + (respElevated ? 1 : 0),
-            priorDays: priorCalmDayCount)
+            priorDays: priorCalmDayCount,
+            work: workContextActive ? 1 : 0)
         return analyzeCache.value(key) {
             analyzeUncached(hr: hr, rr: rr, tzOffsetSeconds: tzOffsetSeconds,
                             motion: motion, steps: steps, sedentaryBouts: sedentaryBouts,
@@ -245,7 +267,8 @@ public enum DaytimeStress {
                             priorCalmHrs: priorCalmHrs, daySi: daySi,
                             hfVagalTrusted: hfVagalTrusted, workoutWindows: workoutWindows,
                             sleepState: sleepState, skinElevated: skinElevated,
-                            respElevated: respElevated, priorCalmDayCount: priorCalmDayCount)
+                            respElevated: respElevated, priorCalmDayCount: priorCalmDayCount,
+                            workContextActive: workContextActive)
         }
     }
 
@@ -254,7 +277,7 @@ public enum DaytimeStress {
         let motion: StreamFingerprint; let steps: StreamFingerprint
         let sedentary: Int; let tz: Int; let waking: Int
         let prior: Int; let si: Int; let hf: Int; let workouts: Int
-        let sleep: Int; let vitals: Int; let priorDays: Int
+        let sleep: Int; let vitals: Int; let priorDays: Int; let work: Int
     }
     private static let analyzeCache = AnalyticsMemoCache<StressKey, Result>(capacity: 8)
 
@@ -272,7 +295,8 @@ public enum DaytimeStress {
                                         sleepState: [(Int, Int)],
                                         skinElevated: Bool,
                                         respElevated: Bool,
-                                        priorCalmDayCount: Int) -> Result {
+                                        priorCalmDayCount: Int,
+                                        workContextActive: Bool) -> Result {
         let usable = hr.filter { $0.bpm >= minPlausibleBpm && $0.bpm <= maxPlausibleBpm }
         guard !usable.isEmpty else { return .empty }
 
@@ -385,13 +409,49 @@ public enum DaytimeStress {
         for a in aggs {
             let hourOfDay = localHourOfDay(a.bucket)
             let wallStart = a.bucket - tzOffsetSeconds
+            let asleepFlag = a.bandAsleep
             let level: Double?
             if let quiet = a.meanHR {
                 var raw = rawScore(hr: quiet, meanHR: refHR, sdHR: sdHR,
                                    rmssd: a.rmssd, meanRMSSD: refRMSSD, sdRMSSD: sdRMSSD)
-                if !waking(a.bucket) || a.bandAsleep { raw -= nightCalmBias }
-                if a.motionBusy { raw -= motionBusyDamp }
-                if a.sedentaryCalm { raw -= sedentaryCalmBias }
+                if !waking(a.bucket) || asleepFlag { raw -= nightCalmBias }
+                // Fear / near-accident signature (HR↑ + RMSSD↓) — detect before occupational damp.
+                var fearSignature = false
+                var softAcute = false
+                var rmssdCrashZ = 0.0
+                var hrZ = 0.0
+                if waking(a.bucket), !asleepFlag,
+                   let rmssd = a.rmssd, let refR = refRMSSD, sdRMSSD > 0.0001,
+                   let refH = refHR, sdHR > 0.0001 {
+                    rmssdCrashZ = (refR - rmssd) / sdRMSSD
+                    hrZ = (quiet - refH) / sdHR
+                    fearSignature = rmssdCrashZ >= acuteFearRmssdCrashZ && hrZ >= acuteFearHrZ
+                    softAcute = !fearSignature &&
+                        hrZ >= softAcuteHrZ &&
+                        rmssdCrashZ >= acuteRmssdCrashZ
+                }
+                // Vehicle / seated vibration: gravity "busy" + still must not fully damp acute spikes.
+                // True walk/run keeps full damp unless fear / soft-acute is present.
+                let lightMotionDamp = fearSignature || softAcute
+                if a.motionBusy && !lightMotionDamp {
+                    raw -= a.sedentaryCalm ? motionBusyDamp * seatedMotionDampScale : motionBusyDamp
+                } else if a.motionBusy && lightMotionDamp {
+                    raw -= motionBusyDamp * seatedMotionDampScale
+                }
+                if a.sedentaryCalm && !fearSignature && !softAcute { raw -= sedentaryCalmBias }
+                // Acute RMSSD crash — skip ordinary acute while on-feet at work unless fear/soft-acute.
+                if waking(a.bucket), !asleepFlag, let rmssd = a.rmssd, let refR = refRMSSD, sdRMSSD > 0.0001 {
+                    let z = rmssdCrashZ > 0 ? rmssdCrashZ : (refR - rmssd) / sdRMSSD
+                    let allowAcute = fearSignature || softAcute ||
+                        !workContextActive || a.sedentaryCalm || !a.motionBusy
+                    if fearSignature {
+                        raw += acuteFearBump
+                    } else if softAcute && allowAcute {
+                        raw += softAcuteBump
+                    } else if z >= acuteRmssdCrashZ && allowAcute {
+                        raw += acuteRmssdBump
+                    }
+                }
                 if waking(a.bucket), !a.motionBusy, let overnight = overnightQuiet,
                    quiet <= overnight + overnightAnchorSlackBpm {
                     raw -= overnightCalmBias
@@ -404,6 +464,11 @@ public enum DaytimeStress {
                 if a.workoutOverlap { raw -= workoutOverlapBias }
                 if waking(a.bucket), skinElevated { raw += skinElevatedBias }
                 if waking(a.bucket), respElevated { raw += respElevatedBias }
+                // Standing warehouse: ambulatory HR during work hours = baseline, not panic.
+                if workContextActive, waking(a.bucket), !asleepFlag,
+                   a.motionBusy, !a.sedentaryCalm, !fearSignature, !softAcute {
+                    raw -= workContextOccupationalDamp
+                }
                 level = squash(raw)
             } else {
                 level = nil

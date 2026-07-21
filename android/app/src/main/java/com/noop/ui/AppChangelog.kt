@@ -25,7 +25,7 @@ object AppChangelog {
      * Bump this when you add a release below. The "What's New" sheet shows automatically when the
      * stored last-seen version is behind this. (Decoupled from the bundle version on purpose.)
      */
-    const val CURRENT_VERSION = "8.6.243"
+    const val CURRENT_VERSION = "8.6.245"
 
     data class Release(
         val version: String,
@@ -36,6 +36,28 @@ object AppChangelog {
 
     /** Newest first. */
     val releases: List<Release> = listOf(
+        Release(
+            version = "8.6.245",
+            title = "Effort hold Â· Stress HIGH peaks Â· iOS twin",
+            date = "2026-07-21",
+            items = listOf(
+                "Effort: empty-HR / sync flaps no longer publish steps-floor (~3â€“9) over banked TRIMP â€” live holds or defers to stored until cardio is computable.",
+                "Stress: fear RMSSD gate 1.75â†’1.30 + soft-acute path so motion-busy scare/commute spikes reach HIGH (~2.5); daily avg under peak on the timeline.",
+                "iOS Strand: DaytimeStress fear/soft-acute/work-context + Effort soft band / live hold twinned; Stress avg under peak.",
+                "SpOâ‚‚ honesty unchanged: never invents a %.",
+            ),
+        ),
+        Release(
+            version = "8.6.244",
+            title = "Warehouse Effort Â· fear peak Â· naps",
+            date = "2026-07-20",
+            items = listOf(
+                "Effort: soft occupational band lowered to ~33% HRR (standing warehouse / ambulatory load; DPhacto-style â‰¥30% HRR) with 12 min sustain + brief-dip grace â€” Amazon shifts no longer stick near the steps floor (~9).",
+                "Stress: fear/near-accident signature (HRâ†‘ + RMSSD crash) overrides work-hours occupational damp so ~3:30 peaks can beat evening break; peak label shows clock time (not hour-only).",
+                "Naps: daytime auto-detect floor 90â†’25 min (HR dip still required) so real naps appear on Sleep; nap TST feeds Rest duration without diluting overnight deep/REM.",
+                "UI: sleep crescent on Stress asleep wash + bedtime icon above hypnogram. SpOâ‚‚ honesty unchanged.",
+            ),
+        ),
         Release(
             version = "8.6.243",
             title = "Warehouse Effort Â· Stress work hours",

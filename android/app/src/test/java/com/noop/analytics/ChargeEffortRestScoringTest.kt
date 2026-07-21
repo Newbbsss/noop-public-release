@@ -64,11 +64,10 @@ class ChargeEffortRestScoringTest {
     @Test
     fun effort_edwardsZoneGoldens_onZeroHundredScale() {
         // restingHR 60, maxHR 160 → hrReserve 100 → %HRR = bpm − 60.
-        // Below 60% HRR: classic Edwards weight 0. Soft occupational band (50–60%) can still
-        // contribute after sustain — bpm 115 = 55% HRR (warehouse-like), not a calm desk 70s day.
-        val softLight = StrainScorer.strain(hrConstant(115), maxHR = 160.0, restingHR = 60.0)!!
-        assertTrue("sustained 55% HRR should register soft-band Effort", softLight > 0.0)
-        assertTrue("10 min soft-band stream stays modest, was $softLight", softLight < 20.0)
+        // Soft occupational band (~33–60% HRR) after sustain — bpm 100 = 40% HRR (warehouse-like).
+        val softLight = StrainScorer.strain(hrConstant(100, n = 900), maxHR = 160.0, restingHR = 60.0)!!
+        assertTrue("sustained 40% HRR should register soft-band Effort", softLight > 0.0)
+        assertTrue("15 min soft-band stream stays modest, was $softLight", softLight < 25.0)
         // First paying classic zone is ≥60% HRR (weight 2): bpm 120 → trimp 20 → ~32.19
         val at60 = StrainScorer.strain(hrConstant(120), maxHR = 160.0, restingHR = 60.0)!!
         assertTrue(at60 > softLight)
@@ -182,10 +181,10 @@ class ChargeEffortRestScoringTest {
 
     @Test
     fun effort_lightDayHonestlyScoresZeroNotFabricated() {
-        // HR below ~50% HRR earns ZERO, by design — the sparse path must not invent load. With
-        // max 184 / rest 60, zone 1 starts at 122 bpm; 105 bpm stays below it on both cadences.
-        assertEquals(0.0, StrainScorer.strain(hrConstant(105, n = 1200), maxHR = 184.0, restingHR = 60.0))
-        assertEquals(0.0, StrainScorer.strain(hrEvery(105, 40), maxHR = 184.0, restingHR = 60.0))
+        // HR below soft-band floor (~33% HRR) earns ZERO — sparse path must not invent load.
+        // max 184 / rest 60 → 33% HRR ≈ 101 bpm; 90 bpm stays below on both cadences.
+        assertEquals(0.0, StrainScorer.strain(hrConstant(90, n = 1200), maxHR = 184.0, restingHR = 60.0))
+        assertEquals(0.0, StrainScorer.strain(hrEvery(90, 40), maxHR = 184.0, restingHR = 60.0))
     }
 
     @Test
@@ -245,24 +244,27 @@ class ChargeEffortRestScoringTest {
 
     @Test
     fun effort_softBand_warehouseShiftRegisters_deskSpikeDoesNot() {
-        // RHR 55 / HRmax 184 → 50% HRR ≈ 119.5, 60% ≈ 132.4. Standing work ~122 bpm is soft-band.
+        // RHR 55 / HRmax 184 → 33% HRR ≈ 97.6, 60% ≈ 132.4.
+        // Standing warehouse work often sits ~100–110 bpm (occupational ≥30% HRR literature) —
+        // below classic Edwards 50–60% and below the old soft floor of 50%.
         val max = 184.0
         val rest = 55.0
         // Under sparse gate → null (no soft-band mint from a short spike).
-        val brief = hrEvery(122, n = 14, stepS = 30)
+        val brief = hrEvery(108, n = 14, stepS = 30)
         assertNull(StrainScorer.strain(brief, maxHR = max, restingHR = rest))
-        // Long calm desk (~90 bpm, well under 50% HRR) stays 0 even with full sparse coverage.
-        val desk = hrEvery(90, n = 40, stepS = 30)
+        // Long calm desk (~85 bpm, under 33% HRR) stays 0 even with full sparse coverage.
+        val desk = hrEvery(85, n = 40, stepS = 30)
         assertEquals(0.0, StrainScorer.strain(desk, maxHR = max, restingHR = rest)!!, 0.01)
-        // Broken soft bout (elevated/calm alternating) never reaches 8 min sustain → 0.
+        // Broken soft bout (elevated/calm alternating) never reaches sustain → 0.
         val broken = (0 until 40).map { i ->
-            HrSample(deviceId = "t", ts = (i * 30L), bpm = if (i % 4 < 2) 122 else 90)
+            HrSample(deviceId = "t", ts = (i * 30L), bpm = if (i % 4 < 2) 108 else 85)
         }
         assertEquals(0.0, StrainScorer.strain(broken, maxHR = max, restingHR = rest)!!, 0.01)
-        // 4 h standing shift @ 122 after sustain — soft band weight 1 → Effort well into 50s.
-        val shift = hrEvery(122, n = 480, stepS = 30) // 4 h
+        // 8 h standing shift @ 108 after sustain — soft band weight 1 → Effort well into 50s+.
+        val shift = hrEvery(108, n = 960, stepS = 30) // 8 h
         val effort = StrainScorer.strain(shift, maxHR = max, restingHR = rest)!!
-        assertTrue("warehouse soft-band shift should land ~55–70, got $effort", effort in 50.0..75.0)
+        assertTrue("warehouse soft-band shift should land ≥55, got $effort", effort >= 55.0)
+        assertTrue("warehouse soft-band should stay below hard zone-2 day, got $effort", effort < 90.0)
         // True zone-2 still higher weight.
         val zone2 = hrEvery(140, n = 480, stepS = 30)
         val zoneEffort = StrainScorer.strain(zone2, maxHR = max, restingHR = rest)!!
@@ -471,6 +473,24 @@ class ChargeEffortRestScoringTest {
         val expected = (100.0 * 0.45 + 90.0 * 0.20 + (restShare / 0.50 * 100.0) * 0.25 + 50.0 * 0.10) *
             RestScorer.restWhoopAlignScale
         assertEquals(expected, score, EPS)
+    }
+
+    @Test
+    fun rest_napMinutesRaiseDurationWithoutDilutingRestorative() {
+        // Short main night + nap: duration uses main+nap; deep/REM share stays on main TST.
+        val main = 6.0 * 3600.0
+        val nap = 0.75 * 3600.0
+        val deep = 1.0 * 3600.0
+        val rem = 1.2 * 3600.0
+        val withoutNap = RestScorer.rest(main, 0.90, deep, rem)!!
+        val withNap = RestScorer.rest(
+            asleepSeconds = main,
+            efficiency = 0.90,
+            deepSeconds = deep,
+            remSeconds = rem,
+            durationAsleepSeconds = main + nap,
+        )!!
+        assertTrue("nap should raise Rest via duration, got $withNap vs $withoutNap", withNap > withoutNap)
     }
 
     // ── ScoreConfidence tiers ──────────────────────────────────────────────────

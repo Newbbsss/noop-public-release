@@ -11,7 +11,7 @@ import org.junit.Test
  * Tests SleepStager's daytime false-sleep guard (#90). A long, still, sedentary daytime
  * stretch is gravity-indistinguishable from a real nap, so the gravity spine alone
  * misclassifies it as sleep. The guard holds a window whose CENTER falls in the local
- * daytime band [11,20) to a stricter bar — ≥ daytimeMinSleepMin (90 min) AND a genuine
+ * daytime band [11,20) to a stricter bar — ≥ daytimeMinSleepMin (25 min) AND a genuine
  * resting-HR dip below the day baseline. Overnight windows are UNCHANGED.
  *
  * Faithful Kotlin mirror of the daytime-guard cases in SleepStagerTests.swift; same
@@ -45,38 +45,36 @@ class SleepStagerDaytimeGuardTest {
     @Test
     fun daytimeShortLowHRWindowRejected() {
         // 3 h active context (HR 72) lifts the day HR baseline so the HR test would PASS;
-        // the 70-min daytime still window is then rejected purely by the < 90 min gate.
+        // the 20-min daytime still window is then rejected purely by the < daytimeMinSleepMin gate.
         val dayStart = startAtHour(10)
         val dayDur = 3 * 60 * 60
         val dayGrav = activeGravity(dayStart, dayDur)
         val dayHR = hrStream(dayStart, dayDur, 72)
 
-        val napStart = dayStart + dayDur // 13:00, center 13:35 → daytime band
-        val napDur = 70 * 60 // 70 min < 90 min daytime minimum
+        val napStart = dayStart + dayDur // 13:00, center ~13:10 → daytime band
+        val napDur = 20 * 60 // 20 min < 25 min daytime minimum
         val napGrav = stillGravity(napStart, napDur)
         val napHR = hrStream(napStart, napDur, 50)
 
         val sessions = SleepStager.detectSleep(hr = dayHR + napHR, gravity = dayGrav + napGrav)
-        assertTrue("a 70-min daytime still window must be rejected by the guard", sessions.isEmpty())
+        assertTrue("a 20-min daytime still window must be rejected by the guard", sessions.isEmpty())
     }
 
     @Test
     fun daytimeQualityNapRegisters() {
-        // A 120-min daytime nap with a real HR dip (50 vs ~72 baseline) STILL registers.
+        // A 40-min daytime nap with a real HR dip (50 vs ~72 baseline) registers (was 90-min floor).
         val dayStart = startAtHour(10)
         val dayDur = 3 * 60 * 60
         val dayGrav = activeGravity(dayStart, dayDur)
         val dayHR = hrStream(dayStart, dayDur, 72)
 
-        val napStart = dayStart + dayDur // 13:00, center 14:00 → daytime band
-        val napDur = 120 * 60 // 120 min ≥ 90 min daytime minimum
+        val napStart = dayStart + dayDur // 13:00, center 13:20 → daytime band
+        val napDur = 40 * 60 // 40 min ≥ 25 min daytime minimum
         val napGrav = stillGravity(napStart, napDur)
         val napHR = hrStream(napStart, napDur, 50)
 
         val sessions = SleepStager.detectSleep(hr = dayHR + napHR, gravity = dayGrav + napGrav)
-        assertEquals("a 120-min daytime nap with a real HR dip must register", 1, sessions.size)
-        // The run begins at/just after the active→still transition (rolling stillness window
-        // shifts the boundary a few minutes); its center stays firmly in the daytime band.
+        assertEquals("a 40-min daytime nap with a real HR dip must register", 1, sessions.size)
         assertTrue(sessions[0].start >= napStart)
         assertTrue(sessions[0].start < napStart + 10 * 60)
         assertEquals(50, sessions[0].restingHR)
