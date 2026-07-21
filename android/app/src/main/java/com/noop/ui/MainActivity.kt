@@ -695,6 +695,107 @@ object NoopPrefs {
     fun stressWakingEndHour(context: Context): Int =
         if (stressTightWaking(context)) 21 else 22
 
+    // ── Work context (Stress sensitivity / badge — never invents Effort from a pin) ──
+
+    /** Opt-in work hours / place label for Stress context. Default OFF. */
+    const val KEY_WORK_CONTEXT_ENABLED = "noop.workContext.enabled"
+    const val KEY_WORK_LABEL = "noop.workContext.label"
+    const val KEY_WORK_START_HOUR = "noop.workContext.startHour"
+    const val KEY_WORK_END_HOUR = "noop.workContext.endHour"
+    /** Manual override: unset / "auto" follows hours; "on" / "off" force. */
+    const val KEY_WORK_MANUAL = "noop.workContext.manual"
+    /** Optional geofence fields (stored for a follow-up ship; unused for Stress this build). */
+    const val KEY_WORK_LAT = "noop.workContext.lat"
+    const val KEY_WORK_LNG = "noop.workContext.lng"
+    const val KEY_WORK_RADIUS_M = "noop.workContext.radiusM"
+
+    fun workContextEnabled(context: Context): Boolean =
+        of(context).getBoolean(KEY_WORK_CONTEXT_ENABLED, false)
+
+    fun setWorkContextEnabled(context: Context, enabled: Boolean) {
+        of(context).edit().putBoolean(KEY_WORK_CONTEXT_ENABLED, enabled).apply()
+    }
+
+    fun workLabel(context: Context): String =
+        of(context).getString(KEY_WORK_LABEL, null)?.trim().orEmpty()
+
+    fun setWorkLabel(context: Context, label: String) {
+        of(context).edit().putString(KEY_WORK_LABEL, label.trim().take(48)).apply()
+    }
+
+    fun workStartHour(context: Context): Int =
+        of(context).getInt(KEY_WORK_START_HOUR, 9).coerceIn(0, 23)
+
+    fun setWorkStartHour(context: Context, hour: Int) {
+        of(context).edit().putInt(KEY_WORK_START_HOUR, hour.coerceIn(0, 23)).apply()
+    }
+
+    fun workEndHour(context: Context): Int =
+        of(context).getInt(KEY_WORK_END_HOUR, 17).coerceIn(0, 23)
+
+    fun setWorkEndHour(context: Context, hour: Int) {
+        of(context).edit().putInt(KEY_WORK_END_HOUR, hour.coerceIn(0, 23)).apply()
+    }
+
+    /** null = follow schedule; true/false = manual I'm at work / not. */
+    fun workManualAtWork(context: Context): Boolean? =
+        when (of(context).getString(KEY_WORK_MANUAL, "auto")) {
+            "on" -> true
+            "off" -> false
+            else -> null
+        }
+
+    fun setWorkManualAtWork(context: Context, value: Boolean?) {
+        val raw = when (value) {
+            true -> "on"
+            false -> "off"
+            null -> "auto"
+        }
+        of(context).edit().putString(KEY_WORK_MANUAL, raw).apply()
+    }
+
+    fun workLat(context: Context): Double =
+        of(context).getFloat(KEY_WORK_LAT, Float.NaN).toDouble()
+
+    fun workLng(context: Context): Double =
+        of(context).getFloat(KEY_WORK_LNG, Float.NaN).toDouble()
+
+    fun workRadiusM(context: Context): Float =
+        of(context).getFloat(KEY_WORK_RADIUS_M, 150f)
+
+    fun setWorkGeofence(context: Context, lat: Double?, lng: Double?, radiusM: Float = 150f) {
+        val ed = of(context).edit()
+        if (lat == null || lng == null || !lat.isFinite() || !lng.isFinite()) {
+            ed.remove(KEY_WORK_LAT).remove(KEY_WORK_LNG)
+        } else {
+            ed.putFloat(KEY_WORK_LAT, lat.toFloat()).putFloat(KEY_WORK_LNG, lng.toFloat())
+        }
+        ed.putFloat(KEY_WORK_RADIUS_M, radiusM.coerceIn(50f, 2000f)).apply()
+    }
+
+    /**
+     * Whether Stress should treat "at work" context as active right now.
+     * Schedule window is local wall clock [start, end); wrap-aware if end ≤ start (night shift).
+     * Geofence lat/lng are **not** consulted yet (follow-up) — hours + manual only.
+     */
+    fun isWorkContextActive(context: Context, epochSeconds: Long = System.currentTimeMillis() / 1000L): Boolean {
+        if (!workContextEnabled(context)) return false
+        workManualAtWork(context)?.let { return it }
+        val hour = java.time.Instant.ofEpochSecond(epochSeconds)
+            .atZone(java.time.ZoneId.systemDefault())
+            .hour
+        val start = workStartHour(context)
+        val end = workEndHour(context)
+        return if (end > start) {
+            hour in start until end
+        } else if (end < start) {
+            // Night shift wrap, e.g. 22→6
+            hour >= start || hour < end
+        } else {
+            false // start==end → disabled window
+        }
+    }
+
     /** Card-surface opacity as a PERCENT (0 = fully see-through, 100 = solid; default 100). Drives the
      *  "Card transparency" setting — every frosted card (Heart Rate, Key Metrics, …)
      *  reads it via [CardAppearance]. Only the glass surface fades; the card content stays readable. */

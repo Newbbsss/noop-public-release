@@ -187,6 +187,7 @@ suspend fun loadDaytimeStressShared(
     val skinElevated = (todayRow?.skinTempDevC?.let { kotlin.math.abs(it) } ?: 0.0) >=
         DaytimeStress.skinElevatedAbsC
     val respElevated = (todayRow?.respRateBpm ?: 0.0) >= DaytimeStress.respElevatedBpm
+    val workContextActive = context?.let { NoopPrefs.isWorkContextActive(it, nowSeconds) } == true
 
     val result = DaytimeStress.analyze(
         hr, rr, tzOffsetSeconds,
@@ -204,6 +205,7 @@ suspend fun loadDaytimeStressShared(
         skinElevated = skinElevated,
         respElevated = respElevated,
         priorCalmDayCount = priorCalmDayCount,
+        workContextActive = workContextActive,
     )
 
     // Persist Now tip for Trends / history (Fable #42) — never invents; only when scored.

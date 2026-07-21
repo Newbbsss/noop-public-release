@@ -64,15 +64,14 @@ class ChargeEffortRestScoringTest {
     @Test
     fun effort_edwardsZoneGoldens_onZeroHundredScale() {
         // restingHR 60, maxHR 160 → hrReserve 100 → %HRR = bpm − 60.
-        // Below 60% HRR (bpm 115): no Edwards weight (ambulatory floor — compare 2026-07-17).
-        assertEquals(
-            0.0,
-            StrainScorer.strain(hrConstant(115), maxHR = 160.0, restingHR = 60.0)!!,
-            EPS,
-        )
-        // First paying zone is ≥60% HRR (weight 2): bpm 120 → trimp 20 → ~32.19
+        // Below 60% HRR: classic Edwards weight 0. Soft occupational band (50–60%) can still
+        // contribute after sustain — bpm 115 = 55% HRR (warehouse-like), not a calm desk 70s day.
+        val softLight = StrainScorer.strain(hrConstant(115), maxHR = 160.0, restingHR = 60.0)!!
+        assertTrue("sustained 55% HRR should register soft-band Effort", softLight > 0.0)
+        assertTrue("10 min soft-band stream stays modest, was $softLight", softLight < 20.0)
+        // First paying classic zone is ≥60% HRR (weight 2): bpm 120 → trimp 20 → ~32.19
         val at60 = StrainScorer.strain(hrConstant(120), maxHR = 160.0, restingHR = 60.0)!!
-        assertTrue(at60 > 0.0)
+        assertTrue(at60 > softLight)
         // zone3 (70–80%): bpm 135 → trimp 30 → 38.66
         assertEquals(
             38.66,
@@ -220,10 +219,11 @@ class ChargeEffortRestScoringTest {
     @Test
     fun effort_movementFloor_convexWalkNotHotEarly() {
         // Smoking gun 2026-07-17: old log floor hit ~22 at ~12k steps while WHOOP Strain was 0.1.
-        // 2026-07-20: noise 2.5k + milder convex so mid-day walks move Effort without inventing cardio.
+        // 8.6.243: warehouse-friendly cap 18 + milder convex — 12k stays mid single-digits; high-step
+        // standing shifts climb further without inventing cardio.
         val at12k = StrainScorer.movementFloor(12_000, null)
         assertTrue("12k walk should move Effort a little", at12k > 1.0)
-        assertTrue("12k walk must stay low–mid single-digits (was ~22)", at12k < 7.0)
+        assertTrue("12k walk must stay low–mid single-digits (was ~22)", at12k < 9.0)
 
         val at8k = StrainScorer.movementFloor(8_000, null)
         val at20k = StrainScorer.movementFloor(20_000, null)
@@ -233,14 +233,40 @@ class ChargeEffortRestScoringTest {
 
         // Cardio TRIMP still wins when higher.
         assertEquals(40.0, StrainScorer.withMovementFloor(40.0, 12_000, 400.0)!!, 0.0)
-        // Steps alone never invent a hard-workout day — cap ~12 so moderate lands nearer ~11.
+        // Steps alone never invent a hard-workout day — cap ~18 for standing-shift volume.
         assertTrue(StrainScorer.movementFloor(30_000, 2_000.0) <= StrainScorer.movementFloorCap)
-        assertTrue(StrainScorer.movementFloorCap <= 12.0 + 1e-9)
+        assertTrue(StrainScorer.movementFloorCap <= 18.0 + 1e-9)
         assertEquals(
             StrainScorer.movementFloor(12_000, null),
             StrainScorer.withMovementFloor(0.0, 12_000, null)!!,
             0.0,
         )
+    }
+
+    @Test
+    fun effort_softBand_warehouseShiftRegisters_deskSpikeDoesNot() {
+        // RHR 55 / HRmax 184 → 50% HRR ≈ 119.5, 60% ≈ 132.4. Standing work ~122 bpm is soft-band.
+        val max = 184.0
+        val rest = 55.0
+        // Under sparse gate → null (no soft-band mint from a short spike).
+        val brief = hrEvery(122, n = 14, stepS = 30)
+        assertNull(StrainScorer.strain(brief, maxHR = max, restingHR = rest))
+        // Long calm desk (~90 bpm, well under 50% HRR) stays 0 even with full sparse coverage.
+        val desk = hrEvery(90, n = 40, stepS = 30)
+        assertEquals(0.0, StrainScorer.strain(desk, maxHR = max, restingHR = rest)!!, 0.01)
+        // Broken soft bout (elevated/calm alternating) never reaches 8 min sustain → 0.
+        val broken = (0 until 40).map { i ->
+            HrSample(deviceId = "t", ts = (i * 30L), bpm = if (i % 4 < 2) 122 else 90)
+        }
+        assertEquals(0.0, StrainScorer.strain(broken, maxHR = max, restingHR = rest)!!, 0.01)
+        // 4 h standing shift @ 122 after sustain — soft band weight 1 → Effort well into 50s.
+        val shift = hrEvery(122, n = 480, stepS = 30) // 4 h
+        val effort = StrainScorer.strain(shift, maxHR = max, restingHR = rest)!!
+        assertTrue("warehouse soft-band shift should land ~55–70, got $effort", effort in 50.0..75.0)
+        // True zone-2 still higher weight.
+        val zone2 = hrEvery(140, n = 480, stepS = 30)
+        val zoneEffort = StrainScorer.strain(zone2, maxHR = max, restingHR = rest)!!
+        assertTrue(zoneEffort > effort)
     }
 
     @Test

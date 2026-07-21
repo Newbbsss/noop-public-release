@@ -97,15 +97,26 @@ object StrainScorer {
 
     /**
      * Edwards zone cut-offs as (%HRR threshold, weight), highest-first.
-     * No weight below **60% HRR** (classic Edwards zone-1 at 50% dropped): ambulatory daytime HR
-     * on rest/walk mornings was minting Effort ~40 while WHOOP Strain stayed ~0.1 with 0:00 zone
-     * time (Fold compare 2026-07-17). Easy days then sit on the steps movement floor instead.
+     * Classic Edwards zone-1 at 50% is **not** applied unconditionally — desk/rest mornings used to
+     * mint Effort ~40 while WHOOP Strain stayed ~0.1 (Fold compare 2026-07-17). Hard zones stay
+     * ≥**60% HRR**. Sustained 50–60% HRR can contribute a soft weight 1 after a sustain gate
+     * (occupational / ambulatory work) — see [softBandMinPctHrr].
      */
     val edwardsZones: List<Pair<Double, Int>> = listOf(
         90.0 to 5, 80.0 to 4, 70.0 to 3, 60.0 to 2,
     )
-    /** Minimum %HRR that contributes any Edwards weight. */
+    /** Minimum %HRR that contributes classic Edwards weight (≥60). */
     const val edwardsMinPctHrr: Double = 60.0
+    /**
+     * Soft occupational band: 50% ≤ %HRR &lt; 60% may count weight [softBandWeight] only after
+     * [softBandSustainMinutes] of continuous time at/above 50% HRR (hard zones also keep the bout
+     * alive). Brief desk spikes never mint; a multi-hour standing/walking warehouse shift can
+     * (Amazon-style on-feet labor). Does **not** invent Effort from a place pin — HR must sit elevated.
+     */
+    const val softBandMinPctHrr: Double = 50.0
+    const val softBandWeight: Int = 1
+    /** Continuous elevated minutes before soft-band samples contribute TRIMP (standing shifts). */
+    const val softBandSustainMinutes: Double = 8.0
 
     /** TRIMP accumulation method. */
     enum class Method { EDWARDS, BANISTER }
@@ -193,11 +204,31 @@ object StrainScorer {
         hrReserve: Double,
         sampleDurationMin: Double,
     ): Double {
-        var weighted = 0
-        for (s in hr) {
-            weighted += zoneWeight(s.bpm.toDouble(), restingHR, hrReserve)
+        // Soft-band sustain in sample counts (uniform cadence from [sampleDurationMinutes]).
+        val sustainSamples = if (sampleDurationMin > 0.0) {
+            kotlin.math.ceil(softBandSustainMinutes / sampleDurationMin).toInt().coerceAtLeast(1)
+        } else {
+            Int.MAX_VALUE
         }
-        return weighted.toDouble() * sampleDurationMin
+        var weighted = 0.0
+        var elevatedStreak = 0
+        for (s in hr) {
+            val bpm = s.bpm.toDouble()
+            val classic = zoneWeight(bpm, restingHR, hrReserve)
+            if (classic > 0) {
+                elevatedStreak += 1
+                weighted += classic
+            } else {
+                val pct = pctHRR(bpm, restingHR, hrReserve)
+                if (pct >= softBandMinPctHrr) {
+                    elevatedStreak += 1
+                    if (elevatedStreak >= sustainSamples) weighted += softBandWeight
+                } else {
+                    elevatedStreak = 0
+                }
+            }
+        }
+        return weighted * sampleDurationMin
     }
 
     fun banisterTRIMP(
@@ -265,16 +296,17 @@ object StrainScorer {
     const val movementStepsNoiseFloor: Int = 2_500
     /** @deprecated Kept for API compat; kcal no longer raises the floor (total-day kcal was wrong). */
     const val movementKcalNoiseFloor: Double = 250.0
-    /** Hard cap — steps alone never invent high cardio Effort. Moderate days land nearer ~11. */
-    const val movementFloorCap: Double = 12.0
+    /** Hard cap — steps alone never invent hard cardio Effort. High-step warehouse days can
+     *  approach ~18; cardio / soft-band TRIMP still wins when higher. */
+    const val movementFloorCap: Double = 18.0
     /**
      * Excess-steps scale for the convex curve: floor ≈ cap × (excess / scale)^exponent,
      * clipped to [0, cap]. ~16k excess (~18.5k total steps) approaches the cap.
      */
     const val movementStepsScale: Double = 16_000.0
     /** Convex exponent (>1): accelerating contribution as steps accumulate — milder than 1.85
-     *  so mid-day walks visibly move Effort instead of sitting flat near the noise floor. */
-    const val movementStepsExponent: Double = 1.45
+     *  so mid-day walks and standing-shift step volume visibly move Effort. */
+    const val movementStepsExponent: Double = 1.35
     const val movementKcalScale: Double = 1_000.0
     const val movementKcalExponent: Double = 1.85
 

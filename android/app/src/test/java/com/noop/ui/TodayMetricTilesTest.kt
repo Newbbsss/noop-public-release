@@ -597,6 +597,17 @@ class TodayMetricTilesTest {
     }
 
     @Test
+    fun smoothEffortClimb_rateLimitsUpwardCliff() {
+        // Log map cliff: TRIMP ~0.1→11 ≈ Effort 1→28. Live tick must climb in steps.
+        assertEquals(null, smoothEffortClimb(prev = 1.0, next = null))
+        assertEquals(28.0, smoothEffortClimb(prev = null, next = 28.0))
+        assertEquals(7.0, smoothEffortClimb(prev = 1.0, next = 28.0, maxUpPerTick = 6.0))
+        assertEquals(13.0, smoothEffortClimb(prev = 7.0, next = 28.0, maxUpPerTick = 6.0))
+        assertEquals(5.0, smoothEffortClimb(prev = 12.0, next = 5.0)) // free fall
+        assertEquals(10.0, smoothEffortClimb(prev = 8.0, next = 10.0, maxUpPerTick = 6.0))
+    }
+
+    @Test
     fun effectiveEffortStrain_keepsLiveCalmZero_andIgnoresBankedZeroLock() {
         // Live calm 0.0 (enough HR, no zone load) is a real score — surface it. Banked ≤0 alone is a
         // lock artifact → null so pending / live can heal (Fold 2026-07-19).

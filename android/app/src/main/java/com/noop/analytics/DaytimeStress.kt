@@ -70,6 +70,22 @@ object DaytimeStress {
     const val motionBusyFloor: Double = 0.030
     /** Soft damp when gravity/step marks the bucket busy — cuts motion false highs. */
     const val motionBusyDamp: Double = 0.58
+    /**
+     * When gravity looks "busy" but the step class is still / sedentary (vehicle vibration,
+     * seated shaking), apply only this fraction of [motionBusyDamp] so rain-drive / near-accident
+     * autonomic spikes are not wiped as "exercise motion".
+     */
+    const val seatedMotionDampScale: Double = 0.22
+    /** Extra raw when RMSSD is crashed vs calm (z ≥ this) — acute stress while seated. */
+    const val acuteRmssdCrashZ: Double = 1.15
+    const val acuteRmssdBump: Double = 0.38
+    /**
+     * Work-hours context for standing / warehouse jobs (e.g. Amazon fulfillment): when the user
+     * opted into work hours and the bucket is ambulatory (motion-busy, not seated), damp Stress
+     * so occupational HR is a baseline — not panic. Never invents Effort from a place pin.
+     * Seated + work hours still allow acute RMSSD / near-accident paths (commute, break-room).
+     */
+    const val workContextOccupationalDamp: Double = 0.48
     /** Extra raw damp when bucket is inside a sedentary bout or dominated by still class. */
     const val sedentaryCalmBias: Double = 0.65
     const val nightCalmBias: Double = 1.35
@@ -286,6 +302,11 @@ object DaytimeStress {
         respElevated: Boolean = false,
         /** Distinct prior calm days contributing to [priorCalmHrs] (Fable #50). */
         priorCalmDayCount: Int = 0,
+        /**
+         * Optional work-hours / manual "at work" context (prefs). Amplifies already-elevated raw
+         * only — never invents Effort or stress from a place pin alone.
+         */
+        workContextActive: Boolean = false,
     ): Result {
         val usableHr = hr.filter { it.bpm in minPlausibleBpm..maxPlausibleBpm }
         if (usableHr.isEmpty()) return Result.EMPTY
@@ -409,8 +430,19 @@ object DaytimeStress {
                 if (!waking(a.bucket) || asleepFlag) {
                     raw -= if (inSleepWindow(wallMidScore)) sleepWindowCalmBias else nightCalmBias
                 }
-                if (a.motionBusy) raw -= motionBusyDamp
+                // Vehicle / seated vibration: gravity "busy" + still/sedentary must not fully damp
+                // acute autonomic spikes (rain drive → near-accident). True walk/run keeps full damp.
+                if (a.motionBusy) {
+                    raw -= if (a.sedentaryCalm) motionBusyDamp * seatedMotionDampScale else motionBusyDamp
+                }
                 if (a.sedentaryCalm) raw -= sedentaryCalmBias
+                // Acute RMSSD crash — rain-drive / near-accident (often seated + gravity noise).
+                // Skip while on-feet at work: lower RMSSD from standing labor is occupational, not panic.
+                if (waking(a.bucket) && !asleepFlag && a.rmssd != null && refRmssd != null && sdRmssd > 0.0001) {
+                    val z = (refRmssd - a.rmssd) / sdRmssd
+                    val allowAcute = !workContextActive || a.sedentaryCalm || !a.motionBusy
+                    if (z >= acuteRmssdCrashZ && allowAcute) raw += acuteRmssdBump
+                }
                 if (waking(a.bucket) && !a.motionBusy && overnightQuiet != null &&
                     a.meanHr <= overnightQuiet + overnightAnchorSlackBpm
                 ) {
@@ -426,6 +458,12 @@ object DaytimeStress {
                 if (a.workoutOverlap) raw -= workoutOverlapBias
                 if (waking(a.bucket) && skinElevated) raw += skinElevatedBias
                 if (waking(a.bucket) && respElevated) raw += respElevatedBias
+                // Standing warehouse shift: ambulatory HR during work hours = baseline, not panic.
+                if (workContextActive && waking(a.bucket) && !asleepFlag &&
+                    a.motionBusy && !a.sedentaryCalm
+                ) {
+                    raw -= workContextOccupationalDamp
+                }
                 squash(raw)
             } else null
             points.add(

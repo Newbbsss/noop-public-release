@@ -1123,7 +1123,10 @@ fun TodayScreen(
                     estimateFallback = stepsEstForDay,
                 )
                 // Live floor is steps-driven; banked activeKcalEst is analyze-stale — omit on the tick path.
-                StrainScorer.withMovementFloor(trimp, bandSteps, null)
+                val raw = StrainScorer.withMovementFloor(trimp, bandSteps, null)
+                // Log Effort is steep near 0 (TRIMP 0.1→11 ≈ Effort 1→28). Climb in steps so the
+                // vessel does not cliff when the floor alone flips to first modest TRIMP.
+                smoothEffortClimb(liveTodayStrain, raw)
             } else {
                 null
             }
@@ -6606,6 +6609,25 @@ internal fun effectiveEffortStrain(
         selectedDayKey != null && storedDayKey != null && storedDayKey == selectedDayKey
     }
     return sameDayStored?.takeIf { it > 0.0 }
+}
+
+/**
+ * Rate-limit upward Effort jumps on the ~20s live tick.
+ *
+ * The log map puts ~11 Effort points in the first TRIMP unit, so floor≈1 → modest zone/soft
+ * TRIMP≈28 reads as a glitch. Downward moves and small climbs stay immediate; large climbs
+ * step by [maxUpPerTick] until they catch the honest score.
+ */
+internal fun smoothEffortClimb(
+    prev: Double?,
+    next: Double?,
+    maxUpPerTick: Double = 6.0,
+): Double? {
+    if (next == null) return null
+    if (prev == null) return next
+    if (next <= prev) return next
+    val capped = prev + maxUpPerTick.coerceAtLeast(0.0)
+    return if (next <= capped) next else (kotlin.math.round(capped * 100.0) / 100.0)
 }
 
 /**

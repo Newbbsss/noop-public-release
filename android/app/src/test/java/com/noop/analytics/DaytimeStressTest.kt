@@ -418,4 +418,37 @@ class DaytimeStressTest {
         assertNotNull(tip)
         assertTrue("calm day tip should be LOW-ish, got $tip", tip!! < 1.0)
     }
+
+    @Test
+    fun workContext_dampsAmbulatoryWarehouse_notSeatedAcute() {
+        // Calm baseline + walk-elevated hour (Amazon standing shift) vs same HR seated.
+        val calm = (6..9).flatMap { h -> hourHr(h, 62) }
+        val busyHr = hourHr(10, 95)
+        val walkSteps = busyHr.map {
+            StepSample(deviceId = "t", ts = it.ts, counter = 1, activityClass = DaytimeStress.stepClassWalk)
+        }
+        val stillSteps = busyHr.map {
+            StepSample(deviceId = "t", ts = it.ts, counter = 1, activityClass = DaytimeStress.stepClassStill)
+        }
+        val walkWork = DaytimeStress.analyze(
+            calm + busyHr, emptyList(), steps = walkSteps, workContextActive = true,
+        )
+        val walkHome = DaytimeStress.analyze(
+            calm + busyHr, emptyList(), steps = walkSteps, workContextActive = false,
+        )
+        val seatedWork = DaytimeStress.analyze(
+            calm + busyHr, emptyList(), steps = stillSteps, workContextActive = true,
+        )
+        val walkWorkLvl = walkWork.scored.filter { it.hour == 10 }.mapNotNull { it.level }.average()
+        val walkHomeLvl = walkHome.scored.filter { it.hour == 10 }.mapNotNull { it.level }.average()
+        val seatedWorkLvl = seatedWork.scored.filter { it.hour == 10 }.mapNotNull { it.level }.average()
+        assertTrue(
+            "on-feet at work should damp vs same walk off-shift ($walkWorkLvl vs $walkHomeLvl)",
+            walkWorkLvl < walkHomeLvl - 0.05,
+        )
+        assertTrue(
+            "seated+work must not get occupational damp ($seatedWorkLvl vs $walkWorkLvl)",
+            seatedWorkLvl > walkWorkLvl,
+        )
+    }
 }

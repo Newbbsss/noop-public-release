@@ -609,6 +609,11 @@ fun SettingsScreen(
     var stressCheckIn by remember { mutableStateOf(BiofeedbackPrefs.checkInEnabled(context)) }
     var stressAutoNudge by remember { mutableStateOf(BiofeedbackPrefs.autoNudge(context)) }
     var stressTightWaking by remember { mutableStateOf(NoopPrefs.stressTightWaking(context)) }
+    var workContextEnabled by remember { mutableStateOf(NoopPrefs.workContextEnabled(context)) }
+    var workLabel by remember { mutableStateOf(NoopPrefs.workLabel(context)) }
+    var workStartHour by remember { mutableStateOf(NoopPrefs.workStartHour(context)) }
+    var workEndHour by remember { mutableStateOf(NoopPrefs.workEndHour(context)) }
+    var workManual by remember { mutableStateOf(NoopPrefs.workManualAtWork(context)) }
     var rhythmEnabled by remember { mutableStateOf(RhythmConsent.isEnabled(context)) }
     var coachSignals by remember { mutableStateOf(NoopPrefs.coachSignals(context)) }
     var autoDetectWorkouts by remember { mutableStateOf(NoopPrefs.autoDetectWorkouts(context)) }
@@ -3194,6 +3199,101 @@ fun SettingsScreen(
                                 Text(stringResource(R.string.settings_cycle_cancel))
                             }
                         },
+                    )
+                }
+                RowDivider()
+                // Work context â€” Stress sensitivity / label during work hours (never invents Effort).
+                ToggleRow(
+                    title = stringResource(R.string.settings_work_context_title),
+                    detail = stringResource(R.string.settings_work_context_detail),
+                    checked = workContextEnabled,
+                    onCheckedChange = {
+                        workContextEnabled = it
+                        NoopPrefs.setWorkContextEnabled(context, it)
+                    },
+                )
+                if (workContextEnabled) {
+                    OutlinedTextField(
+                        value = workLabel,
+                        onValueChange = {
+                            workLabel = it.take(48)
+                            NoopPrefs.setWorkLabel(context, workLabel)
+                        },
+                        label = { Text(stringResource(R.string.settings_work_label)) },
+                        placeholder = { Text(stringResource(R.string.settings_work_label_hint)) },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = Palette.accent,
+                            cursorColor = Palette.accent,
+                        ),
+                    )
+                    Text(
+                        stringResource(R.string.settings_work_hours),
+                        style = NoopType.caption,
+                        color = Palette.textSecondary,
+                    )
+                    // Compact hour steppers â€” venial; full time picker follow-up with geofence.
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                stringResource(R.string.settings_work_start_fmt, workStartHour),
+                                style = NoopType.caption,
+                                color = Palette.textSecondary,
+                            )
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                TextButton(onClick = {
+                                    workStartHour = (workStartHour + 23) % 24
+                                    NoopPrefs.setWorkStartHour(context, workStartHour)
+                                }) { Text("âˆ’") }
+                                TextButton(onClick = {
+                                    workStartHour = (workStartHour + 1) % 24
+                                    NoopPrefs.setWorkStartHour(context, workStartHour)
+                                }) { Text("+") }
+                            }
+                        }
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                stringResource(R.string.settings_work_end_fmt, workEndHour),
+                                style = NoopType.caption,
+                                color = Palette.textSecondary,
+                            )
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                TextButton(onClick = {
+                                    workEndHour = (workEndHour + 23) % 24
+                                    NoopPrefs.setWorkEndHour(context, workEndHour)
+                                }) { Text("âˆ’") }
+                                TextButton(onClick = {
+                                    workEndHour = (workEndHour + 1) % 24
+                                    NoopPrefs.setWorkEndHour(context, workEndHour)
+                                }) { Text("+") }
+                            }
+                        }
+                    }
+                    FormRow(label = stringResource(R.string.settings_work_manual)) {
+                        SegmentedPillControl(
+                            items = listOf<Boolean?>(null, true, false),
+                            selection = workManual,
+                            label = {
+                                when (it) {
+                                    true -> "At work"
+                                    false -> "Off shift"
+                                    null -> "Auto"
+                                }
+                            },
+                            onSelect = {
+                                workManual = it
+                                NoopPrefs.setWorkManualAtWork(context, it)
+                            },
+                        )
+                    }
+                    Text(
+                        stringResource(R.string.settings_work_context_footnote),
+                        style = NoopType.caption,
+                        color = Palette.textTertiary,
                     )
                 }
                 RowDivider()

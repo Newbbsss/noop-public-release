@@ -391,6 +391,9 @@ private fun StressHeroCard(
     // CONTINUED 2026-07-12 stress-export: prefer "Now" (latest daytime hour) as the hero number
     // when the timeline has scored — WHOOP Stress Monitor shows the live tip, not only the
     // daily RHR/HRV load. Daily load stays as a quiet secondary line.
+    val context = LocalContext.current
+    val workContextActive = NoopPrefs.isWorkContextActive(context)
+    val workLabel = NoopPrefs.workLabel(context)
     val displayScore = nowLevel ?: model.score
     val displayBand = StressBand.forScore(displayScore)
     val bandColor = StressRamp.color(displayScore)
@@ -427,6 +430,10 @@ private fun StressHeroCard(
                 Overline(
                     when {
                         nowLevel != null && inSleepBand -> "This hour · asleep band"
+                        nowLevel != null && workContextActive -> {
+                            val label = workLabel.takeIf { it.isNotBlank() }
+                            if (label != null) "This hour · at $label" else "This hour · at work"
+                        }
                         nowLevel != null -> "This hour"
                         model.scoreDayKey == java.time.LocalDate.now().toString() -> "Today’s load"
                         else -> "Latest · ${model.scoreDayKey}"

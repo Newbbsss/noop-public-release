@@ -25,7 +25,7 @@ object AppChangelog {
      * Bump this when you add a release below. The "What's New" sheet shows automatically when the
      * stored last-seen version is behind this. (Decoupled from the bundle version on purpose.)
      */
-    const val CURRENT_VERSION = "8.6.242"
+    const val CURRENT_VERSION = "8.6.243"
 
     data class Release(
         val version: String,
@@ -36,6 +36,17 @@ object AppChangelog {
 
     /** Newest first. */
     val releases: List<Release> = listOf(
+        Release(
+            version = "8.6.243",
+            title = "Warehouse Effort Â· Stress work hours",
+            date = "2026-07-20",
+            items = listOf(
+                "Effort no longer cliffs ~1â†’28: live gauge climbs in steps (log map is steep near zero). Standing/warehouse shifts register via sustained 50â€“60% HRR soft band + higher steps floor cap (18) â€” still no invented cardio from a place pin.",
+                "Stress: rain-drive / near-accident keep acute seated path; on-feet Amazon-style work hours damp occupational HR as baseline (not panic). Break-time falling stress unchanged.",
+                "Settings â†’ Health & wellness: Work hours / place (label e.g. Amazon, shift window, At work / Off shift). Context only â€” geofence pin saved for a follow-up.",
+                "SpOâ‚‚ honesty unchanged: never invents a %.",
+            ),
+        ),
         Release(
             version = "8.6.242",
             title = "Effort moves Â· charge sticks Â· HRV Deep",
