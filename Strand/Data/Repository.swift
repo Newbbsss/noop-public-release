@@ -2497,7 +2497,9 @@ private extension DailyMetric {
             // Raw SpO2 is on-device only (imports never carry it), so the imported row's nil is
             // backfilled from the computed fallback — otherwise the nightly means would be lost. (#93)
             spo2Red: spo2Red ?? fallback.spo2Red,
-            spo2Ir: spo2Ir ?? fallback.spo2Ir
+            spo2Ir: spo2Ir ?? fallback.spo2Ir,
+            // Optical-presence flag is on-device only (never invent %). Prefer either side's true.
+            spo2OpticalAux: spo2OpticalAux ?? fallback.spo2OpticalAux
         )
     }
 
@@ -2525,7 +2527,8 @@ private extension DailyMetric {
             steps: steps,
             activeKcalEst: activeKcalEst,
             spo2Red: spo2Red,   // non-sleep field: preserved as-is (#93)
-            spo2Ir: spo2Ir
+            spo2Ir: spo2Ir,
+            spo2OpticalAux: spo2OpticalAux
         )
     }
 }

@@ -25,7 +25,7 @@ object AppChangelog {
      * Bump this when you add a release below. The "What's New" sheet shows automatically when the
      * stored last-seen version is behind this. (Decoupled from the bundle version on purpose.)
      */
-    const val CURRENT_VERSION = "8.6.246"
+    const val CURRENT_VERSION = "8.6.247"
 
     data class Release(
         val version: String,
@@ -36,6 +36,17 @@ object AppChangelog {
 
     /** Newest first. */
     val releases: List<Release> = listOf(
+        Release(
+            version = "8.6.247",
+            title = "iOS SpOâ‚‚ optical aux twin",
+            date = "2026-07-21",
+            items = listOf(
+                "iOS WhoopStore v25: DailyMetric.spo2OpticalAux twin of Android overnight optical-presence flag.",
+                "AnalyticsEngine opticalAuxOvernight + IntelligenceEngine rollup from asleep + nonzero @82 only.",
+                "Today / VitalSigns lean captions: raw Â· not % when optical aux is present (never a made-up SpOâ‚‚ %).",
+                "SpOâ‚‚ honesty unchanged: never invents a %.",
+            ),
+        ),
         Release(
             version = "8.6.246",
             title = "SpOâ‚‚ honesty Â· R22 Â· HeartKey GET",

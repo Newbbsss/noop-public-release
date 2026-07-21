@@ -310,6 +310,10 @@ public enum AnalyticsEngine {
                                   // pure-function callers/tests free of it; IntelligenceEngine threads the
                                   // night window's persisted band state. (#531 / H8 consume)
                                   bandSleepState: [(ts: Int, state: Int)] = [],
+                                  // MG sleep-offload: nonzero `@82` while band asleep. Banks
+                                  // DailyMetric.spo2OpticalAux only — never a SpO₂ %. Default false keeps
+                                  // pure callers unchanged (Android twin).
+                                  opticalAuxOvernight: Bool = false,
                                   // Opt-in experimental sleep staging (V2). When true, detected nights are
                                   // staged by `SleepStagerV2` instead of V1. Default false keeps V1 the
                                   // byte-identical default for pure-function callers/tests; IntelligenceEngine
@@ -622,7 +626,8 @@ public enum AnalyticsEngine {
             steps: stepsTotal,
             activeKcalEst: activeKcalEst,
             spo2Red: nightlySpo2Raw?.red,
-            spo2Ir: nightlySpo2Raw?.ir)
+            spo2Ir: nightlySpo2Raw?.ir,
+            spo2OpticalAux: opticalAuxOvernight ? true : nil)
         _ = sleepStart; _ = sleepEnd  // available for callers wiring sleep_start/end columns
 
         // ── Cache rows ────────────────────────────────────────────────────────

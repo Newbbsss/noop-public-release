@@ -164,6 +164,15 @@ enum BodyVitalSigns {
         let hrvRow = latest(hrvPoints)
         let skinRow = latest(skinPoints)
 
+        // MG overnight optical presence (DailyMetric.spo2OpticalAux) — caption only when no red/IR ADC
+        // and no imported %. Never invents a SpO₂ number (Android HealthScreen twin).
+        let opticalAuxPresent = days.contains { m in
+            m.spo2OpticalAux == true && m.spo2Red == nil && m.spo2Ir == nil
+        }
+        let spo2rawMissing: String = opticalAuxPresent
+            ? String(localized: "Overnight optical · MG · not % (no red/IR ADC)")
+            : String(localized: "No raw SpO₂ decode for the night")
+
         // Trailing values (oldest → newest) feeding each tile's sparkline trail. A 2+ point series
         // draws; the tile hides the trail otherwise. Presentation-only — built from the same resolved
         // points already used for the value, just kept as a series rather than collapsed to `latest`.
@@ -256,7 +265,7 @@ enum BodyVitalSigns {
                 metricColor: StrandPalette.metricCyan,
                 day: spo2rawRow?.day,
                 source: spo2rawRow?.source,
-                missingCaption: String(localized: "No raw SpO₂ decode for the night"),
+                missingCaption: spo2rawMissing,
                 sparkline: trail(spo2rawPoints)
             ),
             BodyVitalReading(

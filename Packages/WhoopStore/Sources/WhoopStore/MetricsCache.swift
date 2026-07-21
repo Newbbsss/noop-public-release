@@ -68,12 +68,17 @@ public struct DailyMetric: Equatable, Codable {
     // call site is unaffected.
     public let spo2Red: Int?           // mean raw red PPG ADC during detected sleep
     public let spo2Ir: Int?            // mean raw IR PPG ADC during detected sleep
+    // MG / GEN5 overnight optical-presence flag (v25; Android DailyMetric.spo2OpticalAux twin).
+    // True only when raw v18 `@82` (whoop-rs inner 74) was nonzero while band asleep. NEVER a SpO₂ % —
+    // optical/subsystem footprint only. Nullable so imports + pre-upgrade rows stay nil.
+    public let spo2OpticalAux: Bool?
     public init(day: String, totalSleepMin: Double?, efficiency: Double?, deepMin: Double?,
                 remMin: Double?, lightMin: Double?, disturbances: Int?, restingHr: Int?,
                 avgHrv: Double?, recovery: Double?, strain: Double?, exerciseCount: Int?,
                 spo2Pct: Double? = nil, skinTempDevC: Double? = nil, respRateBpm: Double? = nil,
                 steps: Int? = nil, activeKcalEst: Double? = nil,
-                spo2Red: Int? = nil, spo2Ir: Int? = nil) {
+                spo2Red: Int? = nil, spo2Ir: Int? = nil,
+                spo2OpticalAux: Bool? = nil) {
         self.day = day; self.totalSleepMin = totalSleepMin; self.efficiency = efficiency
         self.deepMin = deepMin; self.remMin = remMin; self.lightMin = lightMin
         self.disturbances = disturbances; self.restingHr = restingHr; self.avgHrv = avgHrv
@@ -81,6 +86,7 @@ public struct DailyMetric: Equatable, Codable {
         self.spo2Pct = spo2Pct; self.skinTempDevC = skinTempDevC; self.respRateBpm = respRateBpm
         self.steps = steps; self.activeKcalEst = activeKcalEst
         self.spo2Red = spo2Red; self.spo2Ir = spo2Ir
+        self.spo2OpticalAux = spo2OpticalAux
     }
 
     /// The freshest STRICTLY-PRIOR day that carries at least one overnight vital (HRV / resting HR /
@@ -365,8 +371,8 @@ extension WhoopStore {
                         (deviceId, day, totalSleepMin, efficiency, deepMin, remMin, lightMin,
                          disturbances, restingHr, avgHrv, recovery, strain, exerciseCount,
                          spo2Pct, skinTempDevC, respRateBpm, steps, activeKcalEst,
-                         spo2Red, spo2Ir)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                         spo2Red, spo2Ir, spo2OpticalAux)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(deviceId, day) DO UPDATE SET
                         totalSleepMin = excluded.totalSleepMin,
                         efficiency = excluded.efficiency,
@@ -385,13 +391,14 @@ extension WhoopStore {
                         steps = excluded.steps,
                         activeKcalEst = excluded.activeKcalEst,
                         spo2Red = excluded.spo2Red,
-                        spo2Ir = excluded.spo2Ir
+                        spo2Ir = excluded.spo2Ir,
+                        spo2OpticalAux = excluded.spo2OpticalAux
                     """, arguments: [deviceId, d.day, d.totalSleepMin, d.efficiency, d.deepMin,
                                      d.remMin, d.lightMin, d.disturbances, d.restingHr, d.avgHrv,
                                      d.recovery, d.strain, d.exerciseCount,
                                      d.spo2Pct, d.skinTempDevC, d.respRateBpm,
                                      d.steps, d.activeKcalEst,
-                                     d.spo2Red, d.spo2Ir])
+                                     d.spo2Red, d.spo2Ir, d.spo2OpticalAux])
                 n += db.changesCount
             }
             return n
@@ -442,7 +449,7 @@ extension WhoopStore {
                 SELECT day, totalSleepMin, efficiency, deepMin, remMin, lightMin, disturbances,
                        restingHr, avgHrv, recovery, strain, exerciseCount,
                        spo2Pct, skinTempDevC, respRateBpm, steps, activeKcalEst,
-                       spo2Red, spo2Ir FROM dailyMetric
+                       spo2Red, spo2Ir, spo2OpticalAux FROM dailyMetric
                 WHERE deviceId = ? AND day >= ? AND day <= ?
                 ORDER BY day ASC
                 """, arguments: [deviceId, from, to])
@@ -456,7 +463,8 @@ extension WhoopStore {
                                 spo2Pct: $0["spo2Pct"], skinTempDevC: $0["skinTempDevC"],
                                 respRateBpm: $0["respRateBpm"],
                                 steps: $0["steps"], activeKcalEst: $0["activeKcalEst"],
-                                spo2Red: $0["spo2Red"], spo2Ir: $0["spo2Ir"])
+                                spo2Red: $0["spo2Red"], spo2Ir: $0["spo2Ir"],
+                                spo2OpticalAux: $0["spo2OpticalAux"])
                 }
         }
     }

@@ -535,11 +535,19 @@ final class IntelligenceEngine: ObservableObject {
                 // bar and no per-session state is persisted. Honest: only real banded epochs are ever surfaced.
                 // Fall back to the prior pass's persisted per-session state when the raw stream is absent (an
                 // older DB banded before the v21 stream landed), so a legacy install keeps the H7 confirm.
-                var bandSleepState = (try? await store.sleepStateSamples(deviceId: owner, from: from, to: to))?
-                    .map { (ts: $0.ts, state: $0.state) } ?? []
+                // Keep raw rows for optical-aux rollup (asleep + nonzero @82) — fallback JSON has no aux82.
+                let bandSleepRows = (try? await store.sleepStateSamples(deviceId: owner, from: from, to: to)) ?? []
+                var bandSleepState = bandSleepRows.map { (ts: $0.ts, state: $0.state) }
+                let opticalAuxOvernight: Bool
                 if bandSleepState.isEmpty {
                     bandSleepState = await Self.bandSleepStateSamples(computedId: computedId,
                                                                      from: from, to: to, store: store)
+                    opticalAuxOvernight = false
+                } else {
+                    // Android twin: state==2 (asleep) + nonzero aux82 → spo2OpticalAux flag only (never %).
+                    opticalAuxOvernight = bandSleepRows.contains {
+                        $0.state == 2 && ($0.aux82 ?? 0) != 0
+                    }
                 }
 
                 // #690: read the experimental-V2 toggle ONCE here (off the detached executor, matching the
@@ -564,6 +572,7 @@ final class IntelligenceEngine: ObservableObject {
                                                      tzOffsetSeconds: tzOffset, wristOff: wristOff,
                                                      habitualMidsleepSec: habitualMidsleepSec,
                                                      bandSleepState: bandSleepState,
+                                                     opticalAuxOvernight: opticalAuxOvernight,
                                                      // #690: thread the V2 toggle into the NORMAL staging path so
                                                      // it affects detected nights, not just the self-heal restage.
                                                      useSleepStagerV2: useSleepStagerV2,
@@ -1633,7 +1642,7 @@ private extension DailyMetric {
                     avgHrv: avgHrv, recovery: r, strain: strain, exerciseCount: exerciseCount,
                     spo2Pct: spo2Pct, skinTempDevC: sd, respRateBpm: respRateBpm,
                     steps: steps, activeKcalEst: activeKcalEst,
-                    spo2Red: spo2Red, spo2Ir: spo2Ir)
+                    spo2Red: spo2Red, spo2Ir: spo2Ir, spo2OpticalAux: spo2OpticalAux)
     }
 
     /// Rebuild with substituted sleep-derived fields (a user-corrected wake window), leaving every
@@ -1644,6 +1653,7 @@ private extension DailyMetric {
                     disturbances: disturbances, restingHr: restingHr, avgHrv: avgHrv, recovery: recovery,
                     strain: strain, exerciseCount: exerciseCount, spo2Pct: spo2Pct,
                     skinTempDevC: skinTempDevC, respRateBpm: respRateBpm, steps: steps,
-                    activeKcalEst: activeKcalEst, spo2Red: spo2Red, spo2Ir: spo2Ir)
+                    activeKcalEst: activeKcalEst, spo2Red: spo2Red, spo2Ir: spo2Ir,
+                    spo2OpticalAux: spo2OpticalAux)
     }
 }

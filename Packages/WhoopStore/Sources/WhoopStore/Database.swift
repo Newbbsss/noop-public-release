@@ -465,6 +465,15 @@ extension WhoopStore {
                 t.add(column: "aux82", .integer)
             }
         }
+
+        // v25 (MG overnight optical-presence day rollup twin of Android dailyMetric.spo2OpticalAux):
+        // Boolean flag when any sleepStateSample had state=asleep + nonzero aux82. ADDITIVE nullable.
+        // Never SpO₂ % — presence only. Pre-upgrade / import rows stay NULL.
+        migrator.registerMigration("v25-daily-spo2-optical-aux") { db in
+            try db.alter(table: "dailyMetric") { t in
+                t.add(column: "spo2OpticalAux", .boolean)
+            }
+        }
         return migrator
     }
 }

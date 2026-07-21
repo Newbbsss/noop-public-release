@@ -22,6 +22,28 @@ final class SleepStateSampleTests: XCTestCase {
         XCTAssertTrue(cols.contains("aux82"), "v24 aux82 twin of Android SleepStateRow — never SpO₂ %")
     }
 
+    func testV25AddsSpo2OpticalAuxColumn() async throws {
+        let store = try await WhoopStore.inMemory()
+        let cols = try await store.columnNamesForTest(table: "dailyMetric")
+        XCTAssertTrue(cols.contains("spo2OpticalAux"),
+                      "v25 spo2OpticalAux twin of Android DailyMetric — optical presence, never SpO₂ %")
+    }
+
+    func testSpo2OpticalAuxRoundTripNeverPct() async throws {
+        let store = try await WhoopStore.inMemory()
+        let d = DailyMetric(day: "2026-07-21", totalSleepMin: 420, efficiency: 0.9,
+                            deepMin: 90, remMin: 100, lightMin: 230, disturbances: 1,
+                            restingHr: 52, avgHrv: 60, recovery: 0.7, strain: 8,
+                            exerciseCount: 0, spo2Pct: nil, spo2OpticalAux: true)
+        try await store.upsertDailyMetrics([d], deviceId: "mg")
+        let rows = try await store.dailyMetrics(deviceId: "mg", from: "2026-07-21", to: "2026-07-21")
+        let row = try XCTUnwrap(rows.first)
+        XCTAssertEqual(row.spo2OpticalAux, true)
+        XCTAssertNil(row.spo2Pct, "optical aux must never invent a SpO₂ %")
+        XCTAssertNil(row.spo2Red)
+        XCTAssertNil(row.spo2Ir)
+    }
+
     func testSleepStatePrimaryKeyIsDeviceIdTs() async throws {
         let store = try await WhoopStore.inMemory()
         let cols = try await store.primaryKeyColumns("sleepStateSample")

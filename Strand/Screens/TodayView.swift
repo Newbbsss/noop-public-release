@@ -2076,6 +2076,13 @@ struct TodayView: View {
             return withUnit(d?.respRateBpm.map { String(format: "%.1f", $0) }
                             ?? sparks["resp_rate"]?.last.map { String(format: "%.1f", $0) } ?? "—")
         case .bloodOxygen:
+            // Prefer imported / Health % when present. Else WHOOP 4.0 raw ADC. Else MG optical-presence
+            // flag (spo2OpticalAux) as honest "raw · not %" — never invent a SpO₂ % from @82.
+            if d?.spo2Pct == nil,
+               d?.spo2Red == nil,
+               (d?.spo2OpticalAux == true || lastVitalsDay?.spo2OpticalAux == true) {
+                return "raw"
+            }
             return d?.spo2Pct.map { String(format: "%.0f%%", $0) } ?? "—"
         case .skinTemp:
             // Stored as a deviation from baseline (°C); show it signed so +/- reads honestly.
@@ -3182,16 +3189,31 @@ struct TodayView: View {
                 sparkColor: StrandPalette.metricRose
             )
         case .bloodOxygen:
-            let spo2 = carriedVital(unit: "SpO₂", today: d?.spo2Pct,
-                                    prior: { $0.spo2Pct }, format: { String(format: "%.0f%%", $0) })
-            StatTile(
-                label: "Blood Oxygen",
-                value: spo2.value,
-                caption: spo2.caption,
-                accent: spo2.value == "—" ? StrandPalette.textPrimary : StrandPalette.metricCyan,
-                sparkline: sparks["spo2"],
-                sparkColor: StrandPalette.metricCyan
-            )
+            // Prefer imported / Health SpO₂ %. Else MG overnight optical presence (raw · not %).
+            // Never invent a % from @82 / aux82 (Android KeyTile twin).
+            if d?.spo2Pct == nil,
+               d?.spo2Red == nil,
+               (d?.spo2OpticalAux == true || lastVitalsDay?.spo2OpticalAux == true) {
+                StatTile(
+                    label: "Blood Oxygen",
+                    value: "raw",
+                    caption: String(localized: "Overnight optical · MG · not %"),
+                    accent: StrandPalette.metricCyan,
+                    sparkline: sparks["spo2"],
+                    sparkColor: StrandPalette.metricCyan
+                )
+            } else {
+                let spo2 = carriedVital(unit: "SpO₂", today: d?.spo2Pct,
+                                        prior: { $0.spo2Pct }, format: { String(format: "%.0f%%", $0) })
+                StatTile(
+                    label: "Blood Oxygen",
+                    value: spo2.value,
+                    caption: spo2.caption,
+                    accent: spo2.value == "—" ? StrandPalette.textPrimary : StrandPalette.metricCyan,
+                    sparkline: sparks["spo2"],
+                    sparkColor: StrandPalette.metricCyan
+                )
+            }
         case .respiratory:
             // Respiratory keeps its sparkline-tail fallback for a NON-carrying today (a sparse-but-recent
             // value still reads); when carrying, the prior scored night's respiratory is shown + stamped.
