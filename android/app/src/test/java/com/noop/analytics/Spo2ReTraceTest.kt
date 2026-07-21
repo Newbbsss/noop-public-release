@@ -1,6 +1,7 @@
 package com.noop.analytics
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -47,16 +48,29 @@ class Spo2ReTraceTest {
 
     @Test fun aux82AndSleepStateNamedNeverAsPct() {
         // Research P0: name sleep_state + aux82 for correlation — never label as SpO2 %.
+        // 0x80 is bit-7 sentinel → whooprs_pct_gate=out (not product %).
         val line = Spo2ReTrace.recordLine(
             frame = byteArrayOf(1, 2), version = 18, unix = 99,
             red = null, ir = null, skinRaw = null, sleepState = 2, auxByte82 = 0x80,
         )
         assertTrue(line, line.contains("sleep_state=2"))
         assertTrue(line, line.contains("aux82=128"))
+        assertTrue(line, line.contains("whooprs_pct_gate=out"))
         assertTrue(line, !line.contains("spo2Pct") && !line.contains("spo2%"))
+        assertEquals(null, Spo2ReTrace.whoopRsSpo2PctCandidate(0x80))
+        assertEquals(97, Spo2ReTrace.whoopRsSpo2PctCandidate(97))
     }
 
     @Test fun sampleCapBoundedAtEight() {
         assertEquals(8, Spo2ReTrace.MAX_SAMPLES)
+        assertEquals(2, Spo2ReTrace.BASELINE_SAMPLES)
+    }
+
+    @Test fun researchInterestingPrefersNzAsleepGate() {
+        assertFalse(Spo2ReTrace.isResearchInteresting(null, null))
+        assertFalse(Spo2ReTrace.isResearchInteresting(0, 0))
+        assertTrue(Spo2ReTrace.isResearchInteresting(0, 2)) // band asleep
+        assertTrue(Spo2ReTrace.isResearchInteresting(26, 0)) // nz aux
+        assertTrue(Spo2ReTrace.isResearchInteresting(97, 2)) // whooprs gate range
     }
 }

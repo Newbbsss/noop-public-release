@@ -303,6 +303,12 @@ function Invoke-AdbTimed([string[]]$AdbArgs, [int]$TimeoutSec = 8) {
         Remove-Item -LiteralPath $outFile, $errFile -Force -ErrorAction SilentlyContinue
     }
 }
+function Test-MorningDenseWindow {
+    # Gilbert bedtime often ~2 AM → wake/sync later; denser 09:00-14:00 catches post-sleep hist.
+    $h = [int](Get-Date -Format "HH")
+    return ($h -ge 9 -and $h -lt 14)
+}
+
 function Wait-HistOffload([int]$seconds, [string]$runLog) {
     Write-GatherLog "Waiting ${seconds}s for hist offload (watch HISTORICAL_DATA_RESULT / NoopSyncNow)..." $runLog
     $deadline = (Get-Date).AddSeconds([math]::Max(5, $seconds))
@@ -418,7 +424,14 @@ function Invoke-GatherOnceUnlocked {
         # 8.6.205+ defers ~30s when connected&&!bonded (CLIENT_HELLO race). IPA hist path:
         # Hello -> StrapBacklog -> DataRange -> EnterHighFreqHistoricalMode -> SendHistorical...
         # Older DEBUG builds ignore SYNC_NOW; monkey/resume may still kick hist via ensureStrapSleepBanked.
-        Write-GatherLog "Trigger: launch DEBUG, SYNC_NOW (plus bond settle), wait hist ~${HistWaitSeconds}s, SIGNAL_HUNT r22/all" $runLog
+        # Morning dense (09-14): longer hist wait + second SYNC_NOW if first window saw nothing.
+        $denseMorning = Test-MorningDenseWindow
+        $effectiveHistWait = $HistWaitSeconds
+        if ($denseMorning) {
+            $effectiveHistWait = [math]::Max($HistWaitSeconds, 180)
+            Write-GatherLog "DENSE morning 09-14: HistWait=${effectiveHistWait}s (min 180) + retry SYNC if no hist" $runLog
+        }
+        Write-GatherLog "Trigger: launch DEBUG, SYNC_NOW (plus bond settle), wait hist ~${effectiveHistWait}s, SIGNAL_HUNT r22/all (heartkey NOT fired — GET-only is explicit mode=heartkey only)" $runLog
         & $adb -s $serial shell "monkey -p $DebugPkg -c android.intent.category.LAUNCHER 1" 2>&1 | Out-Null
         Start-Sleep -Seconds 5
         $syncNow = & $adb -s $serial shell "am broadcast -a com.noop.debug.SYNC_NOW -p $DebugPkg" 2>&1 | Out-String
@@ -428,14 +441,31 @@ function Invoke-GatherOnceUnlocked {
         Start-Sleep -Seconds $bondSettle
         $huntR22 = & $adb -s $serial shell "am broadcast -a com.noop.debug.SIGNAL_HUNT --es mode r22 -p $DebugPkg" 2>&1 | Out-String
         Start-Sleep -Seconds 2
+        # mode=all = FF+read+research+R22 only — never Labrador/HeartKey (see WhoopConnectionService.fireAll).
         $huntAll = & $adb -s $serial shell "am broadcast -a com.noop.debug.SIGNAL_HUNT --es mode all -p $DebugPkg" 2>&1 | Out-String
-        Save-Text (Join-Path $outDir "trigger-broadcast.txt") ("=== SYNC_NOW ===`n$syncNow`n=== bondSettleSec=$bondSettle ===`n=== r22 ===`n$huntR22`n=== all ===`n$huntAll")
-        $sawHist = Wait-HistOffload -seconds $HistWaitSeconds -runLog $runLog
+        $sawHist = Wait-HistOffload -seconds $effectiveHistWait -runLog $runLog
+        $syncNowRetry = $null
+        $histRetry = $false
+        if ($denseMorning -and -not $sawHist) {
+            Write-GatherLog "DENSE morning: no hist in first wait — second SYNC_NOW + 60s settle" $runLog
+            $syncNowRetry = & $adb -s $serial shell "am broadcast -a com.noop.debug.SYNC_NOW -p $DebugPkg" 2>&1 | Out-String
+            Start-Sleep -Seconds 10
+            $histRetry = [bool](Wait-HistOffload -seconds 60 -runLog $runLog)
+            if ($histRetry) { $sawHist = $true }
+        }
+        $trigTxt = "=== SYNC_NOW ===`n$syncNow`n=== bondSettleSec=$bondSettle ===`n=== r22 ===`n$huntR22`n=== all ===`n$huntAll"
+        if ($null -ne $syncNowRetry) {
+            $trigTxt += "`n=== SYNC_NOW retry (dense morning) ===`n$syncNowRetry`n=== histRetry=$histRetry ==="
+        }
+        Save-Text (Join-Path $outDir "trigger-broadcast.txt") $trigTxt
         $manifest.trigger = @{
             debugMonkey     = $true
             syncNowBroadcast = ($syncNow -match "Broadcast completed|result=0|data=")
             bondSettleSeconds = $bondSettle
-            histWaitSeconds = $HistWaitSeconds
+            histWaitSeconds = $effectiveHistWait
+            denseMorning09to14 = [bool]$denseMorning
+            syncNowRetry    = ($null -ne $syncNowRetry)
+            histRetrySeen   = [bool]$histRetry
             histSeenInWait  = [bool]$sawHist
             signalHuntR22   = ($huntR22 -match "Broadcast completed|result=0|data=")
             signalHuntAll   = ($huntAll -match "Broadcast completed|result=0|data=")
@@ -448,7 +478,8 @@ function Invoke-GatherOnceUnlocked {
                 "UI Sync now: Health > Sync; Live; Settings; Test Centre",
                 "IPA: Hello -> backlog/DataRange -> EnterHighFreqHistoricalMode -> SendHistorical + BurstResult",
                 "Overnight expectation: asleep>0 and @82 nz in NEW whoop5-backfill-capture.jsonl (raw, never %)",
-                "Full RAW via exec-out cat (NOT head -c 8MB truncate)"
+                "Full RAW via exec-out cat (NOT head -c 8MB truncate)",
+                "Morning 09-14: HistWait>=180s + second SYNC_NOW if first window empty"
             )
         }
         Write-GatherLog "DEBUG up; hist wait done. Pulling FULL backfill RAW next." $runLog
@@ -504,6 +535,17 @@ try:
     out["asleepRows"] = cur.execute("SELECT COUNT(*) FROM sleepStateSample WHERE state=2").fetchone()[0]
     out["nzAsleep"] = cur.execute("SELECT COUNT(*) FROM sleepStateSample WHERE state=2 AND aux82 IS NOT NULL AND aux82 != 0").fetchone()[0]
     out["nzAny"] = cur.execute("SELECT COUNT(*) FROM sleepStateSample WHERE aux82 IS NOT NULL AND aux82 != 0").fetchone()[0]
+    # whoop-rs research gate on Room aux82 (raw) — NEVER product spo2Pct
+    out["asleepWhooprsIn70_100"] = cur.execute(
+        "SELECT COUNT(*) FROM sleepStateSample WHERE state=2 AND aux82 BETWEEN 70 AND 100"
+    ).fetchone()[0]
+    out["asleepWhooprsOut"] = cur.execute(
+        "SELECT COUNT(*) FROM sleepStateSample WHERE state=2 AND aux82 IS NOT NULL AND aux82 != 0 "
+        "AND (aux82 < 70 OR aux82 > 100)"
+    ).fetchone()[0]
+    out["distinctAux82Asleep"] = cur.execute(
+        "SELECT COUNT(DISTINCT aux82) FROM sleepStateSample WHERE state=2 AND aux82 IS NOT NULL AND aux82 != 0"
+    ).fetchone()[0]
     mx = cur.execute("SELECT MAX(ts) FROM sleepStateSample WHERE state=2").fetchone()[0]
     out["latestAsleepTsRaw"] = mx
     if mx:
@@ -522,8 +564,11 @@ print(json.dumps(out))
             try {
                 $nz = $nzJson.Trim() | ConvertFrom-Json
                 $manifest.nzFlag = $nz
-                Write-GatherLog "NZ-FLAG: aux82 nz-asleep=$($nz.nzAsleep) nz-any=$($nz.nzAny) asleep-rows=$($nz.asleepRows) latest=$($nz.latestAsleepUtc) flag=$($nz.nzFlag)" $runLog
+                Write-GatherLog "NZ-FLAG: aux82 nz-asleep=$($nz.nzAsleep) nz-any=$($nz.nzAny) asleep-rows=$($nz.asleepRows) whooprs_in70_100=$($nz.asleepWhooprsIn70_100) whooprs_out=$($nz.asleepWhooprsOut) distinct=$($nz.distinctAux82Asleep) latest=$($nz.latestAsleepUtc) flag=$($nz.nzFlag)" $runLog
                 if ($nz.nzFlag) { Write-GatherLog "NZ-FLAG *** nz aux82 NIGHT DETECTED - fire methods 30-32/18 on this DB ***" $runLog }
+                if ($nz.asleepWhooprsIn70_100 -gt 0) {
+                    Write-GatherLog "WHOOPRS-GATE *** asleep @82 in 70..100 count=$($nz.asleepWhooprsIn70_100) (research only — never bank as spo2Pct) ***" $runLog
+                }
             } catch {
                 Write-GatherLog "NZ-FLAG: query parse failed ($nzJson)" $runLog
                 $manifest.notes += "nz_flag parse failed"
@@ -545,6 +590,7 @@ raw = sys.argv[1]
 census = collections.Counter()
 v20ts = []
 v18last = 0
+aux_hist = collections.Counter()
 for fn in os.listdir(raw):
     if not fn.startswith("whoop5-backfill-capture.jsonl"):
         continue
@@ -571,8 +617,26 @@ for fn in os.listdir(raw):
                             v20ts.append(u)
                         if ver == 18 and u > v18last:
                             v18last = u
+                # v18 absolute @81 sleep nibble / @82 aux (whoop-rs inner 73/74) — raw census only
+                if ver == 18 and len(b) > 82:
+                    sleep = (b[81] >> 4) & 3
+                    aux = b[82]
+                    if sleep == 2:
+                        census["v18_asleep"] += 1
+                    if aux:
+                        census["v18_aux82_nz"] += 1
+                        aux_hist[aux] += 1
+                        if sleep == 2:
+                            census["v18_asleep_aux82_nz"] += 1
+                        if 70 <= aux <= 100:
+                            census["v18_whooprs_in70_100"] += 1
+                            if sleep == 2:
+                                census["v18_asleep_whooprs_in70_100"] += 1
+                        else:
+                            census["v18_whooprs_out"] += 1
 v20ts.sort()
 mono = sum(1 for a, b in zip(v20ts, v20ts[1:]) if b >= a)
+top_aux = [{"aux82": k, "n": v} for k, v in aux_hist.most_common(8)]
 out = {
     "v18": census.get(18, 0), "v20": census.get(20, 0), "v21": census.get(21, 0), "v26": census.get(26, 0),
     "v20_244": census.get((20, 244), 0), "v20_2140": census.get((20, 2140), 0), "v21_1244": census.get((21, 1244), 0),
@@ -580,6 +644,14 @@ out = {
     "v18_last_unix": v18last,
     "ratio_v20_per_v18": round(census.get(20, 0) / max(census.get(18, 0), 1), 3),
     "ratio_v21_per_v18": round(census.get(21, 0) / max(census.get(18, 0), 1), 3),
+    "v18_asleep": census.get("v18_asleep", 0),
+    "v18_aux82_nz": census.get("v18_aux82_nz", 0),
+    "v18_asleep_aux82_nz": census.get("v18_asleep_aux82_nz", 0),
+    "v18_whooprs_in70_100": census.get("v18_whooprs_in70_100", 0),
+    "v18_asleep_whooprs_in70_100": census.get("v18_asleep_whooprs_in70_100", 0),
+    "v18_whooprs_out": census.get("v18_whooprs_out", 0),
+    "aux82_top": top_aux,
+    "note": "whooprs_* counts are research tags on raw @82 — never product spo2Pct",
 }
 print(json.dumps(out))
 '@
@@ -589,7 +661,11 @@ print(json.dumps(out))
             $fc = $censusJson.Trim() | ConvertFrom-Json
             $manifest.frameCensus = $fc
             Write-GatherLog "CENSUS: v18=$($fc.v18) v20=$($fc.v20) v21=$($fc.v21) v26=$($fc.v26) (244=$($fc.v20_244) 2140=$($fc.v20_2140) 1244=$($fc.v21_1244)) v20ts=$($fc.v20ts_mono)/$($fc.v20ts_n) ratio20=$($fc.ratio_v20_per_v18) ratio21=$($fc.ratio_v21_per_v18)" $runLog
+            Write-GatherLog "CENSUS @82: asleep=$($fc.v18_asleep) aux82_nz=$($fc.v18_aux82_nz) asleep_nz=$($fc.v18_asleep_aux82_nz) whooprs_in70_100=$($fc.v18_whooprs_in70_100) asleep_in70_100=$($fc.v18_asleep_whooprs_in70_100) whooprs_out=$($fc.v18_whooprs_out) (raw — never %)" $runLog
             if ($fc.v21 -gt 0) { Write-GatherLog "CENSUS *** v21 IMU BANK PRESENT - score 1:1:1 + run Whoop5RawImu verify on this pull ***" $runLog }
+            if ($fc.v18_asleep_whooprs_in70_100 -gt 0) {
+                Write-GatherLog "CENSUS *** RAW asleep @82 in70_100=$($fc.v18_asleep_whooprs_in70_100) — correlate vs WHOOP-app before any product % debate ***" $runLog
+            }
         } catch {
             Write-GatherLog "CENSUS: parse failed ($censusJson)" $runLog
             $manifest.notes += "frame_census parse failed"

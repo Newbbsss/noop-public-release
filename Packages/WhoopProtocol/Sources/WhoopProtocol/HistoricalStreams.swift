@@ -201,8 +201,10 @@ public func extractHistoricalStreams(_ parsed: [ParsedFrame],
             // decoded but DROPPED here until now, so the whole band-state chain (persist → the H7 re-onset
             // confirm guard → Deep Timeline track) had no source. Carried VERBATIM including 0 (a real wake
             // reading, not "absent"): only 5/MG v18 records emit the key, so a WHOOP 4.0 simply adds nothing.
+            // aux_byte_82 (@82 == whoop-rs inner 74) rides the same v18 second — raw only, never spo2Pct.
             if let st = p["sleep_state"]?.intValue {
-                out.sleepState.append(SleepStateSample(ts: ts, state: st))
+                out.sleepState.append(SleepStateSample(
+                    ts: ts, state: st, aux82: p["aux_byte_82"]?.intValue))
             }
             if let raw = p["resp_rate_raw"]?.intValue {
                 out.resp.append(RespSample(ts: ts, raw: raw))

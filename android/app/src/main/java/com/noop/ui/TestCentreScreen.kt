@@ -14,6 +14,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Autorenew
 import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.BugReport
+import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.Flag
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Movie
@@ -594,6 +595,19 @@ private fun AdvancedCard(vm: AppViewModel, is5MG: Boolean) {
                         kind = NoopButtonKind.Secondary,
                         fullWidth = true,
                         onClick = { vm.ble.fireSignalHuntFfReadSweep() },
+                    )
+                    NoopButton(
+                        text = "HeartKey GET/status (no ON)",
+                        leadingIcon = Icons.Filled.FavoriteBorder,
+                        kind = NoopButtonKind.Secondary,
+                        fullWidth = true,
+                        onClick = { vm.ble.fireHeartKeyGetOnlyProbe() },
+                    )
+                    Text(
+                        "HeartKey/Labrador: GET_FF enable_raw_data_w_ecg + enable_labrador, then " +
+                            "cmds 124/125/139 OFF only. Never MAIN auto; ACK ≠ ECG.",
+                        style = NoopType.caption,
+                        color = Palette.textTertiary,
                     )
                 }
             }

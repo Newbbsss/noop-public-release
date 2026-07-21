@@ -29,10 +29,13 @@ object Whoop5Config {
     /** One persistent feature flag and the value the official app writes for it (ASCII '1'/'2'). */
     data class Flag(val name: String, val value: Int)
 
-    /** The exact ordered enable sequence the official app sends, transcribed verbatim from
-     *  judes.club's frame-builder FLAGS array. `enable_r22_packets` opens the type-0x2F biometric
-     *  stream; the rest tune channel selection, wear detection and sleep behaviour. Keep in lockstep
-     *  with the Swift `Whoop5Config.enableR22Sequence`. */
+    /** The exact ordered enable sequence the official app sends (values ASCII '1'/'2').
+     *  `enable_r22_packets` opens the type-0x2F biometric stream; the rest tune channel selection, wear
+     *  detection and sleep behaviour. Flags 1–15 are transcribed verbatim from judes.club's frame-builder
+     *  FLAGS array; flag 16 `enable_sig12` is NOT in that array — it was observed as a 16th SET_FF_VALUE
+     *  write in a real on-strap iOS HCI capture (WHOOP 5.0 / tanarchytan #103 / whoop-rs R22_SEQUENCE)
+     *  that otherwise reproduced flags 1–15 byte-for-byte. `enable_sig12`'s value is ASCII '1' (0x31)
+     *  per a second on-strap workout capture (#423). Keep in lockstep with Swift + whoop-rs. */
     val enableR22Sequence: List<Flag> = listOf(
         Flag("enable_r22_packets", 0x32),
         Flag("enable_r22_v2_packets", 0x32),
@@ -49,6 +52,21 @@ object Whoop5Config {
         Flag("enable_passive_strap_fit_gen5", 0x31),
         Flag("enable_sig11_during_sleep", 0x32),
         Flag("dorset_inhibit_wpt", 0x32),
+        Flag("enable_sig12", 0x31), // #423 / whoop-rs: 16th R22 flag
+    )
+
+    /**
+     * Firmware-present feature-flag names that are **not** part of the R22 enable burst.
+     * Catalog only (GET_FF / SignalHunt). Never auto-SET. Includes ECG-adjacent
+     * `enable_raw_data_w_ecg` from whoop-rs `FIRMWARE_ONLY_FLAGS` — MG ECG/HeartKey remains
+     * firmware-blocked; do not invent ECG streams from an ACK.
+     */
+    val firmwareOnlyFlags: List<String> = listOf(
+        "whoop_live_2_hrm_devices",
+        "enable_raw_data_w_ecg",
+        "general_ab_test",
+        "enable_pdaf_walk_det",
+        "enable_maverick_model",
     )
 
     /** The 40-byte SET_CONFIG payload body: flag name as ASCII NUL-padded to 32 bytes, value byte at

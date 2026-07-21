@@ -25,7 +25,7 @@ object AppChangelog {
      * Bump this when you add a release below. The "What's New" sheet shows automatically when the
      * stored last-seen version is behind this. (Decoupled from the bundle version on purpose.)
      */
-    const val CURRENT_VERSION = "8.6.245"
+    const val CURRENT_VERSION = "8.6.246"
 
     data class Release(
         val version: String,
@@ -36,6 +36,18 @@ object AppChangelog {
 
     /** Newest first. */
     val releases: List<Release> = listOf(
+        Release(
+            version = "8.6.246",
+            title = "SpOâ‚‚ honesty Â· R22 Â· HeartKey GET",
+            date = "2026-07-21",
+            items = listOf(
+                "WHOOP 5/MG R22 deep-data: 16th flag enable_sig12 + firmware-only ECG-adjacent catalog (GET_FF research).",
+                "SpOâ‚‚ research: denser morning hist gather + @82 whoop-rs census tags; Spo2ReTrace prefers nz/asleep dumps â€” still never banks a BLE blood-oxygen %.",
+                "DEBUG HeartKey/Labrador: GET-only Test Centre + adb mode=heartkey (OFFÃ—3; never Labrador ON / MAIN auto).",
+                "iOS twin: sleepStateSample.aux82 banks raw v18 @82 (whoop-rs inner 74) â€” optical presence only, never SpOâ‚‚ %.",
+                "SpOâ‚‚ honesty unchanged: never invents a %.",
+            ),
+        ),
         Release(
             version = "8.6.245",
             title = "Effort hold Â· Stress HIGH peaks Â· iOS twin",

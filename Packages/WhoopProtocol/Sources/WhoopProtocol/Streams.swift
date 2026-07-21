@@ -151,10 +151,18 @@ public struct StepSample: Equatable, Codable {
 /// surfaced/persisted as the strap's reported state, NOT trusted to override the derived hypnogram. It
 /// feeds the existing, already-verified H7 morning-stillness re-onset CONFIRM guard (KEEP-biased, never
 /// overrides) and a Deep Timeline display track. Mirrors Android `SleepStateRow`.
+///
+/// `aux82` is the sibling v18 absolute `@82` (== whoop-rs inner 74) raw u8 — optical/subsystem footprint.
+/// whoop-rs may name %-range (70..100) as sleep-only `spo2_pct`; Gilbert banks the byte VERBATIM and
+/// **never** maps it to product SpO₂ % (see Spo2ReTrace.whoopRsSpo2PctCandidate). Mirrors Android.
 public struct SleepStateSample: Equatable, Codable {
     public let ts: Int
     public let state: Int       // 0 wake / 1 still / 2 asleep / 3 up (band's own high-nibble code)
-    public init(ts: Int, state: Int) { self.ts = ts; self.state = state }
+    /// Raw v18 `@82` / whoop-rs inner 74 — **never** a blood-oxygen %. Nil when the record lacked the byte.
+    public let aux82: Int?
+    public init(ts: Int, state: Int, aux82: Int? = nil) {
+        self.ts = ts; self.state = state; self.aux82 = aux82
+    }
 }
 
 public struct Streams: Equatable, Codable {

@@ -27,6 +27,33 @@ object Spo2ReTrace {
     const val MAX_SAMPLES = 8
 
     /**
+     * whoop-rs / tanarchytan gate for v18 absolute `@82` (== GEN5 inner 74): keep only 70..100 as a
+     * candidate computed SpO₂ %. Bit-7 saturation sentinels (e.g. 0x80) and sub-70 diagnostic codes
+     * fall **out** of this gate — same as whoop-rs `filter(|&v| (70..=100).contains(&v))`.
+     * Gilbert product path still banks the byte as [aux_byte_82] raw and never writes
+     * DailyMetric.spo2Pct from open BLE — Discord + Fold corpus treat [85,100] as a trap until matched
+     * against WHOOP-app ground truth. Research helper only.
+     */
+    fun whoopRsSpo2PctCandidate(auxByte82: Int?): Int? {
+        val v = auxByte82 ?: return null
+        return if (v in 70..100) v else null
+    }
+
+    /**
+     * Prefer dumping these frames within the small [MAX_SAMPLES] Connection RE budget: nonzero `@82`,
+     * whoop-rs %-range candidate, or band-asleep (`sleep_state==2`). Awake+aux0 baselines still get a
+     * few slots ([BASELINE_SAMPLES]) so "always zero" nights remain provable. Never a product %.
+     */
+    const val BASELINE_SAMPLES = 2
+
+    fun isResearchInteresting(auxByte82: Int?, sleepState: Int?): Boolean {
+        if (auxByte82 != null && auxByte82 != 0) return true
+        if (whoopRsSpo2PctCandidate(auxByte82) != null) return true
+        if (sleepState == 2) return true
+        return false
+    }
+
+    /**
      * One record's RE line: the mapped SpO2 channels + timestamp + layout version, then sleep_state /
      * aux_byte_82 (v18 research fields — raw, NEVER SpO2 %), then the FULL frame hex. Absent channels
      * render "null" so a channel-less record still proves what it lacks. Takes already-extracted ints
@@ -45,8 +72,14 @@ object Spo2ReTrace {
     ): String {
         val hex = frame.joinToString("") { String.format("%02x", it.toInt() and 0xFF) }
         fun f(v: Int?): String = v?.toString() ?: "null"
+        // Append research-only whoop-rs gate tag when @82 is present — never labels as product spo2Pct.
+        val gate = when {
+            auxByte82 == null -> ""
+            whoopRsSpo2PctCandidate(auxByte82) != null -> " whooprs_pct_gate=in70_100"
+            else -> " whooprs_pct_gate=out"
+        }
         return "spo2re v=${f(version)} unix=${f(unix)} red=${f(red)} ir=${f(ir)} " +
-            "skinRaw=${f(skinRaw)} sleep_state=${f(sleepState)} aux82=${f(auxByte82)} " +
+            "skinRaw=${f(skinRaw)} sleep_state=${f(sleepState)} aux82=${f(auxByte82)}$gate " +
             "len=${frame.size} raw=$hex"
     }
 }

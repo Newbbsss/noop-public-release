@@ -25,14 +25,23 @@ class Whoop5ConfigTest {
     }
 
     @Test
-    fun sequenceIsFifteenFlagsWithExpectedValues() {
+    fun sequenceIsSixteenFlagsWithExpectedValues() {
         val seq = Whoop5Config.enableR22Sequence
-        assertEquals(15, seq.size)
+        assertEquals(16, seq.size)
         assertEquals("enable_r22_packets", seq[0].name)
         assertEquals(0x32, seq[0].value)
-        // v4 and the passive-strap-fit flag are the only '1' (0x31) values in the documented set.
+        // #103 / whoop-rs: 16th flag enable_sig12 from on-strap capture; value '1' (#423).
+        assertEquals("enable_sig12", seq.last().name)
+        assertEquals(0x31, seq.last().value)
+        // v4, passive-strap-fit, and enable_sig12 are the '1' (0x31) values in the set.
         assertEquals(0x31, seq.first { it.name == "enable_r22_v4_packets" }.value)
         assertEquals(0x31, seq.first { it.name == "enable_passive_strap_fit_gen5" }.value)
+    }
+
+    @Test
+    fun firmwareOnlyFlagsIncludeEcgAdjacent() {
+        assertEquals(true, Whoop5Config.firmwareOnlyFlags.contains("enable_raw_data_w_ecg"))
+        assertEquals(5, Whoop5Config.firmwareOnlyFlags.size)
     }
 
     @Test

@@ -391,9 +391,23 @@ and `GET_CLOCK` at 147 (0x93), alongside `GET_HELLO` at 145 (0x91) — distinct 
 numbers (10 / 11) above.
 
 The strap further exposes an ECG/HeartKey command family (`ECG_MAIN_CONTROL`, `ECG_SEND_RAW`,
-`ECG_SAVE_RAW`, `ECG_SAVE_FILTERED`, `ECG_SELECT_WRIST`; five consecutive codes around 0x7B–0x8B),
-an `IMU_SET_DATA_STREAM` (code 106, shared with `TOGGLE_IMU_MODE`), and a `UART_DISABLE` (0x61–0x69).
-Exact codes for these are unconfirmed.
+`ECG_SAVE_RAW`, `ECG_SAVE_FILTERED`, `ECG_SELECT_WRIST`; names around 0x7B–0x8B). The closest
+**named** opcodes in `whoop_protocol.json` are the Labrador cluster (IPA HeartKey labels remain
+unconfirmed — do not invent ECG from ACK; MG firmware-blocked):
+
+| Approx ECG_* alias | whoop_protocol name | Code |
+|--------------------|---------------------|-----:|
+| `ECG_SELECT_WRIST` | `SELECT_WRIST` | 123 (0x7B) |
+| `ECG_MAIN_CONTROL` / `ECG_SEND_RAW` | `TOGGLE_LABRADOR_DATA_GENERATION` | 124 |
+| `ECG_SAVE_RAW` | `TOGGLE_LABRADOR_RAW_SAVE` | 125 |
+| `ECG_SAVE_FILTERED` | `TOGGLE_LABRADOR_FILTERED` | 139 (0x8B) |
+
+NOOP Test Centre / DEBUG SignalHunt fires **GET-only** status for this family (`GET_FF`
+`enable_raw_data_w_ecg` + `enable_labrador`, then Labrador **OFF** payloads) — never MAIN auto-send,
+never Labrador ON from the HeartKey probe. See `SignalHuntProbe.HEARTKEY_*`.
+
+Also present: an `IMU_SET_DATA_STREAM` (code 106, shared with `TOGGLE_IMU_MODE`), and a
+`UART_DISABLE` (0x61–0x69).
 
 ### Destructive commands — *do not send*
 

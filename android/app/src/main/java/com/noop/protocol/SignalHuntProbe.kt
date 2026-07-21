@@ -72,43 +72,32 @@ object SignalHuntProbe {
      * Keep lockstep with Tools/signal_hunt_rapid_fire.py FF_READ_NAMES.
      * IPA 5.61.0 does not embed FF names as plaintext — see WHOOP_IPA_MG_INTERCEPT_2026-07-18.md
      */
-    val FF_READ_NAMES: List<String> = listOf(
-        // Whoop5Config.enableR22Sequence (MG GET_FF SUCCESS catalog)
-        "enable_r22_packets",
-        "enable_r22_v2_packets",
-        "enable_r22_v3_packets",
-        "enable_r22_v4_packets",
-        "enable_r22_v5_packets",
-        "enable_r22_v6_packets",
-        "enable_r22_v8_packets",
-        "make_hrfm_visible",
-        "disable_pip_r26_packets",
-        "wear_detect_bias",
-        "hr_ch_switching",
-        "ir_hw_switching",
-        "enable_passive_strap_fit_gen5",
-        "enable_sig11_during_sleep",
-        "dorset_inhibit_wpt",
-        // IPA Fake FF key + Lane3 console / Lane2 extras (GET only)
-        "sigproc_wear_detect",
-        "enable_raw_data_w_ecg",
-        "max_collection_backlog",
-        "enable_sig12",
-        "enable_maverick_model",
-        // Hypotheses / device-config adjacent (GET only)
-        "whoop_live_hr_in_adv_ind_pkt",
-        "enable_r22_v1_packets",
-        "enable_r22_v7_packets",
-        "enable_r20_packets",
-        "enable_r21_packets",
-        "enable_r26_packets",
-        "enable_optical_data",
-        "enable_imu_stream",
-        "enable_labrador",
-        "toggle_persistent_r20",
-        "toggle_persistent_r21",
-        "research_packet_enable",
-    )
+        // Official R22 first (Whoop5Config.enableR22Sequence incl. enable_sig12), then firmware-only
+        // catalog (whoop-rs FIRMWARE_ONLY_FLAGS) + IPA/Lane3 hypotheses (GET only; never invent SpO₂%).
+        // Keep lockstep with Tools/signal_hunt_rapid_fire.py FF_READ_NAMES.
+        // IPA 5.61.0 does not embed FF names as plaintext — see WHOOP_IPA_MG_INTERCEPT_2026-07-18.md
+    val FF_READ_NAMES: List<String> = (
+        Whoop5Config.enableR22Sequence.map { it.name } +
+            Whoop5Config.firmwareOnlyFlags +
+            listOf(
+                // IPA Fake FF key + Lane3 console / Lane2 extras (GET only)
+                "sigproc_wear_detect",
+                "max_collection_backlog",
+                // Hypotheses / device-config adjacent (GET only)
+                "whoop_live_hr_in_adv_ind_pkt",
+                "enable_r22_v1_packets",
+                "enable_r22_v7_packets",
+                "enable_r20_packets",
+                "enable_r21_packets",
+                "enable_r26_packets",
+                "enable_optical_data",
+                "enable_imu_stream",
+                "enable_labrador",
+                "toggle_persistent_r20",
+                "toggle_persistent_r21",
+                "research_packet_enable",
+            )
+        ).distinct()
 
     private fun p(vararg bytes: Int): ByteArray =
         ByteArray(bytes.size) { i -> bytes[i].toByte() }
@@ -157,6 +146,54 @@ object SignalHuntProbe {
         Candidate(154, "TOGGLE_PERSISTENT_R21_OFF", Tier.TOGGLE_OFF, p(0x00), "R21 off", "ACK"),
     )
 
+    /**
+     * HeartKey / Labrador opcode pin (whoop_protocol.json names ↔ PROTOCOL.md ECG_* aliases).
+     * Exact IPA HeartKey enum labels remain unconfirmed; these are the **named** puffin cmds in
+     * that 0x7B–0x8B neighborhood. **GET-only / OFF-only** for Test Centre — never MAIN auto,
+     * never invent ECG from ACK (MG firmware-blocked).
+     *
+     * | PROTOCOL alias (approx) | whoop_protocol | Code |
+     * |-------------------------|----------------|-----:|
+     * | ECG_SELECT_WRIST | SELECT_WRIST | 123 |
+     * | ECG_MAIN_CONTROL / SEND_RAW | TOGGLE_LABRADOR_DATA_GENERATION | 124 |
+     * | ECG_SAVE_RAW | TOGGLE_LABRADOR_RAW_SAVE | 125 |
+     * | ECG_SAVE_FILTERED | TOGGLE_LABRADOR_FILTERED | 139 |
+     */
+    data class HeartKeyOpcode(val cmd: Int, val protocolName: String, val alias: String)
+
+    val HEARTKEY_OPCODES: List<HeartKeyOpcode> = listOf(
+        HeartKeyOpcode(123, "SELECT_WRIST", "ECG_SELECT_WRIST"),
+        HeartKeyOpcode(124, "TOGGLE_LABRADOR_DATA_GENERATION", "ECG_MAIN_CONTROL/SEND_RAW"),
+        HeartKeyOpcode(125, "TOGGLE_LABRADOR_RAW_SAVE", "ECG_SAVE_RAW"),
+        HeartKeyOpcode(139, "TOGGLE_LABRADOR_FILTERED", "ECG_SAVE_FILTERED"),
+    )
+
+    /** FF names adjacent to HeartKey / ECG — GET_FF only; never SET from this probe. */
+    val HEARTKEY_FF_NAMES: List<String> = listOf(
+        "enable_raw_data_w_ecg",
+        "enable_labrador",
+    )
+
+    /**
+     * GET-only HeartKey status burst: Labrador **OFF** (0x00) only — never ON.
+     * SELECT_WRIST (123) is a SET and is catalogued in [HEARTKEY_OPCODES] but **not** sent here.
+     * Keep out of [researchBurstPaired] so default RESEARCH never arms ECG/Labrador.
+     */
+    val HEARTKEY_GET_ONLY: List<Candidate> = listOf(
+        Candidate(
+            124, "TOGGLE_LABRADOR_DATA_OFF", Tier.TOGGLE_OFF, p(0x00),
+            "HeartKey/Labrador gen OFF (GET-only status; never ON)", "ACK≠ECG",
+        ),
+        Candidate(
+            125, "TOGGLE_LABRADOR_RAW_OFF", Tier.TOGGLE_OFF, p(0x00),
+            "HeartKey/Labrador raw OFF (GET-only status; never ON)", "ACK≠ECG",
+        ),
+        Candidate(
+            139, "TOGGLE_LABRADOR_FILTERED_OFF", Tier.TOGGLE_OFF, p(0x00),
+            "HeartKey/Labrador filt OFF (GET-only status; never ON)", "ACK≠ECG",
+        ),
+    )
+
     fun isDenied(cmd: Int): Boolean = cmd in DENYLIST
 
     /** Read-only burst — default rapid-fire set. */
@@ -165,6 +202,7 @@ object SignalHuntProbe {
     /**
      * Research burst: each RESEARCH candidate followed by its matching *_OFF when present.
      * Caller must still enforce ≤8 s listen windows and capture RAW_GATT.
+     * Does **not** include HeartKey/Labrador ON — use [heartKeyGetOnlyBurst] instead.
      */
     fun researchBurstPaired(): List<Candidate> {
         val out = mutableListOf<Candidate>()
@@ -179,6 +217,10 @@ object SignalHuntProbe {
         }
         return out.distinctBy { it.name }
     }
+
+    /** HeartKey GET/status: OFF-only Labrador cmds (no ON, no SELECT_WRIST write). */
+    fun heartKeyGetOnlyBurst(): List<Candidate> =
+        HEARTKEY_GET_ONLY.filter { !isDenied(it.cmd) }
 
     /** Build a puffin COMMAND frame for a candidate (dry-run / debug write). */
     fun frame(candidate: Candidate, seq: Int): ByteArray {

@@ -456,6 +456,15 @@ extension WhoopStore {
                 t.add(column: "spo2Ir", .integer)
             }
         }
+
+        // v24 (MG @82 optical aux twin of Android v19→v20): sleepStateSample.aux82 = raw v18 absolute
+        // `@82` (== whoop-rs inner 74). ADDITIVE nullable INTEGER. Never SpO₂ % — research / optical-
+        // presence only. Pre-upgrade rows stay NULL; WHOOP 4.0 never emits the byte.
+        migrator.registerMigration("v24-sleep-state-aux82") { db in
+            try db.alter(table: "sleepStateSample") { t in
+                t.add(column: "aux82", .integer)
+            }
+        }
         return migrator
     }
 }

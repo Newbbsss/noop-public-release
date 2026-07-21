@@ -152,9 +152,10 @@ class WhoopConnectionService : Service() {
     /**
      * DEBUG-only: adb can fire SignalHunt / R22 without unlocking the Fold UI.
      * ```
-     * adb shell am broadcast -a com.noop.debug.SIGNAL_HUNT --es mode ff|read|research|r22|hfs|all
+     * adb shell am broadcast -a com.noop.debug.SIGNAL_HUNT --es mode ff|read|research|heartkey|r22|hfs|all
      * ```
      * Refuses to arm when [NoopPrefs.lastDevice] is a stale `WHOOP 5AM…` sibling (worn MG pin only).
+     * `heartkey` / `ecg` / `labrador` = GET-only HeartKey (FF + Labrador OFF); never ON / never MAIN auto.
      */
     private var signalHuntReceiverRegistered = false
     private val signalHuntHandler = Handler(Looper.getMainLooper())
@@ -187,6 +188,8 @@ class WhoopConnectionService : Service() {
                 "ff", "get_ff", "128" -> ble.fireSignalHuntFfReadSweep()
                 "read" -> ble.fireSignalHuntReadBurst()
                 "research", "105", "106", "107", "108" -> ble.fireSignalHuntResearchBurst()
+                // HeartKey/Labrador GET-only — not part of fireAll (never Labrador ON).
+                "heartkey", "ecg", "labrador", "124", "125", "139" -> ble.fireHeartKeyGetOnlyProbe()
                 "r22", "deep" -> ble.enableWhoop5DeepData()
                 // EnterHighFreqHistoricalMode parity probe: cmd 96 with u16-LE duration, 97 exit after 90 s.
                 "hfs", "highfreq", "96" -> ble.fireSignalHuntHfsProbe()

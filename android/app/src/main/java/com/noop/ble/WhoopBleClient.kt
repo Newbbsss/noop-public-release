@@ -4625,7 +4625,7 @@ class WhoopBleClient(
      * (2) A type-0x2F record OUTSIDE our own history offload is NOT a separate live stream. #494 showed
      *     these are historical-offload data: they appear when a SECOND BLE client pulls the strap's
      *     history (SendHistoricalData) — the burst scales with the disconnect/backlog time, not
-     *     wall-clock — and the SET_CONFIG enable_r22_* sequence (accepted 15/15) starts no separate
+     *     wall-clock — and the SET_CONFIG enable_r22_* sequence (accepted all R22 flags) starts no separate
      *     stream. type-0x2F is only ever the historical offload (confirmed across #344's v20/v21 captures
      *     too). We still surface these as a diagnostic, but as what they are — another client's backlog
      *     reaching us over the shared notify channel — not a live R22 "unlock".
@@ -5727,6 +5727,41 @@ class WhoopBleClient(
                 enqueueWrite(PendingWrite(frame, withResponse = true))
                 log("→ RESEARCH GET_FF name=$name (puffin DEBUG)")
             }, 80L * i)
+        }
+    }
+
+    /**
+     * DEBUG: HeartKey / Labrador **GET-only** probe (Test Centre / adb `mode=heartkey`).
+     * Order: GET_FF `enable_raw_data_w_ecg` + `enable_labrador`, then Labrador OFF×3.
+     * Never sends Labrador ON / SELECT_WRIST; never MAIN auto; ACK ≠ ECG stream.
+     */
+    fun fireHeartKeyGetOnlyProbe() {
+        if (!BuildConfig.DEBUG) {
+            log("HeartKey GET-only blocked — DEBUG only"); return
+        }
+        val ff = SignalHuntProbe.HEARTKEY_FF_NAMES
+        val offs = SignalHuntProbe.heartKeyGetOnlyBurst()
+        log(
+            "HeartKey GET-only: ${ff.size} FF + ${offs.size} Labrador OFF " +
+                "(opcodes=${SignalHuntProbe.HEARTKEY_OPCODES.joinToString { "${it.cmd}:${it.protocolName}" }})",
+        )
+        ff.forEachIndexed { i, name ->
+            handler.postDelayed({
+                if (!BuildConfig.DEBUG) return@postDelayed
+                if (SignalHuntProbe.isDenied(128)) return@postDelayed
+                val ch = cmdCharacteristic
+                if (gatt == null || ch == null || connectedFamily != DeviceFamily.WHOOP5) return@postDelayed
+                val s = seq.incrementAndGet() and 0xFF
+                val frame = SignalHuntProbe.getFfFrame(name, s)
+                enqueueWrite(PendingWrite(frame, withResponse = true))
+                log("→ RESEARCH HeartKey GET_FF name=$name (puffin DEBUG; never invent ECG)")
+            }, 80L * i)
+        }
+        val offBase = 80L * ff.size + 120L
+        offs.forEachIndexed { i, c ->
+            handler.postDelayed({
+                sendResearchPuffin(c.cmd, c.payload, withResponse = true)
+            }, offBase + 80L * i)
         }
     }
 
@@ -7592,7 +7627,7 @@ class WhoopBleClient(
      * pref read; no-op unless the capture toggle is on.
      *
      * Honesty: live TOGGLE_IMU_MODE (cmd 106) ACKs but never streams on 5/MG; 100 Hz 6-axis IMU arrives
-     * via this historical offload path only. R22 SET_CONFIG 15/15 ≠ live types 51–56 activation.
+     * via this historical offload path only. R22 SET_CONFIG full ACK ≠ live types 51–56 activation.
      */
     private fun writeWhoop5DeepBufferIfBig(characteristic: String, frame: ByteArray, isOffload: Boolean) {
         if (deepBufferDisabled || !PuffinDeepBufferLog.isDeepBuffer(frame)) return

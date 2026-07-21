@@ -7,11 +7,19 @@ import WhoopProtocol
 /// (0 wake/1 still/2 asleep/3 up) was decoded but DROPPED at storage, so the band-state chain (the H7
 /// re-onset confirm guard + the Deep Timeline track) had no source. This proves the table exists, keys by
 /// (deviceId, ts), and round-trips + dedupes exactly like stepSample.
+///
+/// v24: additive `aux82` (raw v18 `@82` / whoop-rs inner 74) — never SpO₂ %.
 final class SleepStateSampleTests: XCTestCase {
     func testV21CreatesSleepStateTable() async throws {
         let store = try await WhoopStore.inMemory()
         let tables = try await store.tableNames()
         XCTAssertTrue(tables.contains("sleepStateSample"))
+    }
+
+    func testV24AddsAux82Column() async throws {
+        let store = try await WhoopStore.inMemory()
+        let cols = try await store.columnNamesForTest(table: "sleepStateSample")
+        XCTAssertTrue(cols.contains("aux82"), "v24 aux82 twin of Android SleepStateRow — never SpO₂ %")
     }
 
     func testSleepStatePrimaryKeyIsDeviceIdTs() async throws {
@@ -22,13 +30,14 @@ final class SleepStateSampleTests: XCTestCase {
 
     /// The raw stream round-trips through insert + read, INCLUDING state 0 (a real wake reading, not
     /// "absent"), and re-inserting the same (deviceId, ts) is idempotent (ON CONFLICT DO NOTHING).
+    /// aux82 rides the same row raw — never labeled as product %.
     func testSleepStateInsertRoundTripAndDedup() async throws {
         let store = try await WhoopStore.inMemory()
         let streams = Streams(sleepState: [
-            SleepStateSample(ts: 1_780_916_150, state: 0),   // wake (real, carried verbatim)
-            SleepStateSample(ts: 1_780_916_180, state: 1),   // still
-            SleepStateSample(ts: 1_780_916_210, state: 2),   // asleep
-            SleepStateSample(ts: 1_780_916_240, state: 3),   // up
+            SleepStateSample(ts: 1_780_916_150, state: 0, aux82: 0),   // wake (real, carried verbatim)
+            SleepStateSample(ts: 1_780_916_180, state: 1),             // still
+            SleepStateSample(ts: 1_780_916_210, state: 2, aux82: 0x5A), // asleep + raw @82
+            SleepStateSample(ts: 1_780_916_240, state: 3),             // up
         ])
         _ = try await store.insert(streams, deviceId: "my-whoop")
         let n1 = try await store.sleepStateCountForTest()
@@ -36,7 +45,7 @@ final class SleepStateSampleTests: XCTestCase {
 
         let read = try await store.sleepStateSamples(deviceId: "my-whoop",
                                                      from: 1_780_916_150, to: 1_780_916_240)
-        XCTAssertEqual(read, streams.sleepState, "every band code (incl. 0) round-trips in ts order")
+        XCTAssertEqual(read, streams.sleepState, "every band code (incl. 0) + aux82 round-trips in ts order")
 
         // Idempotent re-sync: the same second keeps its first-seen state, no duplicate rows.
         _ = try await store.insert(streams, deviceId: "my-whoop")

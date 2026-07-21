@@ -37,9 +37,10 @@ public enum Whoop5Config {
         public init(_ name: String, _ value: UInt8) { self.name = name; self.value = value }
     }
 
-    /// The exact ordered enable sequence the official app sends, transcribed verbatim from judes.club's
-    /// frame-builder `FLAGS` array (values are ASCII '1'/'2'). `enable_r22_packets` is what opens the
-    /// type-0x2F biometric stream; the rest tune channel selection, wear detection and sleep behaviour.
+    /// The exact ordered enable sequence (values ASCII '1'/'2'). Flags 1–15 from judes.club's
+    /// frame-builder; flag 16 `enable_sig12` from a real on-strap HCI capture (tanarchytan #103 /
+    /// whoop-rs `R22_SEQUENCE`), value ASCII '1' per workout capture (#423). `enable_r22_packets`
+    /// opens the type-0x2F biometric stream.
     public static let enableR22Sequence: [Flag] = [
         Flag("enable_r22_packets", 0x32),
         Flag("enable_r22_v2_packets", 0x32),
@@ -56,6 +57,17 @@ public enum Whoop5Config {
         Flag("enable_passive_strap_fit_gen5", 0x31),
         Flag("enable_sig11_during_sleep", 0x32),
         Flag("dorset_inhibit_wpt", 0x32),
+        Flag("enable_sig12", 0x31), // #423 / whoop-rs: 16th R22 flag
+    ]
+
+    /// Firmware-present flag names outside the R22 burst (catalog / GET_FF only; never auto-SET).
+    /// Includes ECG-adjacent `enable_raw_data_w_ecg` from whoop-rs — do not invent ECG from an ACK.
+    public static let firmwareOnlyFlags: [String] = [
+        "whoop_live_2_hrm_devices",
+        "enable_raw_data_w_ecg",
+        "general_ab_test",
+        "enable_pdaf_walk_det",
+        "enable_maverick_model",
     ]
 
     /// The 40-byte SET_CONFIG payload body: flag name as UTF-8/ASCII NUL-padded to 32 bytes, value byte

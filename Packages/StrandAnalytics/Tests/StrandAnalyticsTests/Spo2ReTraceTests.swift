@@ -33,5 +33,26 @@ final class Spo2ReTraceTests: XCTestCase {
 
     func testSampleCapBoundedAtEight() {
         XCTAssertEqual(Spo2ReTrace.maxSamples, 8)
+        XCTAssertEqual(Spo2ReTrace.baselineSamples, 2)
+    }
+
+    func testResearchInterestingPrefersNzAsleepGate() {
+        XCTAssertFalse(Spo2ReTrace.isResearchInteresting(auxByte82: nil, sleepState: nil))
+        XCTAssertFalse(Spo2ReTrace.isResearchInteresting(auxByte82: 0, sleepState: 0))
+        XCTAssertTrue(Spo2ReTrace.isResearchInteresting(auxByte82: 0, sleepState: 2))
+        XCTAssertTrue(Spo2ReTrace.isResearchInteresting(auxByte82: 26, sleepState: 0))
+        XCTAssertTrue(Spo2ReTrace.isResearchInteresting(auxByte82: 97, sleepState: 2))
+    }
+
+    func testAux82WhoopRsGateNeverProductPct() {
+        let line = Spo2ReTrace.recordLine(frame: [1, 2], version: 18, unix: 99,
+                                          red: nil, ir: nil, skinRaw: nil,
+                                          sleepState: 2, auxByte82: 0x80)
+        XCTAssertTrue(line.contains("sleep_state=2"), line)
+        XCTAssertTrue(line.contains("aux82=128"), line)
+        XCTAssertTrue(line.contains("whooprs_pct_gate=out"), line)
+        XCTAssertFalse(line.contains("spo2Pct"), line)
+        XCTAssertNil(Spo2ReTrace.whoopRsSpo2PctCandidate(0x80))
+        XCTAssertEqual(Spo2ReTrace.whoopRsSpo2PctCandidate(97), 97)
     }
 }

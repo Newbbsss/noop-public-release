@@ -2798,12 +2798,13 @@ fun SettingsScreen(
                         color = Palette.textTertiary,
                     )
                     // Live R22 telemetry (#174): proof of what the strap is doing right now.
+                    val r22Total = com.noop.protocol.Whoop5Config.enableR22Sequence.size
                     if (live.r22FlagsAccepted > 0) {
                         Text(
-                            if (live.r22FlagsAccepted >= 15) "âœ“ Strap accepted all 15 R22 flags"
-                            else "Strap accepted ${live.r22FlagsAccepted}/15 R22 flagsâ€¦",
+                            if (live.r22FlagsAccepted >= r22Total) "âœ“ Strap accepted all $r22Total R22 flags"
+                            else "Strap accepted ${live.r22FlagsAccepted}/$r22Total R22 flagsâ€¦",
                             style = NoopType.caption,
-                            color = if (live.r22FlagsAccepted >= 15) Palette.statusPositive else Palette.textSecondary,
+                            color = if (live.r22FlagsAccepted >= r22Total) Palette.statusPositive else Palette.textSecondary,
                         )
                     }
                     if (live.deepPacketsThisSession > 0) {
@@ -2812,7 +2813,7 @@ fun SettingsScreen(
                             style = NoopType.caption,
                             color = Palette.textSecondary,
                         )
-                    } else if (live.r22FlagsAccepted >= 15) {
+                    } else if (live.r22FlagsAccepted >= r22Total) {
                         Text(
                             "Flags accepted â€” that is not activation. ACK â‰  live types 51â€“56 / live IMU. " +
                                 "Cmd 106 (TOGGLE_IMU_MODE) can ACK without streaming. Dual-strap captures still " +

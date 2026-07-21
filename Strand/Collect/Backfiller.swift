@@ -456,6 +456,11 @@ final class Backfiller {
             if spo2Dumped < Spo2ReTrace.maxSamples, connectionActive(), let connectionLog {
                 for (raw, p) in zip(frames, parsed) where spo2Dumped < Spo2ReTrace.maxSamples {
                     guard let unix = p.parsed["unix"]?.intValue else { continue }
+                    let sleepState = p.parsed["sleep_state"]?.intValue
+                    let auxByte82 = p.parsed["aux_byte_82"]?.intValue
+                    // Denser useful RE: prefer nz/@82 / asleep; keep baselineSamples for awake+aux0.
+                    let interesting = Spo2ReTrace.isResearchInteresting(auxByte82: auxByte82, sleepState: sleepState)
+                    if !interesting && spo2Dumped >= Spo2ReTrace.baselineSamples { continue }
                     connectionLog(Spo2ReTrace.recordLine(
                         frame: raw,
                         version: p.parsed["hist_version"]?.intValue,
@@ -463,8 +468,8 @@ final class Backfiller {
                         red: p.parsed["spo2_red"]?.intValue,
                         ir: p.parsed["spo2_ir"]?.intValue,
                         skinRaw: p.parsed["skin_temp_raw"]?.intValue,
-                        sleepState: p.parsed["sleep_state"]?.intValue,
-                        auxByte82: p.parsed["aux_byte_82"]?.intValue))
+                        sleepState: sleepState,
+                        auxByte82: auxByte82))
                     spo2Dumped += 1
                 }
             }

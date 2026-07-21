@@ -339,12 +339,15 @@ private fun decodeWhoop5Historical(frame: ByteArray): Map<String, Any?>? {
     // @81 packs several band flags into one byte. High nibble (bits 4-5) tracks a scored night:
     // 0 wake / 1 still / 2 asleep / 3 up. bits 2-3 a wake-quality field; bits 0-1 an on-wrist flag.
     // Deep/REM/light are computed off-band, not here.
+    // Offset note: GEN5 absolute @81 == whoop-rs inner 73 (inner = absolute − 8).
     frame.histU8(81)?.let {
         out["sleep_state"] = (it shr 4) and 3
         out["wake_quality"] = (it shr 2) and 3
         out["onwrist"] = it and 3
     }
-    // @82 a single raw byte adjacent to the flag byte; carried raw, meaning not pinned.
+    // @82 == whoop-rs inner 74. whoop-rs names %-range (70..100) as sleep-only spo2_pct; Gilbert banks
+    // the byte VERBATIM as aux_byte_82 and never maps it to DailyMetric.spo2Pct (PRODUCT honesty /
+    // Fold corpus: [85,100] trap until WHOOP-app ground truth). See Spo2ReTrace.whoopRsSpo2PctCandidate.
     frame.histU8(82)?.let { out["aux_byte_82"] = it }
     // @113 a float32 (observed range ~ -5.3..0, 0 = unset); purpose unknown, carried raw. EMPIRICAL.
     frame.histF32(113)?.let { if (it.isFinite()) out["unknown_f32_113"] = it }

@@ -472,6 +472,7 @@ private func decodeWhoop5Historical(_ frame: [UInt8], fb: FieldBuilder, payloadE
     if let sb = readDType(frame, 81, "u8") {
         // High nibble (bits 4-5) tracks a scored night: 0 wake / 1 still / 2 asleep / 3 up; low nibble =
         // sub-flags. Deep/REM/light are computed off-band, not present here.
+        // Offset note: GEN5 absolute @81 == whoop-rs inner 73 (inner = absolute − 8).
         let state = (sb >> 4) & 3
         fb.add(81, 1, "sleep_state", "sleep", value: .int(state),
                note: "0 wake/1 still/2 asleep/3 up (band state; not deep/REM/light)")
@@ -481,8 +482,11 @@ private func decodeWhoop5Historical(_ frame: [UInt8], fb: FieldBuilder, payloadE
                note: "quality code (b2-3); observed nonzero only in wake")
     }
     if let v = readDType(frame, 82, "u8") {
+        // @82 == whoop-rs inner 74. whoop-rs names %-range (70..100) as sleep-only spo2_pct; Gilbert banks
+        // the byte VERBATIM as aux_byte_82 and never maps it to product SpO₂ % (PRODUCT honesty /
+        // Fold corpus: [85,100] trap until WHOOP-app ground truth). See Spo2ReTrace.whoopRsSpo2PctCandidate.
         fb.add(82, 1, "aux_byte_82", "status", value: .int(v),
-               note: "raw; observed nonzero only while sleep_state = asleep (meaning not pinned)")
+               note: "raw @82/whoop-rs inner74; NEVER spo2Pct — nz often while asleep (meaning not pinned)")
     }
     if let d = readF32(frame, 113), d.isFinite {
         // A float32 at @113 (observed range ~ -5.3…0, 0 = unset); purpose unknown, carried raw.

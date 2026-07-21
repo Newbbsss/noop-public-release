@@ -39,16 +39,19 @@ final class Whoop5ConfigTests: XCTestCase {
         XCTAssertTrue(check.ok, "SET_CONFIG frame must pass whoop5 CRC verification")
     }
 
-    func testEnableSequenceIsFifteenFlagsWithDistinctSeqs() {
+    func testEnableSequenceIsSixteenFlagsWithDistinctSeqs() {
         let frames = Whoop5Config.enableSequenceFrames(firstSeq: 1)
-        XCTAssertEqual(frames.count, 15)
+        XCTAssertEqual(frames.count, 16)
         XCTAssertEqual(Whoop5Config.enableR22Sequence.first?.name, "enable_r22_packets")
-        // seq byte lives at inner offset 1 (frame offset 9): 1,2,3,…,15 for this sequence
+        XCTAssertEqual(Whoop5Config.enableR22Sequence.last?.name, "enable_sig12")
+        XCTAssertEqual(Whoop5Config.enableR22Sequence.last?.value, 0x31)
+        // seq byte lives at inner offset 1 (frame offset 9): 1,2,3,…,16 for this sequence
         let seqs = frames.map { $0[9] }
-        XCTAssertEqual(seqs, Array(1...15))
-        // v4 is the one flag whose value is ASCII '1' (0x31), per the documented table
+        XCTAssertEqual(seqs, Array(1...16))
+        // v4 / passive-strap-fit / enable_sig12 use ASCII '1' (0x31)
         let v4 = Whoop5Config.enableR22Sequence.first { $0.name == "enable_r22_v4_packets" }
         XCTAssertEqual(v4?.value, 0x31)
+        XCTAssertTrue(Whoop5Config.firmwareOnlyFlags.contains("enable_raw_data_w_ecg"))
     }
 
     /// Broadcast-HR device-config body (#181): key name ASCII NUL-padded to 32 bytes, then the value

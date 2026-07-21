@@ -381,6 +381,12 @@ class Backfiller(
                     if (spo2Dumped >= com.noop.analytics.Spo2ReTrace.MAX_SAMPLES) break
                     val d = decodeHistorical(f, family) ?: continue
                     val recUnix = d["unix"] as? Int ?: continue
+                    val sleepState = d["sleep_state"] as? Int
+                    val auxByte82 = d["aux_byte_82"] as? Int
+                    // Denser useful RE: spend most of the 8-slot budget on nz/@82 / asleep frames;
+                    // keep BASELINE_SAMPLES for awake+aux0 so zero nights remain provable.
+                    val interesting = com.noop.analytics.Spo2ReTrace.isResearchInteresting(auxByte82, sleepState)
+                    if (!interesting && spo2Dumped >= com.noop.analytics.Spo2ReTrace.BASELINE_SAMPLES) continue
                     connectionLog(
                         com.noop.analytics.Spo2ReTrace.recordLine(
                             frame = f,
@@ -389,8 +395,8 @@ class Backfiller(
                             red = d["spo2_red"] as? Int,
                             ir = d["spo2_ir"] as? Int,
                             skinRaw = d["skin_temp_raw"] as? Int,
-                            sleepState = d["sleep_state"] as? Int,
-                            auxByte82 = d["aux_byte_82"] as? Int,
+                            sleepState = sleepState,
+                            auxByte82 = auxByte82,
                         ),
                     )
                     spo2Dumped++

@@ -144,13 +144,14 @@ extension WhoopStore {
             // (0 wake/1 still/2 asleep/3 up), decoded and streamed but dropped at storage until now. Keyed by
             // (deviceId, ts); ON CONFLICT DO NOTHING keeps the first-seen state for a second so a re-sync is
             // idempotent. The raw 0-3 code is stored verbatim — a strap that never reports it inserts nothing.
+            // aux82 = raw v18 `@82` / whoop-rs inner 74 — NEVER product SpO₂ % (Android SleepStateRow twin).
             if !streams.sleepState.isEmpty {
                 let stmt = try db.cachedStatement(sql: """
-                    INSERT INTO sleepStateSample (deviceId, ts, state) VALUES (?, ?, ?)
+                    INSERT INTO sleepStateSample (deviceId, ts, state, aux82) VALUES (?, ?, ?, ?)
                     ON CONFLICT(deviceId, ts) DO NOTHING
                     """)
                 for s in streams.sleepState {
-                    try stmt.execute(arguments: [deviceId, s.ts, s.state])
+                    try stmt.execute(arguments: [deviceId, s.ts, s.state, s.aux82])
                 }
             }
             // PPG-derived HR from the v26 optical buffer (#156). Persist-only, same as steps, the count
@@ -366,17 +367,18 @@ extension WhoopStore {
 
     /// The strap's OWN banked band sleep_state samples (#175) in `[from, to]` for one device, ascending by
     /// ts. Each `(ts, state)` is the raw @81 high-nibble code (0 wake/1 still/2 asleep/3 up) carried
-    /// verbatim off the offload stream. Empty when the strap never reported it (a WHOOP 4.0, or a not-yet-
-    /// offloaded window). Feeds the Deep Timeline band-state track and the per-session grid the H7 guard reads.
+    /// verbatim off the offload stream; optional `aux82` is raw `@82` (never SpO₂ %). Empty when the strap
+    /// never reported it (a WHOOP 4.0, or a not-yet-offloaded window). Feeds the Deep Timeline band-state
+    /// track and the per-session grid the H7 guard reads.
     public func sleepStateSamples(deviceId: String, from: Int, to: Int, limit: Int = 200_000) async throws
         -> [SleepStateSample] {
         try syncRead { db in
             try Row.fetchAll(db, sql: """
-                SELECT ts, state FROM sleepStateSample
+                SELECT ts, state, aux82 FROM sleepStateSample
                 WHERE deviceId = ? AND ts >= ? AND ts <= ?
                 ORDER BY ts LIMIT ?
                 """, arguments: [deviceId, from, to, limit])
-                .map { SleepStateSample(ts: $0["ts"], state: $0["state"]) }
+                .map { SleepStateSample(ts: $0["ts"], state: $0["state"], aux82: $0["aux82"]) }
         }
     }
 

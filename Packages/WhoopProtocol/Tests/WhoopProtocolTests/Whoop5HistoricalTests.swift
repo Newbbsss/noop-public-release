@@ -181,7 +181,7 @@ final class Whoop5HistoricalTests: XCTestCase {
         // (0 is a real wake reading, NOT "absent"), stamped at the record's own unix (1780916150).
         let f = parseFrame(bytes(historicalHex), family: .whoop5)
         let s = extractHistoricalStreams([f], deviceClockRef: 1780916150, wallClockRef: 1780916150)
-        XCTAssertEqual(s.sleepState, [SleepStateSample(ts: 1780916150, state: 0)],
+        XCTAssertEqual(s.sleepState, [SleepStateSample(ts: 1780916150, state: 0, aux82: 0)],
                        "the real worn fixture's band wake state (0) must reach the stream")
     }
 
@@ -211,9 +211,18 @@ final class Whoop5HistoricalTests: XCTestCase {
             let f = parseFrame(mutatingCRCValid(81, to: UInt8(raw)), family: .whoop5)
             XCTAssertEqual(f.crcOK, true, "the re-stamped frame must pass CRC (raw 0x\(String(raw, radix: 16)))")
             let s = extractHistoricalStreams([f], deviceClockRef: 1780916150, wallClockRef: 1780916150)
-            XCTAssertEqual(s.sleepState, [SleepStateSample(ts: 1780916150, state: expected)],
+            XCTAssertEqual(s.sleepState, [SleepStateSample(ts: 1780916150, state: expected, aux82: 0)],
                            "band code \(expected) must reach the stream (raw 0x\(String(raw, radix: 16)))")
         }
+    }
+
+    func testHistoricalV18Aux82ReachesStreamRawNeverPct() {
+        // @82 rides SleepStateSample.aux82 verbatim — never labeled spo2Pct (whoop-rs inner 74 twin).
+        let f = parseFrame(mutatingCRCValid(82, to: 0x5A), family: .whoop5)
+        XCTAssertEqual(f.crcOK, true)
+        XCTAssertEqual(f.parsed["aux_byte_82"]?.intValue, 0x5A)
+        let s = extractHistoricalStreams([f], deviceClockRef: 1780916150, wallClockRef: 1780916150)
+        XCTAssertEqual(s.sleepState, [SleepStateSample(ts: 1780916150, state: 0, aux82: 0x5A)])
     }
 
     func testHistoricalV18SkinTempTracksWristContact() {

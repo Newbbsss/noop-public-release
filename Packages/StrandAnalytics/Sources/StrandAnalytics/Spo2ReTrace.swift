@@ -23,6 +23,25 @@ public enum Spo2ReTrace {
     /// keeps the strap log bounded; the Backfiller counter spans chunks and resets per session.
     public static let maxSamples = 8
 
+    /// whoop-rs gate for v18 absolute `@82` (== GEN5 inner 74): 70..100 candidate only.
+    /// Bit-7 saturation sentinels (e.g. 0x80) and sub-70 codes fall out — same filter as whoop-rs.
+    /// Product path never banks DailyMetric.spo2Pct from open BLE — research helper.
+    public static func whoopRsSpo2PctCandidate(_ auxByte82: Int?) -> Int? {
+        guard let v = auxByte82, (70...100).contains(v) else { return nil }
+        return v
+    }
+
+    /// Prefer nz `@82` / whoop-rs gate / band-asleep within [maxSamples]; keep [baselineSamples]
+    /// for awake+aux0 so always-zero nights stay provable. Never a product %.
+    public static let baselineSamples = 2
+
+    public static func isResearchInteresting(auxByte82: Int?, sleepState: Int?) -> Bool {
+        if let a = auxByte82, a != 0 { return true }
+        if whoopRsSpo2PctCandidate(auxByte82) != nil { return true }
+        if sleepState == 2 { return true }
+        return false
+    }
+
     /// One record's RE line: the mapped SpO2 channels + timestamp + layout version, then sleep_state /
     /// aux_byte_82 (v18 research fields — raw, NEVER SpO2 %), then the FULL frame hex. Absent channels
     /// render "null" so a channel-less record still proves what it lacks.
@@ -33,8 +52,16 @@ public enum Spo2ReTrace {
                                   sleepState: Int? = nil, auxByte82: Int? = nil) -> String {
         let hex = frame.map { String(format: "%02x", $0) }.joined()
         func f(_ v: Int?) -> String { v.map(String.init) ?? "null" }
+        let gate: String
+        if auxByte82 == nil {
+            gate = ""
+        } else if whoopRsSpo2PctCandidate(auxByte82) != nil {
+            gate = " whooprs_pct_gate=in70_100"
+        } else {
+            gate = " whooprs_pct_gate=out"
+        }
         return "spo2re v=\(f(version)) unix=\(f(unix)) red=\(f(red)) ir=\(f(ir)) "
-            + "skinRaw=\(f(skinRaw)) sleep_state=\(f(sleepState)) aux82=\(f(auxByte82)) "
+            + "skinRaw=\(f(skinRaw)) sleep_state=\(f(sleepState)) aux82=\(f(auxByte82))\(gate) "
             + "len=\(frame.count) raw=\(hex)"
     }
 }
