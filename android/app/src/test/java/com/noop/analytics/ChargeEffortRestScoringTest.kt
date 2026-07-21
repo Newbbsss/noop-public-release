@@ -191,8 +191,9 @@ class ChargeEffortRestScoringTest {
 
     @Test
     fun effort_movementFloor_restDayStaysZero() {
+        // Noise floor 2.5k (8.6.242) — quiet desk days stay at 0; just-above-noise is tiny, not a workout.
         assertEquals(0.0, StrainScorer.movementFloor(1_500, 80.0), 0.0)
-        assertEquals(0.0, StrainScorer.movementFloor(4_500, 200.0), 0.0)
+        assertEquals(0.0, StrainScorer.movementFloor(2_400, 200.0), 0.0)
         assertNull(StrainScorer.withMovementFloor(null, 1_500, 80.0))
         assertEquals(0.0, StrainScorer.withMovementFloor(0.0, 1_500, null)!!, 0.0)
     }
@@ -219,14 +220,15 @@ class ChargeEffortRestScoringTest {
     @Test
     fun effort_movementFloor_convexWalkNotHotEarly() {
         // Smoking gun 2026-07-17: old log floor hit ~22 at ~12k steps while WHOOP Strain was 0.1.
+        // 2026-07-20: noise 2.5k + milder convex so mid-day walks move Effort without inventing cardio.
         val at12k = StrainScorer.movementFloor(12_000, null)
-        assertTrue("12k walk should move Effort a little", at12k > 0.3)
-        assertTrue("12k walk must stay low single-digits (was ~22)", at12k < 5.0)
+        assertTrue("12k walk should move Effort a little", at12k > 1.0)
+        assertTrue("12k walk must stay low–mid single-digits (was ~22)", at12k < 7.0)
 
         val at8k = StrainScorer.movementFloor(8_000, null)
         val at20k = StrainScorer.movementFloor(20_000, null)
-        assertTrue("mid walk stays tiny", at8k < at12k)
-        assertTrue("high step day climbs faster (convex)", at20k > at12k * 2.0)
+        assertTrue("mid walk stays below 12k", at8k < at12k)
+        assertTrue("high step day climbs", at20k > at12k)
         assertTrue(at20k <= StrainScorer.movementFloorCap)
 
         // Cardio TRIMP still wins when higher.
@@ -352,9 +354,12 @@ class ChargeEffortRestScoringTest {
 
     @Test
     fun personalNeedHours_followsLongerMean() {
+        // Phys adult 8h + learned 9h → blend (0.55/0.45), clamped above phys — not raw mean.
         val (need, n) = RestScorer.personalNeedHours(listOf(540.0, 540.0)) // 9h
-        assertEquals(9.0, need, 1e-9)
+        assertEquals(8.45, need, 1e-9)
         assertEquals(2, n)
+        assertTrue(need > 8.0)
+        assertTrue(need < 9.0)
     }
 
     @Test
@@ -417,8 +422,10 @@ class ChargeEffortRestScoringTest {
             remSeconds = 1.0 * 3600.0,
         )!!
         val durationRaw = SleepNeedEstimator.durationScoreRaw(4.0, 8.0)
-        val expected = (durationRaw * 0.45 + 95.0 * 0.20 + 100.0 * 0.25 + 50.0 * 0.10) *
+        val expectedRaw = (durationRaw * 0.45 + 95.0 * 0.20 + 100.0 * 0.25 + 50.0 * 0.10) *
             RestScorer.restWhoopAlignScale
+        // Production rounds to hundredths (same as RestScorer.rest).
+        val expected = kotlin.math.round(expectedRaw * 100.0) / 100.0
         assertEquals(expected, score, EPS)
     }
 

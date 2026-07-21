@@ -48,7 +48,8 @@ class SleepStagerSparseDeepRemTest {
     }
 
     @Test
-    fun denseNight_stillLowHr_classifiesDeep() {
+    fun denseNight_stillLowHr_withoutRmssd_staysLight() {
+        // Dense HRV nights: NaN RMSSD is NOT pro-deep (8.6.242) — need finite high-tone bar.
         val label = SleepStager.classifyOne(
             feat(hr = 48.0, clock = 0.15),
             hrLo = 52.0, hrHi = 70.0,
@@ -56,7 +57,7 @@ class SleepStagerSparseDeepRemTest {
             rrvHi = 1.0, rrvLo = 0.5,
             cardiacSparse = false,
         )
-        assertEquals("deep", label)
+        assertEquals("light", label)
     }
 
     @Test

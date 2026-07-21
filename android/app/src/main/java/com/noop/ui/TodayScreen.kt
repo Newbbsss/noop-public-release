@@ -180,6 +180,8 @@ import com.noop.analytics.RecoveryDrivers
 import com.noop.analytics.RecoveryScorer
 import com.noop.analytics.RestScorer
 import com.noop.analytics.ScoreConfidence
+import com.noop.analytics.HcNoopAlign
+import com.noop.analytics.StepMotionCounter
 import com.noop.analytics.StepsEstimateEngine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
@@ -191,6 +193,7 @@ import com.noop.data.DailyMetric
 import com.noop.data.HrBucket
 import com.noop.data.PeriodCalendarStore
 import com.noop.data.SleepSession
+import com.noop.data.StepSample
 import com.noop.data.WhoopRepository
 import com.noop.data.WorkoutRow
 import com.noop.ingest.HealthConnectImporter
@@ -1076,17 +1079,20 @@ fun TodayScreen(
     // heavy daily pass re-scores. So for offset 0 only, integrate today's raw HR over the SAME window the
     // HR trend uses (the logical day's local-midnight → now) through StrainScorer with the SAME params the
     // daily pass persists (Tanaka HR-max from age, or the manual override, the day's resting HR else the
-    // default, profile sex), then raise with the steps/kcal movement floor so a long walk moves Effort
+    // default, profile sex), then raise with the steps movement floor so a long walk moves Effort
     // before the 15-min analyze. Prefer it on the Effort gauge. StrainScorer returns null below
     // `minReadings` (unless the floor alone is >0), so before there's enough signal the gauge falls back
     // to the stored value and never shows a fabricated number. Any past day → null (the gauge uses the
-    // stored strain). 45s ticker while on Today so walking HR/steps refresh without waiting for analyze.
+    // stored strain).
+    // Critical 8.6.242: each tick re-accumulate live band @57 (stepSamplesUnion + StepMotionCounter),
+    // not banked displayMetric.steps / steps_est which only refresh on analyze (~15 min). Walk days are
+    // floor-dominated (TRIMP≈0); HR refresh alone cannot move the vessel. Prefer strap → estimate; never phone.
     var liveTodayStrain by remember {
         mutableStateOf(heroSnap?.effort?.takeIf { days.isEmpty() })
     }
     LaunchedEffect(
         days, selectedDayKey, selectedDayOffset, logicalDayKey, presentationDayKey,
-        stepsEstForDay, displayMetric?.steps, displayMetric?.activeKcalEst,
+        stepsEstForDay, profileStore.stepTicksPerStep,
     ) {
         while (true) {
             liveTodayStrain = if (selectedDayOffset == 0) {
@@ -1108,18 +1114,21 @@ fun TodayScreen(
                     restingHR = displayMetric?.restingHr?.toDouble() ?: StrainScorer.defaultRestingHR,
                     sex = profileStore.sex,
                 )
-                // Band steps only (never phone) — same prefer order as the Steps tile.
-                val bandSteps = com.noop.analytics.HcNoopAlign.preferSteps(
-                    displayMetric?.steps,
-                    null,
-                    stepsEstForDay,
+                val todaySteps = runCatching {
+                    viewModel.repo.stepSamplesUnion(viewModel.activeStrapId, start, now, limit = 200_000)
+                }.getOrDefault(emptyList())
+                val bandSteps = liveBandStepsForEffort(
+                    stepSamples = todaySteps,
+                    ticksPerStep = profileStore.stepTicksPerStep,
+                    estimateFallback = stepsEstForDay,
                 )
-                StrainScorer.withMovementFloor(trimp, bandSteps, displayMetric?.activeKcalEst)
+                // Live floor is steps-driven; banked activeKcalEst is analyze-stale — omit on the tick path.
+                StrainScorer.withMovementFloor(trimp, bandSteps, null)
             } else {
                 null
             }
             if (selectedDayOffset != 0) break
-            kotlinx.coroutines.delay(45_000L)
+            kotlinx.coroutines.delay(20_000L)
         }
     }
 
@@ -6597,6 +6606,29 @@ internal fun effectiveEffortStrain(
         selectedDayKey != null && storedDayKey != null && storedDayKey == selectedDayKey
     }
     return sameDayStored?.takeIf { it > 0.0 }
+}
+
+/**
+ * Live Today Effort movement input: wrap-aware @57 ticks → steps (same accumulator as AnalyticsEngine),
+ * then prefer strap → band estimate. Never phone / Health Connect. Null when neither source has signal.
+ */
+internal fun liveBandStepsForEffort(
+    stepSamples: List<StepSample>,
+    ticksPerStep: Double,
+    noiseFloorTicksPerSec: Double = 0.0,
+    estimateFallback: Int? = null,
+): Int? {
+    val strap = if (stepSamples.size >= 2) {
+        val ticks = StepMotionCounter.accumulatePersisted(
+            stepSamples,
+            mode = StepMotionCounter.Mode.Production,
+            noiseFloorTicksPerSec = noiseFloorTicksPerSec.coerceIn(0.0, 2.5),
+        ).acceptedTicks
+        StepMotionCounter.ticksToSteps(ticks, ticksPerStep).takeIf { it > 0 }
+    } else {
+        null
+    }
+    return HcNoopAlign.preferSteps(strap, null, estimateFallback)
 }
 
 /**

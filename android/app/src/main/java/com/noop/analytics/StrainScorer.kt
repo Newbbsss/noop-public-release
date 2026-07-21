@@ -262,26 +262,27 @@ object StrainScorer {
     // kcal exists.
 
     /** Steps below this contribute 0 to the movement floor (desk / noise). */
-    const val movementStepsNoiseFloor: Int = 5_000
+    const val movementStepsNoiseFloor: Int = 2_500
     /** @deprecated Kept for API compat; kcal no longer raises the floor (total-day kcal was wrong). */
     const val movementKcalNoiseFloor: Double = 250.0
     /** Hard cap — steps alone never invent high cardio Effort. Moderate days land nearer ~11. */
     const val movementFloorCap: Double = 12.0
     /**
      * Excess-steps scale for the convex curve: floor ≈ cap × (excess / scale)^exponent,
-     * clipped to [0, cap]. ~22k excess (~27k total steps) approaches the cap.
+     * clipped to [0, cap]. ~16k excess (~18.5k total steps) approaches the cap.
      */
-    const val movementStepsScale: Double = 22_000.0
-    /** Convex exponent (>1): accelerating contribution as steps accumulate. */
-    const val movementStepsExponent: Double = 1.85
+    const val movementStepsScale: Double = 16_000.0
+    /** Convex exponent (>1): accelerating contribution as steps accumulate — milder than 1.85
+     *  so mid-day walks visibly move Effort instead of sitting flat near the noise floor. */
+    const val movementStepsExponent: Double = 1.45
     const val movementKcalScale: Double = 1_000.0
     const val movementKcalExponent: Double = 1.85
 
     /**
      * Movement-derived Effort floor (0…[movementFloorCap]) from band steps.
      * Band / day steps only — never phone steps as primary (caller must pass strap or estimate).
-     * Rest / desk morning (under noise floors) → 0. Mid walk (~10–12k) → low single digits.
-     * High step days climb toward ~11–12 (was ~22); cardio TRIMP still wins when higher.
+     * Rest / desk morning (under noise floors) → 0. Mid walk (~8–12k) → low–mid single digits.
+     * High step days climb toward ~11–12; cardio TRIMP still wins when higher.
      *
      * [activeKcal] is accepted for call-site compat but **ignored** — `DailyMetric.activeKcalEst`
      * is whole-day energy, not active-only, and was pinning Effort near the cap on rest mornings.

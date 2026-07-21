@@ -2244,13 +2244,15 @@ object SleepStager {
         val hrLow = hasHR && hrLo != null && f.hr <= hrLo
         val hrHigh = hasHR && hrHi != null && f.hr >= hrHi
 
-        // NOTE: HF omitted (no neurokit2). Parasympathetic tone = RMSSD only. A MISSING per-epoch
-        // RMSSD (sparse R-R, common on BLE-offloaded nights and especially 5/MG) is treated as
-        // pro-deep rather than deep-blocking — mirroring how a missing respiration value is handled
-        // below — so those nights stop decoding 0 m of deep sleep despite a real depth signature
-        // (still + low HR + regular breathing). An epoch WITH a finite RMSSD must still clear the
-        // high-tone bar. (#127, #129)
-        val parasympOK = (!f.rmssd.isFinite()) || (rmssdHi != null && f.rmssd >= rmssdHi)
+        // NOTE: HF omitted (no neurokit2). Parasympathetic tone = RMSSD only.
+        // Dense nights (finite R-R): missing per-epoch RMSSD is NOT pro-deep — require the
+        // high-tone bar so Light↔Deep is HRV-dependent. Sparse cardiac nights still treat
+        // missing RMSSD as OK (BLE-offload reopen, #127/#129).
+        val parasympOK = when {
+            f.rmssd.isFinite() -> rmssdHi != null && f.rmssd >= rmssdHi
+            cardiacSparse -> true
+            else -> false
+        }
 
         val hrvarHigh = f.hrVar.isFinite() && hrvarHi != null && f.hrVar >= hrvarHi
         val cardiacActivated = hrHigh || hrvarHigh
@@ -2283,6 +2285,9 @@ object SleepStager {
         // low HR alone when resp is absent — reopen deep without inventing from HC.
         if (still && parasympOK && hrLow && rrvRegular) return "deep"
         if (cardiacSparse && still && hrLow && !f.rrv.isFinite()) return "deep"
+        // Mid-HR + high-RMSSD Deep reopen: high parasymp can tip still epochs that miss hrLow
+        // (classic Light flood with deep physiology on HRV). Never when hrHigh (REM territory).
+        if (still && parasympOK && rrvRegular && hasHR && !hrHigh && f.rmssd.isFinite()) return "deep"
         // REM: still body + activated cardiac + irregular respiration.
         if (still && cardiacActivated && rrvIrregular) return "rem"
         // REM fallback when respiration unavailable: require BOTH cardiac signals.
@@ -2330,8 +2335,8 @@ object SleepStager {
         val noREMEpochs = (noREMAfterOnsetMin * 60.0 / epochS).roundToInt()
         // "Deep is front-loaded" is a soft prior, not a hard wipe. Jul-13 WHOOP Deep ~33% of the night
         // spans past the first third; stripping every late deep epoch collapsed MAIN to ~2%. Only demote
-        // late deep when early deep is already ADEQUATE (≥12% of the sleep window) — otherwise keep the
-        // cardiac estimate. REM onset guard unchanged. (#127, 2026-07-14 pack)
+        // late deep when early deep is already ADEQUATE (≥15% of the sleep window) AND the epoch fails
+        // parasympathetic tone — clock alone must not turn HRV-supported late Deep into Light.
         val sleepLen = (finalWakeIdx - onsetIdx + 1).coerceAtLeast(1)
         val deepFrac = if ((softPriors.ageYears ?: 0.0) >= 65.0) {
             (deepFirstFraction * 1.15).coerceAtMost(0.45)
@@ -2341,14 +2346,22 @@ object SleepStager {
         val earlyDeepN = labels.indices.count {
             it in onsetIdx..finalWakeIdx && labels[it] == "deep" && features[it].clock <= deepFrac
         }
-        // Jul-20 Light-bias pack: raise adequacy bar 0.12→0.15 so late Deep is demoted less often
-        // (when early Deep is only marginal, keep the cardiac estimate). Chose this over raising
-        // deepFirstFraction — that would make early-adequate easier and demote more late Deep.
         val earlyDeepAdequate = earlyDeepN.toDouble() >= 0.15 * sleepLen.toDouble()
+        val sleepFeats = features.filterIndexed { i, _ -> i in onsetIdx..finalWakeIdx }
+        val rmssdHi = percentile(sleepFeats.map { it.rmssd }, stageHRVHighPct)
+        val cardiacSparse = isCardiacSparse(sleepFeats)
         for ((i, f) in features.withIndex()) {
             if (i < onsetIdx || i > finalWakeIdx) continue
             if (out[i] == "rem" && (i - onsetIdx) < noREMEpochs) out[i] = "light"
-            if (out[i] == "deep" && f.clock > deepFrac && earlyDeepAdequate) out[i] = "light"
+            if (out[i] == "deep" && f.clock > deepFrac && earlyDeepAdequate) {
+                val parasympOK = when {
+                    f.rmssd.isFinite() -> rmssdHi != null && f.rmssd >= rmssdHi
+                    cardiacSparse -> true
+                    else -> false
+                }
+                // Keep late Deep when HRV still supports it; demote only when parasymp fails.
+                if (!parasympOK) out[i] = "light"
+            }
         }
         return out
     }
@@ -2456,7 +2469,11 @@ object SleepStager {
         val hasHR = f.hr.isFinite()
         val hrLow = hasHR && hrLo != null && f.hr <= hrLo
         val hrHigh = hasHR && hrHi != null && f.hr >= hrHi
-        val parasympOK = (!f.rmssd.isFinite()) || (rmssdHi != null && f.rmssd >= rmssdHi)
+        val parasympOK = when {
+            f.rmssd.isFinite() -> rmssdHi != null && f.rmssd >= rmssdHi
+            cardiacSparse -> true
+            else -> false
+        }
         val hrvarHigh = f.hrVar.isFinite() && hrvarHi != null && f.hrVar >= hrvarHi
         val cardiacActivated = hrHigh || hrvarHigh
         val cardiacActivatedForWake = if (cardiacSparse) hrHigh else cardiacActivated
@@ -2470,6 +2487,9 @@ object SleepStager {
         if (moving && (cardiacActivatedForWake || !hasHR)) return REMRejectReason.WON_OTHER_STAGE  // wake
         if (still && parasympOK && hrLow && rrvRegular) return REMRejectReason.WON_OTHER_STAGE // deep
         if (cardiacSparse && still && hrLow && !f.rrv.isFinite()) return REMRejectReason.WON_OTHER_STAGE // sparse deep
+        if (still && parasympOK && rrvRegular && hasHR && !hrHigh && f.rmssd.isFinite()) {
+            return REMRejectReason.WON_OTHER_STAGE // mid-HR + high-RMSSD deep
+        }
         // From here the epoch did NOT win wake/deep; it is either REM or falls through to LIGHT.
         if (still && cardiacActivated && rrvIrregular) return REMRejectReason.REM_ELIGIBLE
         if (still && hrHigh && hrvarHigh && !f.rrv.isFinite()) return REMRejectReason.REM_ELIGIBLE
@@ -2656,7 +2676,11 @@ object SleepStager {
         val hasHR = f.hr.isFinite()
         val hrLow = hasHR && hrLo != null && f.hr <= hrLo
         val hrHigh = hasHR && hrHi != null && f.hr >= hrHi
-        val parasympOK = (!f.rmssd.isFinite()) || (rmssdHi != null && f.rmssd >= rmssdHi)
+        val parasympOK = when {
+            f.rmssd.isFinite() -> rmssdHi != null && f.rmssd >= rmssdHi
+            cardiacSparse -> true
+            else -> false
+        }
         val hrvarHigh = f.hrVar.isFinite() && hrvarHi != null && f.hrVar >= hrvarHi
         val cardiacActivated = hrHigh || hrvarHigh
         val cardiacActivatedForWake = if (cardiacSparse) hrHigh else cardiacActivated
@@ -2674,6 +2698,9 @@ object SleepStager {
         if (moving && (cardiacActivatedForWake || !hasHR)) return LightClassifyReason.WON_WAKE
         if (still && parasympOK && hrLow && rrvRegular) return LightClassifyReason.WON_DEEP
         if (cardiacSparse && still && hrLow && !f.rrv.isFinite()) return LightClassifyReason.WON_DEEP
+        if (still && parasympOK && rrvRegular && hasHR && !hrHigh && f.rmssd.isFinite()) {
+            return LightClassifyReason.WON_DEEP
+        }
         if (still && cardiacActivated && rrvIrregular) return LightClassifyReason.WON_REM
         if (still && hrHigh && hrvarHigh && !f.rrv.isFinite()) return LightClassifyReason.WON_REM
         if (cardiacSparse && still && hrHigh && !f.rrv.isFinite() && f.clock > deepFirstFraction) {

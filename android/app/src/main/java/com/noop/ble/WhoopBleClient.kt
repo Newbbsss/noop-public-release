@@ -900,8 +900,9 @@ class WhoopBleClient(
 
         /**
          * Rising/falling SoC inference when proprietary charge bits are sparse.
-         * Latch ON on a small rise; clear OFF on a 2-pt drop, or on a 1-pt drop while already
-         * latched charging (unplug often plateaus then ticks −1% long before −2%).
+         * Latch ON on a small rise. Clear OFF only on a clear discharge (≥1.5% while already
+         * charging, or ≥2% absolute) — a −0.5%/−1% fuel-gauge wobble must NOT drop the bolt
+         * while the puck is still docked (Gilbert 2026-07-20).
          */
         fun inferChargingFromSoc(
             previousPct: Double?,
@@ -910,7 +911,7 @@ class WhoopBleClient(
         ): Boolean? {
             if (previousPct == null) return null
             if (pct > previousPct + 0.15) return true
-            if (currentlyCharging == true && pct < previousPct - 0.5) return false
+            if (currentlyCharging == true && pct < previousPct - 1.5) return false
             if (pct < previousPct - 2.0) return false
             return null
         }
@@ -1468,8 +1469,14 @@ class WhoopBleClient(
         val nowMs = System.currentTimeMillis()
         _state.update { s ->
             val nextCharging = when (inferredCharging) {
-                true -> true
-                false -> false
+                true -> {
+                    // Rising SoC is a soft ON hint — do not claim authoritative dock.
+                    true
+                }
+                false -> {
+                    // Soft SoC discharge: ignore while an authoritative dock latch is held.
+                    if (authoritativeDockCharging) s.charging else false
+                }
                 null -> s.charging
             }
             s.copy(
@@ -4872,6 +4879,7 @@ class WhoopBleClient(
                     // docks — far sooner than BATTERY_LEVEL (~8 min) or a whole-% SoC tick.
                     if (!replayedOffload) {
                         chargingHintFromConsole(txt)?.let { onCharger ->
+                            authoritativeDockCharging = onCharger
                             _state.update { s ->
                                 if (s.charging == onCharger) s else s.copy(charging = onCharger)
                             }
@@ -4909,6 +4917,7 @@ class WhoopBleClient(
                         // Without this, SoC-inference latched `charging=true` and stuck after unplug
                         // until a rare −2% tick or ~8-min BATTERY_LEVEL bit.
                         chargingHintFromEvent(ev, replayedOffload)?.let { onCharger ->
+                            authoritativeDockCharging = onCharger
                             _state.update { s ->
                                 if (s.charging == onCharger) s else s.copy(charging = onCharger)
                             }
@@ -4925,13 +4934,23 @@ class WhoopBleClient(
                         // and that's exactly [replayedOffload], the same offload discriminator iOS relies on
                         // by skipping its live router. A genuine live battery event now lights the pill
                         // immediately, regardless of its event_timestamp.
+                        // While authoritative dock latch is held, bit0=0 is weak (trickle/full) — ignore clear.
                         if (ev.startsWith("BATTERY_LEVEL") && shouldApplyChargingFromBatteryEvent(replayedOffload)) {
-                            (parsed.parsed["battery_charging"] as? Int)?.let {
-                                val onCharger = it != 0
-                                _state.update { s -> s.copy(charging = onCharger) }
-                                _state.value.batteryPct?.let { pct ->
-                                    persistStrapBatterySnapshot(pct, onCharger, _state.value.whoop5Detected)
+                            (parsed.parsed["battery_charging"] as? Int)?.let { bit ->
+                                val onCharger = bit != 0
+                                if (onCharger) {
+                                    authoritativeDockCharging = true
+                                    _state.update { s -> s.copy(charging = true) }
+                                    _state.value.batteryPct?.let { pct ->
+                                        persistStrapBatterySnapshot(pct, true, _state.value.whoop5Detected)
+                                    }
+                                } else if (!authoritativeDockCharging) {
+                                    _state.update { s -> s.copy(charging = false) }
+                                    _state.value.batteryPct?.let { pct ->
+                                        persistStrapBatterySnapshot(pct, false, _state.value.whoop5Detected)
+                                    }
                                 }
+                                Unit
                             }
                         }
                         // PR #577: the strap fired its firmware smart alarm (STRAP_DRIVEN_ALARM_EXECUTED,
@@ -4972,9 +4991,10 @@ class WhoopBleClient(
                                     if (!_state.value.worn) _state.update { it.copy(worn = true) }
                                     // If handshake auto-rearm deferred for !worn, fire now that we're on-wrist.
                                     maybeAutoRearmR22OnConnect("WRIST_ON")
-                                    // On-wrist after a charge visit: puck is off. Clear sticky charging
-                                    // if CHARGING_OFF was missed (SoC can stay flat for hours).
-                                    if (_state.value.charging == true) {
+                                    // On-wrist after a charge visit: puck is off — but only clear sticky
+                                    // charging when we do NOT hold an authoritative dock latch (missed
+                                    // CHARGING_OFF). WRIST_ON while still on the puck must not kill the bolt.
+                                    if (_state.value.charging == true && !authoritativeDockCharging) {
                                         _state.update { it.copy(charging = false) }
                                         log("Charging: cleared on WRIST_ON (was sticky on)")
                                         _state.value.batteryPct?.let { pct ->
@@ -5241,6 +5261,12 @@ class WhoopBleClient(
      * is on the charger (AirPods-style UI needs this).
      */
     @Volatile private var lastBatteryPct: Double? = null
+    /**
+     * Authoritative puck-dock latch. Set by CHARGING_ON / pack connected / console install;
+     * cleared only by CHARGING_OFF / pack removed / console uninstall / link down.
+     * Soft SoC wobble, BATTERY_LEVEL bit0=0, and WRIST_ON must not clear the bolt while this is true.
+     */
+    @Volatile private var authoritativeDockCharging: Boolean = false
 
     /** Single funnel for battery readings (port of LiveState.setBattery). */
     private fun setBattery(pct: Double) {
@@ -7225,6 +7251,7 @@ class WhoopBleClient(
         // Drop SoC baseline so reconnect can't infer charging=false from a cross-gap drop and
         // re-fire the AirPods overlay (BLE flap while puck stays docked).
         lastBatteryPct = null
+        authoritativeDockCharging = false
         _latestStrapImu.value = null
         // Multi-WHOOP: the link is down — clear the published connected address so SourceCoordinator's
         // adoption sink can't re-fire on a stale strap id (twin of macOS clearing connectedPeripheralUUID).

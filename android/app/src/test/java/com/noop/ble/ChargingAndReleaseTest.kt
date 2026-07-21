@@ -75,8 +75,13 @@ class ChargingAndReleaseTest {
         assertEquals(true, WhoopBleClient.inferChargingFromSoc(50.0, 51.0, currentlyCharging = false))
     }
 
-    @Test fun socOnePointDropWhileCharging_clears() {
-        assertEquals(false, WhoopBleClient.inferChargingFromSoc(80.0, 79.0, currentlyCharging = true))
+    @Test fun socOnePointDropWhileCharging_staysSticky() {
+        // −1% fuel-gauge wobble must not clear the bolt while docked (was −0.5% clear).
+        assertNull(WhoopBleClient.inferChargingFromSoc(80.0, 79.0, currentlyCharging = true))
+    }
+
+    @Test fun socOnePointFiveDropWhileCharging_clears() {
+        assertEquals(false, WhoopBleClient.inferChargingFromSoc(80.0, 78.4, currentlyCharging = true))
     }
 
     @Test fun socFlatWhileCharging_staysSticky() {

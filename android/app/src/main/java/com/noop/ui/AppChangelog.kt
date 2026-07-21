@@ -25,7 +25,7 @@ object AppChangelog {
      * Bump this when you add a release below. The "What's New" sheet shows automatically when the
      * stored last-seen version is behind this. (Decoupled from the bundle version on purpose.)
      */
-    const val CURRENT_VERSION = "8.6.241"
+    const val CURRENT_VERSION = "8.6.242"
 
     data class Release(
         val version: String,
@@ -36,6 +36,17 @@ object AppChangelog {
 
     /** Newest first. */
     val releases: List<Release> = listOf(
+        Release(
+            version = "8.6.242",
+            title = "Effort moves Â· charge sticks Â· HRV Deep",
+            date = "2026-07-20",
+            items = listOf(
+                "Effort: live Today re-reads band @57 each ~20s (not analyze-stale steps); milder floor curve (2.5k/16k/1.45, cap 12) so walks move the gauge without inventing cardio.",
+                "Charging bolt stays while docked: authoritative CHARGING_ON latch; ignore âˆ’1% SoC wobble, WRIST_ON, and BATTERY_LEVEL bit0=0 until real undock.",
+                "Sleep Deep more HRV-dependent: dense nights need RMSSD for Deep; mid-HR + high RMSSD can reopen Deep; late Deep kept when parasymp still supports it (no clock-only wipe to Light).",
+                "SpOâ‚‚ honesty unchanged: never invents a %.",
+            ),
+        ),
         Release(
             version = "8.6.241",
             title = "Skin-temp difference centered",

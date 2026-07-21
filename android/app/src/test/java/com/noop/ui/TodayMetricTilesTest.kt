@@ -623,6 +623,44 @@ class TodayMetricTilesTest {
     }
 
     @Test
+    fun liveBandStepsForEffort_prefersLiveStrapOverStaleEstimate() {
+        // Walk-rate @57 (~1 tick/s): 120 samples × 60s → 7200 accepted ticks @ ticksPerStep=1.
+        // (A single huge delta would clip at MAX_TICKS_PER_SECOND — densify like real 1 Hz banking.)
+        val samples = (0 until 121).map { i ->
+            com.noop.data.StepSample(
+                deviceId = "my-whoop",
+                ts = 1_000L + i * 60L,
+                counter = 1_000 + i * 60,
+                activityClass = 1,
+            )
+        }
+        assertEquals(
+            7_200,
+            liveBandStepsForEffort(
+                stepSamples = samples,
+                ticksPerStep = 1.0,
+                estimateFallback = 2_500, // analyze-stale estimate must not win over live strap
+            ),
+        )
+        // Sparse / empty @57 → estimate fallback (never phone).
+        assertEquals(
+            2_500,
+            liveBandStepsForEffort(
+                stepSamples = emptyList(),
+                ticksPerStep = 1.0,
+                estimateFallback = 2_500,
+            ),
+        )
+        assertNull(
+            liveBandStepsForEffort(
+                stepSamples = emptyList(),
+                ticksPerStep = 1.0,
+                estimateFallback = null,
+            ),
+        )
+    }
+
+    @Test
     fun effortKeyTileFrac_matchesVesselAxis() {
         // 50/100 Effort → half tube on 0–100; same stored value → ~half on 0–21 after scale.
         assertEquals(0.5, effortKeyTileFrac(50.0, EffortScale.HUNDRED), 1e-9)
