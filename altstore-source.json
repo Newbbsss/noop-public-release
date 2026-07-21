@@ -18,6 +18,24 @@
       "screenshotURLs": [],
       "versions": [
         {
+          "version": "8.6.246",
+          "buildVersion": "516",
+          "date": "2026-07-21",
+          "localizedDescription": "Match Android 8.6.246: SpO2 honesty (whooprs gate / denser hist / @82 census), R22 enable_sig12, HeartKey GET-only, iOS aux82 twin. Never invents SpO2 %.",
+          "downloadURL": "https://github.com/Newbbsss/noop-public-release/releases/download/v8.6.246/NOOP-ios-unsigned-v8.6.246.ipa",
+          "size": 15009779,
+          "minOSVersion": "17.0"
+        },
+        {
+          "version": "8.6.245",
+          "buildVersion": "515",
+          "date": "2026-07-21",
+          "localizedDescription": "Match Android 8.6.245: Effort empty-HR hold, Stress fear/soft-acute HIGH peaks + daily avg, iOS DaytimeStress/Effort twin.",
+          "downloadURL": "https://github.com/Newbbsss/noop-public-release/releases/download/v8.6.245/NOOP-ios-unsigned-v8.6.245.ipa",
+          "size": 14920794,
+          "minOSVersion": "17.0"
+        },
+        {
           "version": "8.6.241",
           "buildVersion": "511",
           "date": "2026-07-20",
@@ -1171,12 +1189,12 @@
           "NSHealthUpdateUsageDescription": "NOOP writes the metrics it computes from your strap back into Apple Health, on-device and only when you allow it."
         }
       },
-      "version": "8.6.241",
-      "buildVersion": "511",
-      "versionDate": "2026-07-08",
-      "versionDescription": "NOOP 8.4.0. See the release notes for what changed.",
-      "downloadURL": "https://github.com/ryanbr/noop/releases/download/v8.4.0/NOOP-ios-unsigned-v8.4.0.ipa",
-      "size": 14850295,
+      "version": "8.6.246",
+      "buildVersion": "516",
+      "versionDate": "2026-07-21",
+      "versionDescription": "Match Android 8.6.246: SpO2 honesty (whooprs gate / denser hist / @82 census), R22 enable_sig12, HeartKey GET-only, iOS aux82 twin. Never invents SpO2 %.",
+      "downloadURL": "https://github.com/Newbbsss/noop-public-release/releases/download/v8.6.246/NOOP-ios-unsigned-v8.6.246.ipa",
+      "size": 15009779,
       "minOSVersion": "17.0"
     }
   ],
