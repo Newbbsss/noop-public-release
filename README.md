@@ -2,6 +2,9 @@
 > Based on [ryanbr/noop](https://github.com/ryanbr/noop). Android builds: see [Releases](https://github.com/Newbbsss/noop-public-release/releases).
 > Agent sync notes: [for-agents/PUBLIC_RELEASE.md](for-agents/PUBLIC_RELEASE.md). Dual branding: [for-agents/DUAL_BRANDING.md](for-agents/DUAL_BRANDING.md).
 
+whoop-rs -tanarchytan
+
+link will be there when i create full readme
 ---
 ---
 <p align="center">
